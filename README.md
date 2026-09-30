@@ -185,6 +185,7 @@ pwsh ./scripts/assert-no-credentials.ps1   # 模板生成物不含凭据
 | 路由 | 路径 | 认证 |
 |---|---|---|
 | `platform-read` | `/api/platform/{**catch-all}` | 公开（**只放 GET**） |
+| `platform-write` | `/api/platform/{**catch-all}` | **要求认证**（只放 PUT/DELETE） |
 | `identity-info` | `/api/identity` | 公开 |
 | `identity-login` | `/api/identity/login` | **公开**（精确路径） |
 | `identity-refresh` | `/api/identity/refresh` | **公开**（精确路径） |

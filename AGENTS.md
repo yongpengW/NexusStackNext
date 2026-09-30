@@ -4,7 +4,7 @@
 
 ### Issue tracker
 
-Issues, specs, and tickets live as local markdown files under `.scratch/<feature-slug>/` in this repo. See `docs/agents/issue-tracker.md`.
+Issues, tickets and the map live on **GitHub Issues** (`gh issue ...`); the backend is declared by the first heading of `docs/agents/issue-tracker.md`. `.scratch/<feature-slug>/` is the **frozen archive** of the 2026-09-30 round, not a tracker. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
@@ -99,7 +99,7 @@ src/
   BuildingBlocks/          shared kernel, proven by ≥2 contexts
   Services/<Context>/      one bounded context: Domain / Application / Infrastructure / Endpoints（模块）
   Hosts/                   可部署的宿主：PlatformHost 组装五个平台模块
-  Composition/             宿主装配库：日志与配置中心——六个宿主**一模一样**的那部分
+  Composition/             宿主装配库：日志与配置中心——两个宿主**一模一样**的那部分
   Gateway/                 YARP edge — routing model + host
 tests/
   TestSupport/             共享测试替身：SequentialIdGenerator / FixedClock / MutableClock
@@ -110,9 +110,10 @@ aspire/                    AppHost + ServiceDefaults（本地编排；**服务�
 （"被第二个上下文证明需要才上移"）；`BuildingBlocks` 里放的是运行时契约，
 而 TestSupport 是测试装置，两者不该混在一起。每个替身**只允许有一份定义**。
 
-**例外：`Program.cs` 里的 `Failure(Error error)` 各服务各写一份**，这是决定而非遗漏——
-那 6 行是每个服务**自己的 HTTP 契约**，不同服务对"错误码 → 状态码"的映射会不同。
-统一它们等于用一个共用函数锁死五个服务的 HTTP 语义。
+**例外：`Failure(Error error)` 各模块各写一份**（住在 `*Endpoints/*Module.cs`，不在 `Program.cs`；
+Auditing 不需要它——它的端点直接返回 202/200），这是决定而非遗漏——
+那几行是每个模块**自己的 HTTP 契约**，不同模块对"错误码 → 状态码"的映射会不同。
+统一它们等于用一个共用函数锁死五个模块的 HTTP 语义。
 
 每个上下文自带 `CONTEXT.md` 与 `docs/adr/`。当前五个上下文都是**平台能力**（通用/支撑子域）：
 它们由一个宿主 `src/Hosts/NexusStackNext.PlatformHost` 组装、共用一个数据库（库内按 schema 分开）。

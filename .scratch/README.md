@@ -1,6 +1,9 @@
-# .scratch — local markdown issue tracker data
+# .scratch — frozen archive of the markdown-tracker round (2026-09-30)
 
-This directory is this repo's **issue tracker** (backend: Local Markdown). Nothing here is source code; it is the working data for the engineering skills.
+This directory is the **frozen archive** of the 2026-09-30 round (72 tickets, 24 reviews, the map and the spec).
+It is **no longer this repo's issue tracker**: the live tracker is **GitHub Issues** (`gh issue ...`) —
+see [`../docs/agents/issue-tracker.md`](../docs/agents/issue-tracker.md). Nothing here carries new tickets,
+and nothing here is source code; it is the working data that round left behind.
 
 Full convention: [`../docs/agents/issue-tracker.md`](../docs/agents/issue-tracker.md).
 

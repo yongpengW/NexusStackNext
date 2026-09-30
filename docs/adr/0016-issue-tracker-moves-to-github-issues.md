@@ -2,7 +2,7 @@
 status: accepted
 ---
 
-# 票据后端下一轮切到 GitHub Issues（本文件同时是切换清单，尚未实施）
+# 票据后端切到 GitHub Issues（本文件同时是切换清单）
 
 ## 现状与触发条件
 
@@ -70,3 +70,22 @@ status: accepted
   与原生阻塞图。这是一次有取舍的交换，不是纯升级。
 - **离线不能建票**：markdown 后端在断网时照常工作，GitHub 后端不行。
 - **`main` 已受保护**（ruleset `main-pr-role`），所以这次切换本身也会走 PR：分支 → PR → CI 绿 → 人合并。
+
+## 实施记录（2026-09-30 已完成）
+
+**标题里的「尚未实施」已过期，2026-09-30 更正。** 切换发生在这一轮收口之后、下一个 effort 开始之前——
+与上面 `## 决定` 写的时机一致，所以那一节保留原文：它记的是当时的判断，不是现在的状态。
+
+判断依据都可复查：
+
+- `docs/agents/issue-tracker.md` 首行已是 `# Issue tracker: GitHub`，`.scratch/nexusstack-next/`
+  在文末被写成**冻结归档**（指针就在那一节）；
+- `scripts/check-issues.ps1` 已存在并进 CI——`.github/workflows/ci.yml` 的「断言跟踪器与规范一致」
+  一步同时跑 `check-tracker.ps1`（仓库侧）与它（GitHub 侧）；
+- GitHub 侧：地图 issue [#4](https://github.com/yongpengW/NexusStackNext/issues/4) 及其下 7 张子票
+  **全部 closed**，其中两张是**故意造的探针**（#10、#12）用来反向验证"孤儿票据会报红"，
+  并由此抓出一张真 bug（#11）；
+- 提交 `ee467c4`（PR #9）就是"契约翻牌 + GitHub 侧检查器 + CI 读 issue 的令牌"这一步。
+
+**这条更正的教训与本仓纪律第八条同形**：`## 切换时必须一起做的事` 那张清单被逐条执行了，
+而**清单自己标题里的状态字**（"尚未实施"）没有人负责更新——**执行清单的人不会自然成为更新标题的人**。

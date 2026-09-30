@@ -63,7 +63,7 @@ Labels: wayfinder:map
 - [0008 不引入需要商业授权的依赖](../docs/adr/0008-no-commercial-dependencies.md) — 商业批量库会绕过审计。
 - [0009 主键唯一权威：应用侧生成，数据库不做 IDENTITY](../docs/adr/0009-application-generated-ids.md)
 - [0015 第一个根账号由配置播种](../docs/adr/0015-root-account-is-seeded-from-config.md) — 引导期怎么起步：幂等播种 + 菜单管理端点只对根账号开放；含"上线后轮换口令"的部署义务
-- [0016 票据后端下一轮切到 GitHub Issues](../docs/adr/0016-issue-tracker-moves-to-github-issues.md) — **尚未实施**：接入条件已具备（gh 已装并登录），切换时机定在下一个 effort；本文件同时是切换清单（含哪些检查会失去对象、以及不迁移 72 张历史票的理由）
+- [0016 票据后端切到 GitHub Issues](../docs/adr/0016-issue-tracker-moves-to-github-issues.md) — **已实施**（2026-09-30）：`issue-tracker.md` 翻牌、`check-issues.ps1` 进 CI、GitHub 地图 #4 与其 7 张子票全部 closed；本文件同时是切换清单（含哪些检查失去对象）与**不迁移 72 张历史票**的理由
 - [69 两次 review 出来的问题](issues/69-review-fixes-and-mattskills-conformance.md) — 消息重试链、连接表主键、拦截器接线、结构检查守卫、聚合契约、假通过断言、四上下文进程内授权，全部带变异证据；规范侧把符合性变成了 18 项检查
 - [70 MattSkills 符合性收口](issues/70-mattskills-conformance-closeout.md) — spec 补齐 to-spec 的七节、编码标准单源、format 门禁（首次跑出 448 处违规）、词表收紧、变体声明（§19/§20/§21）；产物是 `review/23` 的逐技能矩阵
 - [72 六处差异全部消除](issues/72-six-differences-eliminated.md) — 33 张票的历史迁进 `## Comments`（deck 自己的解析器读出 40 条评论）、等待态改由阻塞边表达、`scripts/setup-wizard.sh`、`review/24` 的 HTML 机会报告、临时目录的交接文档；矩阵现在是满的
