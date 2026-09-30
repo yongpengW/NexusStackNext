@@ -22,10 +22,21 @@ public sealed class RabbitMqConsumerTests
             [.. consumers.Select(name => new EventSubscription
             {
                 EventName = EventName,
-                ConsumerName = name,
+                // **消费端名字里必须带前缀。**
+                //
+                // 队列名只由 (事件名, 消费端名) 派生，**不含交换机名**——所以只让交换机唯一
+                // 是不够的：队列仍然是全局的、持久的，上一次运行留下的死信与重试消息会让
+                // 这一次的断言**凭空成立**。实测：DLQ 里积了 39 条历次运行的残留，
+                // 于是"死信里有一条"和"处理器被调用三次"两条断言都在 2 秒内通过，
+                // 而它们本该各等 2 秒 + 4 秒的档位。
+                ConsumerName = $"{prefix}-{name}",
                 // 短档位：测试里等得起，而且两档足够验证"递增"。
                 RetryDelays = [TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4)],
             })]);
+
+    /// <summary>按名字取订阅——名字带前缀，所以按后缀匹配。</summary>
+    private static EventSubscription Sub(EventTopology topology, string name) =>
+        topology.Subscriptions.Single(s => s.ConsumerName.EndsWith($"-{name}", StringComparison.Ordinal));
 
     private static RabbitMqOptions OptionsFor(string prefix) =>
         RabbitMqTestBroker.Options with { ExchangeName = $"{prefix}-exchange" };
@@ -148,8 +159,8 @@ public sealed class RabbitMqConsumerTests
         var failing = new Probe { Fail = true };
         var succeeding = new Probe();
 
-        var alpha = topology.Subscriptions.Single(s => s.ConsumerName == "alpha");
-        var beta = topology.Subscriptions.Single(s => s.ConsumerName == "beta");
+        var alpha = Sub(topology, "alpha");
+        var beta = Sub(topology, "beta");
 
         await using var consumerAlpha = await StartConsumerAsync(options, topology, alpha, failing, stop.Token);
         await using var consumerBeta = await StartConsumerAsync(options, topology, beta, succeeding, stop.Token);
@@ -157,23 +168,31 @@ public sealed class RabbitMqConsumerTests
         // 让两个消费者真的挂上（声明完到开始消费之间有一小段）。
         await Task.Delay(TimeSpan.FromSeconds(2), stop.Token);
 
+        var envelope = Envelope();
+
         await using (var connection = await ConnectAsync(options))
         await using (var channel = await connection.CreateChannelAsync())
         {
             await channel.BasicPublishAsync(
                 exchange: topology.ExchangeName,
-                routingKey: Envelope().RoutingKey,
+                routingKey: envelope.RoutingKey,
                 mandatory: true,
-                basicProperties: new BasicProperties { Persistent = true },
+                // **带上 MessageId。** 生产发布端（RabbitMqEventBus）总是写它；
+                // 不写的话消费端的去重永远不触发，这条验收就走上了一条生产上不存在的路。
+                basicProperties: new BasicProperties
+                {
+                    Persistent = true,
+                    MessageId = envelope.MessageId.ToString("D", System.Globalization.CultureInfo.InvariantCulture),
+                },
                 body: Encoding.UTF8.GetBytes("""{"probe":true}"""));
 
             // **alpha 的重试队列应当收到一条。**
-            var alphaRetry = await WaitForDepthAsync(options, topology.Subscriptions[0].RetryQueueNames[0], expected: 1);
+            var alphaRetry = await WaitForDepthAsync(options, alpha.RetryQueueNames[0], expected: 1);
             Assert.True(alphaRetry >= 1, "失败的那个消费者没有把消息送进重试队列。");
 
             // **beta 的重试队列必须是空的**——它成功了，不该有任何重试。
             await using var probeChannel = await connection.CreateChannelAsync();
-            Assert.Equal(0, await ChannelDepthAsync(probeChannel, topology.Subscriptions[1].RetryQueueNames[0]));
+            Assert.Equal(0, await ChannelDepthAsync(probeChannel, beta.RetryQueueNames[0]));
 
             Assert.Equal(1, succeeding.Count);
         }
@@ -260,11 +279,20 @@ public sealed class RabbitMqConsumerTests
         await using (var connection = await ConnectAsync(options))
         await using (var channel = await connection.CreateChannelAsync())
         {
+            var envelope = Envelope();
+
             await channel.BasicPublishAsync(
                 exchange: topology.ExchangeName,
-                routingKey: Envelope().RoutingKey,
+                routingKey: envelope.RoutingKey,
                 mandatory: true,
-                basicProperties: new BasicProperties { Persistent = true },
+                // **带上 MessageId**（生产发布端总是写它）。这一条是这次修的那个缺陷的回归测试：
+                // 处理器失败时必须**归还去重名额**，否则重投被判重复而 ACK 跳过，
+                // 消息永远到不了死信——而"处理器恰好 3 次"也会退化成 1 次。
+                basicProperties: new BasicProperties
+                {
+                    Persistent = true,
+                    MessageId = envelope.MessageId.ToString("D", System.Globalization.CultureInfo.InvariantCulture),
+                },
                 body: Encoding.UTF8.GetBytes("""{"probe":true}"""));
 
             // 两个档位（2 秒 + 4 秒）走完，消息应当落在死信队列里。

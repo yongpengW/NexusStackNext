@@ -146,6 +146,13 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
             return Result.Failure(new Error("files.size.negative", "文件大小不能为负。"));
         }
 
+        // **空操作不是改变**（ADR-0011）：同一个句柄、同一个大小再写一次，状态没变。
+        // 这不是理论情形——上传重试会走到这里，而它不该把一个没变的聚合标成已修改。
+        if (string.Equals(StorageKey, storageKey, StringComparison.Ordinal) && Size == size)
+        {
+            return Result.Success();
+        }
+
         StorageKey = storageKey;
         Size = size;
         return Changed();

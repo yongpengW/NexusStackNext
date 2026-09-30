@@ -2,9 +2,8 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Domain.Entries;
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
-
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 

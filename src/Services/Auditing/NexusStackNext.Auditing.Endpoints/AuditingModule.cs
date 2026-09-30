@@ -35,7 +35,11 @@ public static class AuditingModule
     /// 映射本模块的端点。
     ///
     /// <para>Auditing 是**只写**上下文（ADR-0001）：审计条目由事件进入，
-    /// 没有对外的业务查询端点。访问 <c>GET /api/auditing/entries</c> 得到 404 是故意的。</para>
+    /// 没有对外的业务查询端点。访问 <c>GET /api/auditing/entries</c> 得到的既不是 404 也不是 200——
+    /// 那条路径上现在有写入口（<c>POST</c>），所以框架的回答是 <b>405</b>："这条路不通"，
+    /// 而不是"没有这条路"。两者都是拒绝，405 更准确：它说明这条路径是被**有意占用**的。</para>
+    /// <para>（原文写的是"得到 404 是故意的"，那句话在写下时是真的——当时这个模块还没有任何端点。
+    /// 票据 37 给该路径加上写入口之后就变成了假的，ADR 里已更正，这里同步。）</para>
     /// </summary>
     /// <param name="endpoints">端点路由构建器。</param>
     /// <returns>同一个构建器，便于串联。</returns>
@@ -43,6 +47,12 @@ public static class AuditingModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
+        // **两个端点都显式声明公开——而"公开"在这里的含义是"进程内可达"。**
+        //
+        // Auditing 在网关的路由表里**没有路由**（有意的：给它开一条边缘路由等于让任何人
+        // 都能注入审计记录）。所以这两个端点的可达面只有"内部 / 运维通道"。
+        // 显式写 `AllowAnonymous()` 而不是留空：留空的端点在默认拒绝的模块里是 403，
+        // 在别的模块里是放行——**两种默认都不该靠"没写"来表达**。
         endpoints.MapGet("/api/auditing", (IClock clock) => Results.Ok(new
         {
             context = "auditing",
@@ -51,7 +61,7 @@ public static class AuditingModule
             queryEndpoints = false,
             note = "只写上下文：没有业务查询端点，这是刻意的（ADR-0001）",
             at = clock.UtcNow,
-        }));
+        })).AllowAnonymous();
 
         // 事件进入的端口。
         //
@@ -87,7 +97,7 @@ public static class AuditingModule
             return result.Value == IngestionOutcome.Accepted
                 ? Results.Json(new { outcome = "Accepted" }, statusCode: StatusCodes.Status202Accepted)
                 : Results.Ok(new { outcome = "Duplicate" });
-        });
+        }).AllowAnonymous();
 
         return endpoints;
     }

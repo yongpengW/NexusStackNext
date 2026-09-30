@@ -1,5 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Application.Time;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
@@ -63,6 +67,44 @@ public static class NexusStackDbContextOptionsExtensions
         // 但让它**正确**比让它"恰好在这个用法下正确"更值——schema 是本基类的构造参数，
         // 那就得按"它可以变"来处理。
         builder.ReplaceService<IModelCacheKeyFactory, SchemaAwareModelCacheKeyFactory>();
+
+        return builder;
+    }
+
+    /// <summary>
+    /// 把本仓的两个 <c>SaveChanges</c> 拦截器接到这个上下文上：<b>审计字段</b>与<b>发件箱</b>。
+    ///
+    /// <para><b>为什么这是一个扩展方法，而不是在各处 <c>AddInterceptors</c>。</b>
+    /// 这两个拦截器此前**写完了但没有任何注册点**——全仓 <c>AddInterceptors</c> 只出现在测试的探针上下文里。
+    /// 后果是安静的：审计字段在生产里从不写（<c>CreatedAt</c> 一直是 default），
+    /// 领域事件也不进发件箱。而"没写"与"没有要写的"从外面看是一样的。</para>
+    ///
+    /// <para>把它们接在**装配的缝**上（用了 <c>UseNexusStackPostgres</c> 的上下文都会调这里），
+    /// 任何新增的 EF 上下文都不必记得这件事——与"每个宿主显式组装"同一条道理：
+    /// 组装写在一处，读代码的人看得见它由什么组成。</para>
+    /// </summary>
+    /// <param name="builder">选项构建器。</param>
+    /// <param name="services">服务提供者（拦截器从它取时钟、当前用户、映射器与序列化器）。</param>
+    /// <returns>同一个构建器，便于串联。</returns>
+    public static DbContextOptionsBuilder UseNexusStackInterceptors(
+        this DbContextOptionsBuilder builder,
+        IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(services);
+
+        // `ICurrentUser` 用 GetService 而不是 GetRequiredService：**基座不注册它**
+        // （`AddNexusStackApplication` 只管应用层基座），它由宿主按自己的认证形态注册。
+        // 没有它时用 `AnonymousCurrentUser`——那是"认证还没接入"的正确表现，
+        // 而不是一次失败：此时 `CreatedBy` 本来就该是 null。
+        // （这条是实测出来的：改成 GetRequiredService 会让 Identity 的 16 条集成测试一起红。）
+        var currentUser = services.GetService<ICurrentUser>() ?? new AnonymousCurrentUser();
+
+        builder.AddInterceptors(
+            new AuditInterceptor(services.GetRequiredService<IClock>(), currentUser),
+            new DomainEventOutboxInterceptor(
+                services.GetRequiredService<IIntegrationEventMapper>(),
+                services.GetRequiredService<IIntegrationEventSerializer>()));
 
         return builder;
     }

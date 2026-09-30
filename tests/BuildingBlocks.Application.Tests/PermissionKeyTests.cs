@@ -55,7 +55,11 @@ public sealed class PermissionKeyTests
         Assert.True(PermissionKey.TryParse(original.Value, out var parsed));
         Assert.Equal(original, parsed);
 
-        Assert.True(PermissionKey.TryParse("/API/Users/", out _) is false || true);
+        // 未归一化的原文**不是一把钥匙**，必须被拒。
+        //
+        // 这里原来写的是 `Assert.True(PermissionKey.TryParse("/API/Users/", out _) is false || true)`——
+        // `X is false || true` 恒为真，**它什么也没验**，而它读起来像在验"大小写与斜杠的处理"。
+        Assert.False(PermissionKey.TryParse("/API/Users/", out _));
     }
 
     [Theory]

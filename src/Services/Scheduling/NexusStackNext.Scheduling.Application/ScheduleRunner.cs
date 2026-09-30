@@ -80,7 +80,15 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock)
                 continue;
             }
 
-            task.MarkExecuted(now);
+            // **不丢弃结果**：`MarkExecuted` 在任务已停用时返回失败。
+            // 今天这条路到不了（上面刚判过 `IsDue`），但"结果被丢掉"是个会腐烂的形状——
+            // 将来谁改了 `IsDue` 或 `MarkExecuted` 的语义，这里会安静地少数一次触发。
+            if (task.MarkExecuted(now).IsFailure)
+            {
+                skipped++;
+                continue;
+            }
+
             await store.SaveAsync(task, cancellationToken).ConfigureAwait(false);
             triggered++;
         }

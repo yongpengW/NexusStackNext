@@ -317,8 +317,11 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 /// <para><b>它不需要数据库、也不需要配置中心。</b>Identity 当前注册的是内存存储，
 /// 而 AgileConfig 未配置时走降级路径——于是这个测试在任何机器上都能跑，
 /// 那正是"集成测试"该有的样子（需要真库的那些另有其人）。</para>
+///
+/// <para><b>它不是 sealed：</b>票据 67 的旅程要一个"配了根账号"的宿主变体，
+/// 而那变体只该多一段配置——派生比复制这个类短，也不会让两份配置漂移。</para>
 /// </summary>
-public sealed class PlatformApp : WebApplicationFactory<PlatformHostMarker>
+public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
 {
     /// <inheritdoc />
     protected override void ConfigureWebHost(IWebHostBuilder builder)

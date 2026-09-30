@@ -32,7 +32,14 @@ public static class PlatformModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        var settings = endpoints.MapGroup("/api/platform/settings");
+        // **写路径在进程内也要求认证，读路径显式声明公开。**
+        //
+        // 与边缘的 `platform-read`（公开、且只放 GET）一致：读是公开的，写要令牌。
+        // 此前这四条在进程内**没有任何授权判定**——"边缘是唯一入口"是**编排**的事实，
+        // 不是代码的事实；谁直连到这个进程谁就绕过了它。
+        // 用 `RequireAuthorization()` 而不是 Identity 那个过滤器：那个要算**权限键**，
+        // 是 RBAC 的落点；Platform 还没有登记权限键，它要的只是"令牌有效"。
+        var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization();
 
         // 读一个配置值。**键不合法与键没配过是两件事**：前者 400，后者 200 + value=null。
         settings.MapGet("/{key}", async (string key, SettingStore store, IClock clock) =>
@@ -50,7 +57,7 @@ public static class PlatformModule
                 value = await store.ReadAsync(parsed.Value),
                 at = clock.UtcNow,
             });
-        });
+        }).AllowAnonymous();
 
         // 列出一个分组下的全部配置。**按段比较，不做前缀匹配**。
         settings.MapGet("/", async (string scope, SettingStore store) =>
@@ -73,7 +80,7 @@ public static class PlatformModule
                     setting.Description,
                 }),
             });
-        });
+        }).AllowAnonymous();
 
         // 写一个配置值。键不存在就创建——调用方不需要先问"注册过没有"（那之间有竞态）。
         settings.MapPut("/{key}", async (

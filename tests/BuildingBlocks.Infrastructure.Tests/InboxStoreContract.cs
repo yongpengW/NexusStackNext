@@ -1,6 +1,5 @@
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
-
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tests;
 
@@ -66,6 +65,53 @@ public abstract class InboxStoreContract
 
         Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, Guid.NewGuid(), Now));
         Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, Guid.NewGuid(), Now));
+    }
+
+    /// <summary>
+    /// **三段式的第二段**：归还名额之后，同一条消息必须能再进来一次。
+    /// <para>
+    /// 缺了它，消费端的整条重试链是**安静的死的**：重投被判重复而 ACK 跳过，
+    /// 重试档位与死信队列都轮不到——而计数器还在显示"重试过"。
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task ReleasedMessage_IsAcceptedAgain()
+    {
+        var store = CreateStore();
+
+        Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
+        Assert.False(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
+
+        await store.ReleaseAsync("auditing", EventName, MessageId);
+
+        Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
+    }
+
+    /// <summary>归还只影响那一个名额：别的消费者、别的事件都不受牵连。</summary>
+    [Fact]
+    public async Task Release_IsScopedToTheExactTriple()
+    {
+        var store = CreateStore();
+
+        Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
+        Assert.True(await store.TryBeginProcessingAsync("scheduling", EventName, MessageId, Now));
+
+        await store.ReleaseAsync("auditing", EventName, MessageId);
+
+        Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
+        Assert.False(await store.TryBeginProcessingAsync("scheduling", EventName, MessageId, Now));
+    }
+
+    /// <summary>从未占过的名额也能安全归还——"已成功留键"之后业务不会走到这里，但重复释放不该抛。</summary>
+    [Fact]
+    public async Task Release_OnUnknownMessage_IsANoOp()
+    {
+        var store = CreateStore();
+
+        await store.ReleaseAsync("auditing", EventName, Guid.NewGuid());
+        await store.ReleaseAsync("auditing", EventName, Guid.NewGuid());
+
+        Assert.True(await store.TryBeginProcessingAsync("auditing", EventName, MessageId, Now));
     }
 }
 

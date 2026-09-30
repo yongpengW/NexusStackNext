@@ -141,4 +141,35 @@ public sealed class EfInboxStore<TContext>(TContext context) : IInboxStore
 
         return affected > 0;
     }
+
+    /// <inheritdoc />
+    public async Task ReleaseAsync(
+        string consumerName,
+        string eventName,
+        Guid messageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(consumerName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
+
+        // 同一条 SQL 上的对称操作：删掉那个占位的名额，让重投能再进来一次。
+        // 删不到行不是错误——"已成功留键"之后业务不会走到这里。
+        var sql = string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"""
+            DELETE FROM "{context.Schema}"."inbox"
+            WHERE "ConsumerName" = @consumer AND "EventName" = @event AND "MessageId" = @message
+            """);
+
+        Npgsql.NpgsqlParameter[] parameters =
+        [
+            new("consumer", consumerName),
+            new("event", eventName),
+            new("message", messageId),
+        ];
+
+        await context.Database
+            .ExecuteSqlRawAsync(sql, parameters, cancellationToken)
+            .ConfigureAwait(false);
+    }
 }

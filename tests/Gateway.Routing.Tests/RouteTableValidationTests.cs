@@ -20,11 +20,11 @@ public sealed class RouteTableValidationTests
         string routeId = "identity-api",
         string clusterId = "identity",
         string path = "/api/identity/{**catch-all}") => new()
-    {
-        RouteId = routeId,
-        ClusterId = clusterId,
-        Path = path,
-    };
+        {
+            RouteId = routeId,
+            ClusterId = clusterId,
+            Path = path,
+        };
 
     [Fact]
     public void ValidTable_PassesWithNoProblems()

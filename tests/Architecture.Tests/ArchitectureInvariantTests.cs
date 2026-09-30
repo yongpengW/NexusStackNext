@@ -239,8 +239,7 @@ public sealed class ArchitectureInvariantTests
         //
         // `*.Application` 那条规则早就有这两层，且注释里写明了"两层缺一不可"。
         // 同一条道理在领域层同样成立，只是当时漏了。
-        var domainProjectRoot = Path.Combine(SolutionAssemblies.RepositoryRoot, "src");
-        foreach (var csproj in Directory.EnumerateFiles(domainProjectRoot, "*.Domain.csproj", SearchOption.AllDirectories))
+        foreach (var csproj in SolutionAssemblies.SourceProjectPaths("*.Domain.csproj"))
         {
             var projectName = Path.GetFileNameWithoutExtension(csproj);
 
@@ -403,8 +402,7 @@ public sealed class ArchitectureInvariantTests
         // 两层缺一不可，这是实测出来的：C# 只为**实际用到**的程序集发出 AssemblyRef，
         // 所以一个没被使用的 ProjectReference 在编译产物里**不留任何痕迹**。
         // 只有第一层时，反向验证通不过——把引用注回去，测试照样全绿。
-        var projectRoot = Path.Combine(SolutionAssemblies.RepositoryRoot, "src");
-        foreach (var csproj in Directory.EnumerateFiles(projectRoot, "*.Application.csproj", SearchOption.AllDirectories))
+        foreach (var csproj in SolutionAssemblies.SourceProjectPaths("*.Application.csproj"))
         {
             var text = File.ReadAllText(csproj);
             foreach (System.Text.RegularExpressions.Match match in
@@ -517,6 +515,16 @@ public sealed class ArchitectureInvariantTests
 
             foreach (var reference in SolutionAssemblies.ReferencedAssemblyNames(path))
             {
+                // **指向别人的 `*.Contracts` 是合法的**——不变量 2 说的正是这个。
+                //
+                // 这一条原来只写在下面第二层（csproj），于是**两层判据不一致**：
+                // 真出现 `NexusStackNext.Identity.Contracts` 那天，引用它的上下文
+                // 会在这一层被判违规——而那恰恰是不变量 2 允许的通信方式。
+                if (reference.EndsWith(".Contracts", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 var referencedContext = ContextOf(reference);
                 if (referencedContext is not null && !string.Equals(referencedContext, context, StringComparison.Ordinal))
                 {
@@ -542,39 +550,36 @@ public sealed class ArchitectureInvariantTests
         //
         // **同一类错误犯三次，说明该把它变成一条规矩，而不是做第三次修补**——
         // 规矩已经写在 `AGENTS.md` 的「写检查与做验证的纪律」里。
-        var servicesRoot = Path.Combine(SolutionAssemblies.RepositoryRoot, "src", "Services");
-
-        if (Directory.Exists(servicesRoot))
+        // 取数走带守卫的版本（与 Domain / Application / Endpoints 三处一致）：
+        // 枚举为空时它会**响亮地失败**，而不是"零个工程、零条违规、测试通过"。
+        foreach (var csproj in SolutionAssemblies.SourceProjectPaths("NexusStackNext.*.csproj", "Services"))
         {
-            foreach (var csproj in Directory.EnumerateFiles(servicesRoot, "*.csproj", SearchOption.AllDirectories))
+            var ownContext = ContextOf(Path.GetFileNameWithoutExtension(csproj));
+            if (ownContext is null)
             {
-                var ownContext = ContextOf(Path.GetFileNameWithoutExtension(csproj));
-                if (ownContext is null)
+                continue;
+            }
+
+            foreach (System.Text.RegularExpressions.Match match in
+                System.Text.RegularExpressions.Regex.Matches(
+                    File.ReadAllText(csproj),
+                    "ProjectReference Include=\"[^\"]*?([^\\\\/\"]+)\\.csproj\""))
+            {
+                var referenced = match.Groups[1].Value;
+                var referencedContext = ContextOf(referenced);
+
+                if (referencedContext is null || string.Equals(referencedContext, ownContext, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                foreach (System.Text.RegularExpressions.Match match in
-                    System.Text.RegularExpressions.Regex.Matches(
-                        File.ReadAllText(csproj),
-                        "ProjectReference Include=\"[^\"]*?([^\\\\/\"]+)\\.csproj\""))
+                // **指向别人的 Contracts 是合法的**——不变量 2 说的正是这个。
+                if (referenced.EndsWith(".Contracts", StringComparison.Ordinal))
                 {
-                    var referenced = match.Groups[1].Value;
-                    var referencedContext = ContextOf(referenced);
-
-                    if (referencedContext is null || string.Equals(referencedContext, ownContext, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    // **指向别人的 Contracts 是合法的**——不变量 2 说的正是这个。
-                    if (referenced.EndsWith(".Contracts", StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    violations.Add($"{Path.GetFileName(csproj)} → {referenced}（工程引用；{ownContext} 引用 {referencedContext}）");
+                    continue;
                 }
+
+                violations.Add($"{Path.GetFileName(csproj)} → {referenced}（工程引用；{ownContext} 引用 {referencedContext}）");
             }
         }
 
@@ -649,15 +654,20 @@ public sealed class ArchitectureInvariantTests
         // 不变量 8。参照仓库每个 Program.cs 只有 8 行，全部装配藏在 InitAppliation(moduleKey) 里，
         // 于是"这个服务由什么组成"在代码里读不出来。
         var sourceRoot = Path.Combine(SolutionAssemblies.RepositoryRoot, "src");
-        if (!Directory.Exists(sourceRoot))
-        {
-            return;
-        }
+        var programFiles = Directory.Exists(sourceRoot)
+            ? Directory
+                .EnumerateFiles(sourceRoot, "Program.cs", SearchOption.AllDirectories)
+                .Where(static path => !IsBuildArtifact(path))
+                .ToArray()
+            : [];
 
-        var programFiles = Directory
-            .EnumerateFiles(sourceRoot, "Program.cs", SearchOption.AllDirectories)
-            .Where(static path => !IsBuildArtifact(path))
-            .ToArray();
+        // **守卫**：一个 `Program.cs` 都没扫到，与"每个宿主都显式组装"是两件事。
+        // 少了这一句，这条检查在枚举为空时会**静默通过**——正是 AGENTS.md
+        // 「写检查与做验证的纪律」第一条的形状，而这条检查此前恰好没有守卫。
+        Assert.True(
+            programFiles.Length > 0,
+            "src/ 下一个 Program.cs 都没扫到——这条检查等于没跑，不能当作通过。"
+                + "（多半是构建产物不在预期位置，而不是「真的没有宿主」）");
 
         var violations = new List<string>();
         foreach (var file in programFiles)

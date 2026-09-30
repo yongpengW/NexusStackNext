@@ -24,7 +24,9 @@ public sealed class RabbitMqTopologyAndPublishTests
             new EventSubscription
             {
                 EventName = "identity.user.registered",
-                ConsumerName = "probe",
+                // 带前缀的理由同 RabbitMqConsumerTests：队列名不含交换机名，
+                // 不带前缀就是一条跨运行共享的持久队列。
+                ConsumerName = $"{prefix}-probe",
             },
         ]);
 

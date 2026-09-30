@@ -3,6 +3,8 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.Loader;
 
+using Xunit;
+
 namespace NexusStackNext.Architecture.Tests;
 
 /// <summary>
@@ -38,6 +40,34 @@ internal static class SolutionAssemblies
             .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
             .OrderBy(static path => path, StringComparer.Ordinal)];
+
+    /// <summary>
+    /// 本仓 <c>src/</c> 下匹配 <paramref name="pattern"/> 的工程文件，<b>并保证确实取到了</b>。
+    ///
+    /// <para><b>守卫补在这里，不补在每个调用点。</b>csproj 这一类检查的形状是
+    /// "遍历 → 收集违规 → 断言违规为空"——枚举出来是空的，违规就是空的，测试就通过。
+    /// 第 21 轮 review 给程序集那一层补了守卫（<c>SourceAssemblyPaths()</c>），
+    /// 而**工程这一层有五处漏了**：同一个类里，有的地方有、有的地方没有。
+    /// 与其逐处补，不如把它们调用的取数换成带守卫的版本——
+    /// 当前的与将来新增的调用点都受它保护。</para>
+    /// </summary>
+    /// <param name="pattern">csproj 文件名模式，例如 <c>*.Domain.csproj</c>。</param>
+    /// <param name="subDirectory">相对 <c>src/</c> 的子目录；留空表示整个 <c>src/</c>。</param>
+    /// <returns>工程文件路径，路径序；保证非空。</returns>
+    public static IReadOnlyList<string> SourceProjectPaths(string pattern, string subDirectory = "")
+    {
+        var root = Path.Combine(RepositoryRoot, "src", subDirectory);
+        var paths = Directory.Exists(root)
+            ? new List<string>(Directory.EnumerateFiles(root, pattern, SearchOption.AllDirectories))
+            : [];
+
+        Assert.True(
+            paths.Count > 0,
+            $"src/{subDirectory} 下一个 {pattern} 都没找到——这组结构检查等于没跑，不能当作通过。"
+                + "（多半是工程布局改名了，而不是「项目里真的没有这类工程」）");
+
+        return [.. paths.OrderBy(static path => path, StringComparer.Ordinal)];
+    }
 
     /// <summary>读取程序集直接引用的程序集名（不加载程序集）。</summary>
     /// <param name="assemblyPath">程序集文件路径。</param>

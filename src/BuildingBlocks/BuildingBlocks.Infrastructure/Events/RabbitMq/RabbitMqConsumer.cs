@@ -27,8 +27,9 @@ public interface IIntegrationEventProcessor
 /// <list type="number">
 /// <item><b>手动 ACK。</b>自动 ACK 下，broker 在消息**交给**消费者时就认为它成功了——
 /// 消费者随后的失败（进程崩、抛异常）会让消息永久消失。</item>
-/// <item><b>先查 Inbox。</b>至少一次投递是消息队列的常态，不是异常。
-/// 重复的消息直接 ACK 跳过，业务只生效一次。</item>
+/// <item><b>先查 Inbox，失败再还名额。</b>至少一次投递是消息队列的常态，不是异常。
+/// 重复的消息直接 ACK 跳过，业务只生效一次；而**这一步没做成时要把名额还回去**，
+/// 否则重投会被当成重复而跳过——重试与死信就都成了摆设（三段式的第二段）。</item>
 /// <item><b>失败按档位重投。</b>参照仓库没有 DLQ 消费者——死信队列会静默堆积，
 /// 而"堆积"与"没人发消息"在监控上看起来一样。</item>
 /// </list>
@@ -237,6 +238,21 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
 
         var attempts = ConsumePolicy.ReadAttempts(ReadHeaders(deliver));
         var decision = ConsumePolicy.Decide(handled, attempts, _subscription);
+
+        if (!handled)
+        {
+            // **失败删键**（幂等三段式的第二段）。
+            //
+            // 上面占掉的名额必须还回去，否则重投到达时会被判成重复而 ACK 跳过：
+            // 重试档位永远轮不到，处理器的失败也永远到不了死信队列——
+            // 而计数器还在显示"重试过"。三步里缺这一步，整条重试链是安静的死的。
+            //
+            // 放在搬运**之前**：搬运成功就 ACK 了，之后没有第二次机会；
+            // 而搬运失败时消息会自己回来，那时名额已经还了，正是我们要的。
+            await _inbox
+                .ReleaseAsync(_subscription.ConsumerName, envelope.EventName, envelope.MessageId, cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         switch (decision.Outcome)
         {

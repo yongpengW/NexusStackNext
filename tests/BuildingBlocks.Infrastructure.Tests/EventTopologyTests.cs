@@ -14,11 +14,11 @@ public sealed class EventTopologyTests
         string consumer = "auditing",
         string eventName = EventName,
         params TimeSpan[] retryDelays) => new()
-    {
-        EventName = eventName,
-        ConsumerName = consumer,
-        RetryDelays = retryDelays,
-    };
+        {
+            EventName = eventName,
+            ConsumerName = consumer,
+            RetryDelays = retryDelays,
+        };
 
     [Fact]
     public void QueueNames_DeriveFromEventNameAndConsumer()

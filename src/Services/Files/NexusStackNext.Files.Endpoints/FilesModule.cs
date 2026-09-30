@@ -63,6 +63,19 @@ public static class FilesModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
+        // **进程内也要要求认证**：每个端点末尾的 `.RequireAuthorization()`。
+        //
+        // 部署不变量说"业务服务不对外暴露、边缘是唯一入口"，而那条约定**没有任何测试守着**。
+        // 网关确实会挡（`files-api` 是 requireAuthentication: true），但那是**编排**的事实，
+        // 不是代码的事实：谁能直连到这个进程，谁就绕过了整套保护。
+        // 此前这五个端点在进程内**没有任何授权判定**——宿主注释里那句"授权过滤器由模块
+        // 自己挂在它的分组上"只对 Identity 成立。
+        //
+        // 为什么用框架的 `RequireAuthorization()` 而不是 Identity 那个过滤器：
+        // 那个要算**权限键**（路由模板:方法）并比对预计算集合，是 RBAC 的落点；
+        // 这四个上下文还没有登记权限键，它们要的只是"令牌有效"——那正是框架能力的范围。
+        // 等哪个上下文开始登记权限键，再把它换成过滤器。
+
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
         // 需要 multipart 时它可以在这一层之上加，不影响下面任何东西。
@@ -98,7 +111,7 @@ public static class FilesModule
                     size = uploaded.Value.Size,
                     storageKey = uploaded.Value.StorageKey,
                 });
-        });
+        }).RequireAuthorization();
 
         // 下载字节。**文件名由领域校验过**，因此这里不必再防路径穿越——
         // 而磁盘存储解析句柄时还有第二道闸（见 LocalDiskFileStore）。
@@ -112,7 +125,7 @@ public static class FilesModule
             return opened.IsFailure
                 ? Failure(opened.Error)
                 : Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
-        });
+        }).RequireAuthorization();
 
         // 元数据（不碰字节）。
         endpoints.MapGet("/api/files/{id:long}/metadata", async (
@@ -133,7 +146,7 @@ public static class FilesModule
                     stored = file.IsStored,
                     file.UploadedAt,
                 });
-        });
+        }).RequireAuthorization();
 
         // 删除：先软删元数据，再删字节（顺序的理由见 FileService）。
         endpoints.MapDelete("/api/files/{id:long}", async (
@@ -144,7 +157,7 @@ public static class FilesModule
             var deleted = await files.DeleteAsync(new StoredFileId(id), cancellationToken);
 
             return deleted.IsFailure ? Failure(deleted.Error) : Results.NoContent();
-        });
+        }).RequireAuthorization();
 
         // 校验文件名——目录穿越的第一道闸在领域里，这里只是把它暴露出来。
         endpoints.MapGet("/api/files/validate-name", (string name) =>
@@ -154,7 +167,7 @@ public static class FilesModule
             return parsed.IsFailure
                 ? Failure(parsed.Error)
                 : Results.Ok(new { fileName = parsed.Value.Value });
-        });
+        }).RequireAuthorization();
 
         return endpoints;
     }

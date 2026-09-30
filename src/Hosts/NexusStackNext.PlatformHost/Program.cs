@@ -1,16 +1,16 @@
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
-using NexusStackNext.Auditing.Endpoints;
 using NexusStackNext.Aspire.ServiceDefaults;
+using NexusStackNext.Auditing.Endpoints;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Infrastructure;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
-using NexusStackNext.Files.Endpoints;
 using NexusStackNext.Composition;
+using NexusStackNext.Files.Endpoints;
 using NexusStackNext.Identity.Endpoints;
-using System.Text;
 using NexusStackNext.Platform.Endpoints;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
@@ -141,8 +141,14 @@ app.MapHealthChecks("/health/ready");
 
 // 五个模块各自的 HTTP 面。路由前缀已经带上下文名（/api/identity、/api/files……），
 // 所以它们并到一个进程里**不需要改任何路由**——网关的路由表也只改目标地址。
-// 授权过滤器由模块自己挂在它的分组上（见 `IdentityModule`）——
-// 端点组拥有自己的授权，宿主不必记得替每个模块挂一遍。
+//
+// **授权由模块自己声明**，宿主不必记得替每个模块挂一遍。两种机制，按需要选：
+//   · Identity 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
+//     并比对预计算集合，还要查会话版本（撤销），那是 RBAC 的落点；
+//   · 其余四个模块用框架的 `RequireAuthorization()` / `AllowAnonymous()`——它们还没有
+//     登记权限键，需要表达的只是"令牌有效"与"这个端点有意公开"。
+// 两者都是**进程内的**判定：直连后端也绕不过去。（"边缘是唯一入口"是编排的事实，
+// 不是代码的事实——见 AGENTS.md 的部署不变量。）
 app.MapIdentityEndpoints();
 app.MapPlatformEndpoints();
 app.MapSchedulingEndpoints();

@@ -1,8 +1,6 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
-
-using NexusStackNext.BuildingBlocks.Application.Events;
-
 using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tests;
@@ -20,14 +18,14 @@ public sealed class OutboxPublisherTests
         string eventName = EventName,
         int attemptCount = 0,
         DateTimeOffset? nextAttemptAt = null) => new()
-    {
-        Id = Guid.NewGuid(),
-        EventName = eventName,
-        Payload = """{"orderId":"00000000-0000-0000-0000-000000000001"}""",
-        OccurredAt = Start,
-        AttemptCount = attemptCount,
-        NextAttemptAt = nextAttemptAt,
-    };
+        {
+            Id = Guid.NewGuid(),
+            EventName = eventName,
+            Payload = """{"orderId":"00000000-0000-0000-0000-000000000001"}""",
+            OccurredAt = Start,
+            AttemptCount = attemptCount,
+            NextAttemptAt = nextAttemptAt,
+        };
 
     private static (OutboxPublisher Publisher, FakeOutboxStore Store, FakeEventBus Bus, MutableClock Clock) Build(
         OutboxDeliveryOptions? options = null)

@@ -44,4 +44,22 @@ public sealed class AggregateVersionTests
         task.Enable(Now);
         Assert.Equal(3, task.Version);
     }
+
+    /// <summary>
+    /// 用**同一个起算时刻**再启用一次是空操作；换一个时刻才是真的改变（ADR-0011）。
+    /// 判据是"下次计划时刻算出来有没有变"——那才是这个聚合的可观察状态。
+    /// </summary>
+    [Fact]
+    public void EnablingAgain_IsANoOpForTheSameFrom_AndAChangeForAnother()
+    {
+        var task = NewTask();
+        task.Enable(Now);
+        var before = task.Version;
+
+        task.Enable(Now);
+        Assert.Equal(before, task.Version);
+
+        task.Enable(Now.AddSeconds(1));
+        Assert.Equal(before + 1, task.Version);
+    }
 }

@@ -28,4 +28,28 @@ public sealed class AggregateVersionTests
         Assert.True(file.Delete().IsSuccess);
         Assert.Equal(3, file.Version);
     }
+
+    /// <summary>
+    /// 同一个句柄、同一个大小再标记一次是**空操作**（ADR-0011）——上传重试会走到这里，
+    /// 而它不该把一个什么都没变的聚合标成已修改。大小变了才是真的改变。
+    /// </summary>
+    [Fact]
+    public void MarkingStoredAgain_IsANoOpForTheSameKeyAndSize()
+    {
+        var file = StoredFile.Register(
+            new StoredFileId(1),
+            FileName.Create("a.txt").Value,
+            "text/plain",
+            ownerId: null,
+            Now).Value;
+
+        Assert.True(file.MarkStored("key-1", 16).IsSuccess);
+        var before = file.Version;
+
+        Assert.True(file.MarkStored("key-1", 16).IsSuccess);
+        Assert.Equal(before, file.Version);
+
+        Assert.True(file.MarkStored("key-1", 32).IsSuccess);
+        Assert.Equal(before + 1, file.Version);
+    }
 }

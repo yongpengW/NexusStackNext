@@ -38,15 +38,19 @@ public static class SchedulingModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
+        // 信息面**显式声明公开**（与边缘的 `scheduling-info` 一致）：公开必须写下来，
+        // 而不是靠"忘了标注"这种默认放行。
         endpoints.MapGet("/api/scheduling", (IClock clock) => Results.Ok(new
         {
             context = "scheduling",
             responsibility = "什么任务该在什么时候跑",
             tickIntervalSeconds = SchedulingWorker.TickInterval.TotalSeconds,
             at = clock.UtcNow,
-        }));
+        })).AllowAnonymous();
 
-        var tasks = endpoints.MapGroup("/api/scheduling/tasks");
+        // **管理面在进程内也要求认证**（与边缘的 `scheduling-management` 一致）。
+        // 此前这四个端点在进程内没有任何授权判定——"边缘是唯一入口"是编排的事实，不是代码的事实。
+        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization();
 
         // 列出全部任务。**这是"调度器真的在跑"的可观察证据**：
         // 任务被执行过一次之后，lastRunAt 会被写上、nextRunAt 会向前推进。

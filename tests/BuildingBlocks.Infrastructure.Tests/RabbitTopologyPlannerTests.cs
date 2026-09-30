@@ -17,11 +17,11 @@ public sealed class RabbitTopologyPlannerTests
         string consumer = Consumer,
         string eventName = EventName,
         params TimeSpan[] retryDelays) => new()
-    {
-        EventName = eventName,
-        ConsumerName = consumer,
-        RetryDelays = retryDelays,
-    };
+        {
+            EventName = eventName,
+            ConsumerName = consumer,
+            RetryDelays = retryDelays,
+        };
 
     private static TopologyPlan PlanFor(params EventSubscription[] subscriptions) =>
         RabbitTopologyPlanner.Plan(EventTopology.Create("nexusstack.events", subscriptions));

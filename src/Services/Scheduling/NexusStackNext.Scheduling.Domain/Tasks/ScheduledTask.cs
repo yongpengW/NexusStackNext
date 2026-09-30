@@ -178,8 +178,18 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
     /// <param name="from">起算时刻。</param>
     public void Enable(DateTimeOffset from)
     {
+        var nextRunAt = from + Interval;
+
+        // **空操作不是改变**（ADR-0011）。判据是"可观察状态有没有变"：
+        // 已经启用、且下次时刻算出来还是同一个值时，版本号不动。
+        // 缺了这句，一次"重新启用"会把一个什么都没变的聚合标成已修改。
+        if (IsEnabled && NextRunAt == nextRunAt)
+        {
+            return;
+        }
+
         IsEnabled = true;
-        NextRunAt = from + Interval;
+        NextRunAt = nextRunAt;
         BumpVersion();
     }
 

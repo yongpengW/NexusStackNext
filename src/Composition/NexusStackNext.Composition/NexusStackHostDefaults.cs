@@ -9,7 +9,8 @@ using Serilog;
 namespace NexusStackNext.Composition;
 
 /// <summary>
-/// 宿主的配置与日志组成。**六个宿主用完全相同的这几行**，所以它们住在这里而不是抄六遍。
+/// 宿主的配置与日志组成。**两个宿主用完全相同的这几行**，所以它们住在这里而不是抄两遍。
+/// （五个平台能力合成一个宿主之后就是两个：平台宿主与网关，见 ADR-0013。）
 /// </summary>
 public static class NexusStackHostDefaults
 {

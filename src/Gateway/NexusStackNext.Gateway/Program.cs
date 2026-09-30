@@ -1,23 +1,24 @@
-using NexusStackNext.Composition;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using NexusStackNext.BuildingBlocks.Application.Security;
-using Yarp.ReverseProxy.Configuration;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
 using NexusStackNext.BuildingBlocks.Application;
+using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.Composition;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
+using Yarp.ReverseProxy.Configuration;
 
 // 网关宿主。不变量 8：这个服务由什么组成，一眼看得出来。
 //
-// 它在边缘做四件事：路由、认证（形态尚未确定）、关联 ID、限流。
+// 它在边缘做四件事：路由、认证（**验签**——形态已由 ADR-0014 定下：令牌由 Identity 签发、
+// 网关只验"是不是我们发的、过期没有"）、关联 ID、限流。
 // 它**不**做授权 —— 那是各上下文的事（ADR-0003）。
 var builder = WebApplication.CreateBuilder(args);
 
-// 日志与配置中心：六个宿主完全相同的那几行（见 src/Composition）。
+// 日志与配置中心：两个宿主完全相同的那几行（见 src/Composition）。
 builder.AddNexusStackLogging();
 builder.AddNexusStackAgileConfig();
 

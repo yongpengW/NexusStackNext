@@ -112,4 +112,14 @@ internal sealed class FakeInboxStore : IInboxStore
         DateTimeOffset now,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(_seen.Add((consumerName, eventName, messageId)));
+
+    public Task ReleaseAsync(
+        string consumerName,
+        string eventName,
+        Guid messageId,
+        CancellationToken cancellationToken = default)
+    {
+        _seen.Remove((consumerName, eventName, messageId));
+        return Task.CompletedTask;
+    }
 }

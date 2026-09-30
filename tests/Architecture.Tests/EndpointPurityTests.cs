@@ -53,8 +53,9 @@ public sealed class EndpointPurityTests
         }
 
         // 第二层：**工程级**——读 csproj，看是否埋着一颗"随时可以用"的引用。
-        var projectRoot = Path.Combine(SolutionAssemblies.RepositoryRoot, "src");
-        foreach (var csproj in Directory.EnumerateFiles(projectRoot, "*.Endpoints.csproj", SearchOption.AllDirectories))
+        // 取数走带守卫的版本：枚举为空时它会让这条测试**响亮地失败**，
+        // 而不是"零个工程、零条违规、测试通过"。
+        foreach (var csproj in SolutionAssemblies.SourceProjectPaths("*.Endpoints.csproj"))
         {
             var text = File.ReadAllText(csproj);
 

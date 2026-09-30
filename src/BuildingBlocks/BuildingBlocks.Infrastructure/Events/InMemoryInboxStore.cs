@@ -37,4 +37,20 @@ public sealed class InMemoryInboxStore : IInboxStore
         // TryAdd 是原子的：并发重投时只有一个调用方拿到 true。
         return Task.FromResult(_seen.TryAdd(key, now));
     }
+
+    /// <inheritdoc />
+    public Task ReleaseAsync(
+        string consumerName,
+        string eventName,
+        Guid messageId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(consumerName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
+
+        // 本来就不在 = 无操作（可能是"已成功留键"之后再也不会走到这里，也可能是重复释放）。
+        _seen.TryRemove((consumerName, eventName, messageId), out _);
+
+        return Task.CompletedTask;
+    }
 }

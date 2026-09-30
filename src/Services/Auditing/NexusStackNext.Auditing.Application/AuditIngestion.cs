@@ -1,8 +1,8 @@
 using NexusStackNext.Auditing.Domain.Entries;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
-using NexusStackNext.BuildingBlocks.Application.Events;
 
 namespace NexusStackNext.Auditing.Application;
 
@@ -125,7 +125,23 @@ public sealed class AuditIngestion(
             return Result.Success(IngestionOutcome.Duplicate);
         }
 
-        await entries.AddAsync(entry.Value, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await entries.AddAsync(entry.Value, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // **失败删键**（幂等三段式的第二段）。
+            //
+            // 名额占了而落库抛错时，必须还回去：否则重投会被判成 Duplicate，
+            // 这条审计**永久静默丢失**——与上面那段顺序问题同一类失效，只是触发点不同。
+            // 生产实现里这两步同事务、失败一起回滚，所以这一段是给"没有事务"的实现兜底；
+            // 有事务时它只是删一行已经不存在的记录（无操作）。
+            await inbox
+                .ReleaseAsync(ConsumerName, message.EventName, message.MessageId, cancellationToken)
+                .ConfigureAwait(false);
+            throw;
+        }
 
         return Result.Success(IngestionOutcome.Accepted);
     }

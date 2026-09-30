@@ -13,6 +13,14 @@
       "requireAuthentication": false
     },
     {
+      "routeId": "platform-write",
+      "clusterId": "platform-host",
+      "path": "/api/platform/{**catch-all}",
+      "methods": [ "PUT", "DELETE" ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
       "routeId": "identity-info",
       "clusterId": "platform-host",
       "path": "/api/identity",

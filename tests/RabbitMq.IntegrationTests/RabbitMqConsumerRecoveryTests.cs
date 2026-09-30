@@ -120,7 +120,9 @@ public sealed class RabbitMqConsumerRecoveryTests
                 new EventSubscription
                 {
                     EventName = EventName,
-                    ConsumerName = "recovering",
+                    // 带前缀的理由同 RabbitMqConsumerTests：队列名只由 (事件名, 消费端名) 派生，
+                    // 不带前缀就是一条跨运行共享的持久队列。
+                    ConsumerName = $"{prefix}-recovering",
                     RetryDelays = [TimeSpan.FromSeconds(2)],
                 },
             ]);

@@ -1,9 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Infrastructure;
 using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
-using Microsoft.Extensions.Logging;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tests;
 
