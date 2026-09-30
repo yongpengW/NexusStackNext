@@ -14,6 +14,12 @@ The five canonical triage roles, each label string equal to its role name. See `
 
 Multi-context: `CONTEXT-MAP.md` at the repo root points at one `CONTEXT.md` per bounded context, each with its own `docs/adr/`. System-wide decisions live in `docs/adr/`. See `docs/agents/domain.md`.
 
+## Coding standards
+
+评审的 **Standards 轴**从这里进：`docs/agents/coding-standards.md`（`/code-review` 找的就是它）。
+规则本身在三个**单一事实源**里——本文件的不变量、`Directory.Build.props`、`.editorconfig`——
+那份文件只负责指路、区分硬违规与判断项、并列出评审要对照的那组 baseline 坏味道。
+
 ## Design vocabulary
 
 谈设计时用一套固定的词：**模块 / 接口 / 实现 / 深度 / 缝 / 适配器 / 杠杆 / 局部性**。
@@ -118,6 +124,20 @@ aspire/                    AppHost + ServiceDefaults（本地编排；**服务�
 dotnet build NexusStackNext.slnx     # 全量构建
 dotnet test NexusStackNext.slnx      # 全部测试（含架构不变量测试）
 ```
+
+### 三段自动化检查，顺序固定
+
+`typecheck → tests → format`（`resolving-merge-conflicts` 要求的三段，缺一段就等于没有这一段）：
+
+```powershell
+dotnet build NexusStackNext.slnx              # ① 类型与警告（TreatWarningsAsErrors）
+pwsh -File scripts/run-tests.ps1              # ② 测试（**串行**，见下）
+pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --verify-no-changes）
+```
+
+**第三条不是摆设**：第一次跑它时全仓有 **448 处**格式违规（含两个 CRLF 文件，而 `.editorconfig`
+写的是 LF），而**构建全绿**——"声明了风格"与"检查了风格"是两件事。
+修格式用 `scripts/check-format.ps1 -Fix`。
 
 ### 跑全量请用脚本，不要直接 `dotnet test <解决方案>`
 

@@ -70,6 +70,19 @@ AgileConfig__Nodes=http://your-agileconfig:8010
 
     $skeleton += @"
 
+# ---- 认证签名密钥（**必填**）----
+# 平台宿主没配它会**启动即失败**（OptionsValidationException），这是有意的：
+# 认证能力的配置不该缺省 succeed。至少 32 字节，别提交进仓库。
+# 网关那边不对称：缺它时照常启动，而所有要求认证的路由一律 401（fail-closed）。
+Jwt__SigningKey=
+
+# ---- 可选：根账号播种（引导用，不配则跳过）----
+# 配了就会在启动时播种一个内置根账号（**存在同名账号则跳过、绝不重置口令**）。
+# 它走 IsRoot 旁路、不做权限判定，所以上线后第一件事是轮换口令。
+# 它是权限链的第一环：没有它，谁也建不出菜单、授不出权限（见 env/README.md）。
+# Identity__Root__UserName=
+# Identity__Root__Password=
+
 # ---- 可选：运维可见性与多环境 ----
 # 后台「客户端」页面靠这两个把连接显示成人能看懂的东西（不配就是空白）。
 # AgileConfig__Name=

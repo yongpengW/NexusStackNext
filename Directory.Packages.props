@@ -34,7 +34,10 @@
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
     <!-- 集成测试直连真实 PostgreSQL。PostgreSQL 许可证。 -->
     <PackageVersion Include="Npgsql" Version="10.0.3" />
-  <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
+    <!-- RabbitMQ 官方 .NET 客户端。**许可证是 MPL-2.0**（弱 copyleft）——
+         ADR-0008 禁的是"需要付费授权"，它不在其中；但把它写成 MIT 是不准确的，
+         而清单里每一条的注释都是给人核对许可证用的。 -->
+    <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
   <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.0" />
   <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
@@ -49,11 +52,12 @@
     <PackageVersion Include="Serilog.Enrichers.Span" Version="3.1.0" />
     <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+    <!-- Seq 的**客户端**是 Apache-2.0，但 **Seq 服务端在生产使用是要付费的**——
+         这是清单里唯一"服务端可能收费"的一环。仓库里没有它也能跑（只在配了
+         `Serilog:Seq:ServerUrl` 时才接入），所以它符合 ADR-0008，但值得在这里说明。 -->
     <PackageVersion Include="Serilog.Sinks.Seq" Version="9.1.0" />
+    <!-- AgileConfig 客户端。Apache-2.0。 -->
     <PackageVersion Include="AgileConfig.Client" Version="1.9.1" />
-  </ItemGroup>
-
-  <ItemGroup Label="测试">
   </ItemGroup>
 
   <ItemGroup Label="网关">

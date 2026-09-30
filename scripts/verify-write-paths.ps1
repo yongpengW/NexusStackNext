@@ -113,6 +113,9 @@ finally {
     foreach ($proc in @($gateway, $platform)) {
         if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     }
-    Get-Process -Name dotnet, testhost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # 同 verify-user-journey.ps1：**只收我们自己起的宿主**，不按 `dotnet` 收
+    # （那会连带杀掉机器上所有 .NET 进程，而越界不会有任何提示）。
+    Get-Process -Name NexusStackNext.PlatformHost, NexusStackNext.Gateway -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host "  日志留在 $outDir" -ForegroundColor DarkGray
 }

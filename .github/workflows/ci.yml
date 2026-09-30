@@ -27,6 +27,12 @@ jobs:
         # 含 Architecture.Tests —— 把 AGENTS.md 的八条不变量变成会失败的断言。
         run: dotnet test NexusStackNext.slnx --no-build --configuration Release
 
+      - name: 断言格式符合 .editorconfig
+        # typecheck（构建）→ tests → format：`resolving-merge-conflicts` 要求的三段自动化检查。
+        # 第一次跑它的时候全仓有 448 处违规而构建全绿——"声明了风格"与"检查了风格"是两件事。
+        shell: pwsh
+        run: ./scripts/check-format.ps1
+
       - name: 断言模板生成物不含凭据
         # 见票据 16：参照仓库把生产凭据随模板分发了出去。
         shell: pwsh

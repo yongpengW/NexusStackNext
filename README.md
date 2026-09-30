@@ -58,10 +58,51 @@ tests/
 
 ## 要求
 
-- **.NET SDK 10.0**（`global.json` 已固定）——**只有这一条是必需的**。
+- **.NET SDK 10.0**（`global.json` 已固定）。
+- **一个 JWT 签名密钥**（`Jwt:SigningKey`，≥32 字节）——见下。
+- **一个根账号**（`Identity:Root:UserName` / `Identity:Root:Password`）——**推荐**，见下。
 
-**跑起来不需要任何外部依赖。** 平台宿主加边缘（两个进程）可以在一台干净的机器上全部启动并端到端跑通：
+**跑起来不需要任何外部中间件。** 平台宿主加边缘（两个进程）可以在一台干净的机器上全部启动并端到端跑通：
 宿主当前装配的是内存与本地磁盘适配器，消息基座也有内存实现。
+
+> **但平台宿主需要一个签名密钥才起得来。** 没配 `Jwt:SigningKey` 时它是**启动即失败**：
+> `OptionsValidationException: Jwt:SigningKey 至少需要 32 字节`，进程退出、健康检查无从应答。
+> 这是**有意**的（认证能力的配置不该缺省 succeed），但"干净机器能跑"这句话必须把它说清楚：
+>
+> ```powershell
+> $env:Jwt__SigningKey = "至少32字节的签名密钥，别提交进仓库"
+> ```
+>
+> 网关那边**不对称**：缺密钥时它照常启动，而**所有要求认证的路由一律 401**（fail-closed，
+> 并且在 stderr 说明缺什么）——编排系统不会因此重启风暴，运维也看得见。
+> 两侧的取舍不同，是因为"边缘不可用"与"后端不可用"的后果不同。
+> `scripts/run-host.ps1 -Init` 生成的骨架里带这一项。
+
+> **另外：权限链的第一环需要一个根账号。** 没配 `Identity:Root:*` 时宿主照常启动（只是跳过播种），
+> 但**没有任何人能授权**：菜单建不出来 ⇒ api-resource 挂不上 ⇒ 角色授不到权限 ⇒
+> 所有受权限保护的端点一律 403（票据 67 的现象）。
+>
+> ```powershell
+> $env:Identity__Root__UserName = "root"
+> $env:Identity__Root__Password = "改成你自己的口令"
+> ```
+>
+> 播种是**幂等**的：存在同名账号就跳过，**绝不用配置里的口令覆盖它**。
+> 它走 `IsRoot` 旁路、不做权限判定——所以**上线后第一件事是轮换口令**，
+> 不需要它的环境里干脆别配。全部取舍写在 `env/README.md` 那一节。
+
+### 让向导带你走一遍（推荐）
+
+上面那些值散在配置中心后台、broker 与测试库里，抄起来烦、重讲一遍更烦。
+`scripts/setup-wizard.sh` 是一个**交互式向导**：它按阶段打开该开的页面、说清点哪里、
+把你复制的值写进 `env/*.dev`（幂等，重跑时以已有值作默认），并在每一步告诉你还剩几阶段。
+
+```bash
+bash scripts/setup-wizard.sh          # 需要 bash（Windows 上 git bash 即可）
+```
+
+它只做**只有人能做的事**——去后台点眼睛图标、去 broker 那台机器抄口令。
+能由 agent 做的（生成签名密钥、写文件、验证）它自己做；CI 一个 secret 都不需要，所以它不设任何 secret。
 
 生产适配器的状态（**这是实测过的状态，不是"计划"**）：
 
@@ -143,12 +184,22 @@ pwsh ./scripts/assert-no-credentials.ps1   # 模板生成物不含凭据
 
 | 路由 | 路径 | 认证 |
 |---|---|---|
-| `platform-read` | `/api/platform/{**catch-all}` | 公开 |
+| `platform-read` | `/api/platform/{**catch-all}` | 公开（**只放 GET**） |
 | `identity-info` | `/api/identity` | 公开 |
+| `identity-login` | `/api/identity/login` | **公开**（精确路径） |
+| `identity-refresh` | `/api/identity/refresh` | **公开**（精确路径） |
+| `identity-self-register` | `/api/identity/users` | **公开**（精确路径） |
 | `identity-management` | `/api/identity/{**catch-all}` | 要求认证 |
 | `scheduling-info` | `/api/scheduling` | 公开 |
 | `scheduling-management` | `/api/scheduling/{**catch-all}` | 要求认证 |
 | `files-api` | `/api/files/{**catch-all}` | 要求认证 |
+
+> **中间三条精确路径不是冗余，是修出来的。** `identity-management` 是一条**前缀**路由，
+> 它会把 `/api/identity/login`、`/refresh`、`/users` 一起吞进去——于是**登录本身需要一个令牌**，
+> 而所有测试仍然是绿的（集成测试直打宿主，跳过了网关的路由策略）。
+> YARP 让更具体的路由胜出，所以这三条精确路由把它救了回来。
+> 守这件事的有两条防线：静态读 `routes.json` 的 `AnonymousEndpointsAreReachableTests`，
+> 与手动跑的 `scripts/verify-user-journey.ps1`（两个真进程 + curl）。
 
 **Auditing 没有路由，这是刻意的**：它是只写上下文，事件从消息总线进入。
 给它开一条边缘路由等于让任何人都能注入审计记录——而审计的全部价值就在于它不可伪造。

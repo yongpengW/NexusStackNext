@@ -1,13 +1,22 @@
+﻿---
+status: accepted
+---
+
 # 用 .NET Aspire 编排应用进程，中间件走外部依赖
 
 决定：新增 `aspire/NexusStackNext.AppHost`，用 .NET Aspire 一键拉起 5 个服务与网关。
 PostgreSQL、Redis、RabbitMQ、Seq、AgileConfig **不由 Aspire 拉起**，而是作为外部依赖，
 由配置提供连接信息。Aspire **只用于本地开发与集成测试**，生产仍走容器编排。
 
-## Status
+## 修订说明
 
-accepted（2026-09-29 修订。原方案设想由 Aspire 托管中间件容器，但本机**没有任何容器运行时**——
-Docker / Podman / WSL 均未安装，也没有本机的 PostgreSQL / Redis / RabbitMQ，故改为"应用进程编排 + 外部中间件"。）
+2026-09-29 修订。原方案设想由 Aspire 托管中间件容器，但本机**没有任何容器运行时**——
+Docker / Podman / WSL 均未安装，也没有本机的 PostgreSQL / Redis / RabbitMQ，
+故改为"应用进程编排 + 外部中间件"。
+
+> **`status` 从前面的 `## Status` 节改成 frontmatter**（2026-09-30）：`ADR-FORMAT` 把它定义成
+> **frontmatter 字段**，取值是封闭集 `proposed | accepted | deprecated | superseded by ADR-NNNN`。
+> 节里那句散文留下（它解释的是**为什么改**），但机器要读的那个词现在在文件头上。
 
 ## Considered Options
 

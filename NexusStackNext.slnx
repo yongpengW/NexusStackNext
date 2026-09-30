@@ -53,9 +53,14 @@
 
   <Folder Name="/src/Gateway/">
     <Project Path="src/Gateway/NexusStackNext.Gateway.Routing/NexusStackNext.Gateway.Routing.csproj" />
+    <Project Path="src/Gateway/NexusStackNext.Gateway/NexusStackNext.Gateway.csproj" />
+  </Folder>
+
+  <!-- aspire/ 在磁盘上是独立的一层（本地编排，见 ADR-0005），分组也照磁盘来。
+       它此前被塞进 /src/Gateway/，于是"分组镜像磁盘布局"这句话在那一处不成立。 -->
+  <Folder Name="/aspire/">
     <Project Path="aspire/NexusStackNext.AppHost/NexusStackNext.AppHost.csproj" />
-  <Project Path="aspire/NexusStackNext.ServiceDefaults/NexusStackNext.ServiceDefaults.csproj" />
-  <Project Path="src/Gateway/NexusStackNext.Gateway/NexusStackNext.Gateway.csproj" />
+    <Project Path="aspire/NexusStackNext.ServiceDefaults/NexusStackNext.ServiceDefaults.csproj" />
   </Folder>
 
   <Folder Name="/tests/">

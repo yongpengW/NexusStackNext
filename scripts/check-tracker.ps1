@@ -5,15 +5,21 @@
 # 存在的理由与票据 28 同源：一句关于"我们做了什么"的声明，如果不受检查，
 # 就会在没人注意的时候变成谎话。跟踪器正是这种东西——它读起来像结论。
 #
-# 检查项：
-#   1. 每张票据都有 Status / Type / Labels / Blocked by
-#   2. Status 是五个规范角色之一
-#   3. Blocked by 引用的票据真实存在
-#   4. 已 resolved 的票据，不得仍被未解决的票据阻塞（自相矛盾）
-#   5. map.md 的票据索引与 issues/ 下的文件一一对应
-#   6. 每个上下文都有 CONTEXT.md、至少一份 docs/adr/、以及一个宿主
-#   7. CONTEXT-MAP.md 提到每一个上下文
-#   8. 每个 ADR 目录的编号连续，无跳号
+# 检查项：**23 组**，文件内按段注释分开——
+#   1~ 8：票据字段与状态、map 索引一一对应、上下文与 ADR 的结构（本段）
+#   9~10：模板与凭据（若有）
+#  11~18：MattSkills 规范符合性（Type 取值、Labels 与 Status 自洽、地图五节逐字、
+#          决策索引行形式、字段不得写成粗体、Blocked by 形状、后端探测锚点、调色盘 11 键、
+#          CONTEXT.md 术语必须有 _Avoid_）
+#     19：`spec.md` 的七节与用户故事形式（to-spec 的模板）
+#     20：跟踪器的**变体必须被声明**（面板只认 `## Comments`，本仓用了两套历史标题）
+#     21：`AGENTS.md` 的**指针必须指向存在的文件**（写作规范的核心规则）
+#     22：ADR 的 `status` frontmatter 取值来自封闭集（`ADR-FORMAT`；不要求每份都写）
+#     23：`review/` 的编号唯一且连续（这条是被我自己撞号逼出来的——见那段注释）
+#     24：已 resolved 的票不得留未打勾的验收框（这条是被两张"结票时漏打勾"的票逼出来的）
+#
+# （这张清单原来只写到第 8 条，而实际早就不是 8 条了——**清单本身也是会被读的声明**，
+#   所以它跟代码一起更新。）
 
 param(
     # 要检查的 effort（`.scratch/` 下的目录名）。不给就**自动发现**。
@@ -110,6 +116,8 @@ Get-ChildItem -File $issuesDir -Filter '*.md' | ForEach-Object {
     $tickets[$id] = [pscustomobject]@{
         File      = $_.Name
         Status    = $status
+        Type      = $type
+        Labels    = $labels
         BlockedBy = $blockedBy
     }
 }
@@ -314,6 +322,404 @@ if (Test-Path $solutionForProjects) {
 
     foreach ($extraProject in $inSolutionOnly) {
         Add-Problem '解决方案项目' "NexusStackNext.slnx 里有 $extraProject，但磁盘上没有这个文件"
+    }
+}
+
+# ---------- 11~18：MattSkills 规范符合性 ----------
+#
+# 这一节的每一条都对应 deck 里**真的会读它**的那行代码，或技能里**明文**的规则；
+# 来源写在每条上面。写清"谁在读它"，下一个人才判断得出这条该不该改。
+#
+# 为什么它们要进脚本：这些正是本仓反复记录的那类声明——读起来像事实，
+# 而**没有任何东西会在它过期时提醒你**。panels 读不到就是静默失效。
+
+$wayfinderTypes = @('research', 'prototype', 'grilling', 'task')
+$triageRoles = @('needs-triage', 'needs-info', 'ready-for-agent', 'ready-for-human', 'wontfix')
+$ticketLabelCount = 0
+
+foreach ($id in ($tickets.Keys | Sort-Object)) {
+    $t = $tickets[$id]
+    $ownLabels = @($t.Labels -split '[,，]' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+    # 11：Type 必须是 wayfinder 四类之一。
+    # 来源：docs/agents/issue-tracker.md 的 Wayfinding operations。
+    # 面板把 Type 存进 customFields 而**不校验**——非法值不报错，只是"这张票是哪一类"静默丢失。
+    if ($t.Type -and ($wayfinderTypes -notcontains $t.Type)) {
+        Add-Problem '票据类型' "$($t.File) 的 Type '$($t.Type)' 不是 wayfinder 四类之一（$($wayfinderTypes -join ' / ')）"
+    }
+
+    # 12：Labels 必须是规范角色，且与 Status 自洽。
+    # 来源：docs/agents/triage-labels.md（五个角色）+ triage 的状态机
+    # （已完成的票不该还挂在"待处理 / 等回复"里）。
+    foreach ($label in $ownLabels) {
+        $ticketLabelCount++
+        if (-not (($triageRoles -contains $label) -or $label.StartsWith('wayfinder:', [StringComparison]::Ordinal))) {
+            Add-Problem '票据标签' "$($t.File) 的 Labels '$label' 不是规范角色（五个 triage 角色或 wayfinder:*）"
+        }
+        if ($t.Status -eq 'resolved' -and $label -in @('needs-triage', 'needs-info')) {
+            Add-Problem '标签自相矛盾' "$($t.File) 已 resolved，却仍挂着 '$label'——完成的票不该留在未完成队列里"
+        }
+    }
+}
+
+if ($ticketLabelCount -eq 0) {
+    Add-Problem '检查自身' '一张票的 Labels 都没解析到——这部分检查等于没跑，不能当作通过。'
+}
+
+# 13：地图五个区块必须**逐字**存在。
+# 来源：面板按 `## Destination` / `## Notes` / `## Decisions so far` /
+# `## Not yet specified` / `## Out of scope` 五个名字取值（lib/mapBody.js、shared/parser.js）。
+# 改掉一个名字不会报错——那一块在面板里直接变成空的。
+$mapSections = @('Destination', 'Notes', 'Decisions so far', 'Not yet specified', 'Out of scope')
+foreach ($section in $mapSections) {
+    if ($mapText -notmatch "(?m)^##\s+$([regex]::Escape($section))\s*$") {
+        Add-Problem '地图区块' "map.md 缺少逐字小节 '## $section'——面板读不到它，那一块会是空的"
+    }
+}
+
+# 14：Decisions so far 的条目必须是 "- [标题](链接) — 要点"。
+# 来源：同一个解析器**只收**以 "- [" 开头的行；别的写法放在那里等于不存在。
+# （这里的正则用单引号：双引号里的 `$(...)` 会被 PowerShell 当成子表达式求值。）
+$decisionBlockPattern = '(?ms)^##\s+Decisions so far\s*$\r?\n(.*?)(?=^##\s|\z)'
+$decisionIndexRows = 0
+if ($mapText -match $decisionBlockPattern) {
+    foreach ($line in ($Matches[1] -split "`n")) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('<!--')) { continue }
+        if ($trimmed -notmatch '^-\s') { continue }
+
+        if ($trimmed -match '^-\s*\[.+?\]\(.+?\)') {
+            $decisionIndexRows++
+        }
+        else {
+            Add-Problem '地图索引' "map.md 的 Decisions so far 有一行不是 '- [标题](链接) — 要点' 形式，面板看不见它：$trimmed"
+        }
+    }
+}
+if ($decisionIndexRows -eq 0) {
+    Add-Problem '检查自身' 'map.md 的 Decisions so far 一条合规索引都没有——检查等于没跑，不能当作通过。'
+}
+
+# 15：票据字段必须是**行首裸行**，不能写成粗体。
+# 来源：面板的正则是 `^\s*Status\s*[:\uFF1A]`。`**Status:** ready-for-agent` 匹配不到，
+# 于是状态、依赖、认领一起静默失效——而 deck 自己 bundled 的 to-tickets 本地模板
+# 恰好就是粗体写法，照抄即中招。这条守的是"照模板写反而读不到"。
+foreach ($file in (Get-ChildItem -File $issuesDir -Filter '*.md')) {
+    $text = Get-Content $file.FullName -Encoding UTF8 -Raw
+    foreach ($field in @('Status', 'Type', 'Labels', 'Blocked by')) {
+        if ($text -match "(?m)^\s*\*\*\s*$([regex]::Escape($field))\s*[:\uFF1A]") {
+            Add-Problem '票据字段形状' "$($file.Name) 把 '$field' 写成了粗体——面板只认行首裸字段行"
+        }
+    }
+}
+
+# 16：Blocked by 的形状统一（`—` 或 `NN, NN`）。
+# 来源：本仓历史里 `-` 与 `—` 两种都出现过。面板只按 /#?(\d+)/ 取号，所以这不是面板的问题，
+# 是**人读时**"到底阻塞了什么"的问题。
+foreach ($id in ($tickets.Keys | Sort-Object)) {
+    $raw = $tickets[$id].BlockedBy
+    if (-not $raw) { continue }
+    if ($raw -match '^\s*(?:—|–|-|无|None)\s*$') { continue }
+    if ($raw -match '^\s*\d{2}(?:\s*[,、]\s*\d{2})*\s*$') { continue }
+    Add-Problem '票据依赖形状' "$($tickets[$id].File) 的 Blocked by '$raw' 形状不规范（应为 '—' 或 'NN, NN'）"
+}
+
+# 17：后端探测锚点 + 调色盘契约。
+# 来源：deck 靠 `docs/agents/issue-tracker.md` 的 H1 判定后端（正则 /^#\s*issue\s*tracker\s*:\s*(markdown|local)/im），
+# 靠 `docs/agents/label-colors.json` 覆盖内置调色盘（缺键的标签在面板里会回灰）。
+$trackerDoc = Join-Path $repoRoot 'docs/agents/issue-tracker.md'
+if (-not (Test-Path $trackerDoc)) {
+    Add-Problem '规范文件' 'docs/agents/issue-tracker.md 不存在——deck 判定不出这个仓库用哪种 tracker'
+}
+else {
+    $trackerHead = Get-Content $trackerDoc -Encoding UTF8 -TotalCount 1
+    if ($trackerHead -notmatch '^#\s*Issue tracker\s*:') {
+        Add-Problem '规范文件' "docs/agents/issue-tracker.md 的首行是 '$trackerHead'，不是 '# Issue tracker: …'——面板会因此认不出后端"
+    }
+}
+
+$palettePath = Join-Path $repoRoot 'docs/agents/label-colors.json'
+if (-not (Test-Path $palettePath)) {
+    Add-Problem '规范文件' 'docs/agents/label-colors.json 不存在——面板的标签配色会全部回落到灰'
+}
+else {
+    $palette = Get-Content $palettePath -Encoding UTF8 -Raw | ConvertFrom-Json
+    $paletteNames = @($palette.PSObject.Properties.Name)
+    $requiredColors = @('bug', 'needs-triage', 'needs-info', 'ready-for-agent', 'ready-for-human',
+        'wontfix', 'wayfinder:map', 'wayfinder:research', 'wayfinder:prototype',
+        'wayfinder:grilling', 'wayfinder:task')
+    foreach ($name in $requiredColors) {
+        if ($paletteNames -notcontains $name) {
+            Add-Problem '标签配色' "docs/agents/label-colors.json 缺 '$name'——该标签在面板里会回灰"
+        }
+    }
+    if ($paletteNames.Count -eq 0) {
+        Add-Problem '检查自身' 'docs/agents/label-colors.json 一个键都没有——检查等于没跑。'
+    }
+}
+
+# 18：CONTEXT.md 的词表格式。
+# 来源：CONTEXT-FORMAT.md——每个术语是一条 `**Term**:` 定义，且**必须**配 `_Avoid_:`（表里有反义词
+# 才是"有主张"的词表；没有反义词的条目会让同义词悄悄回来）。
+# 这里只查格式（可判的那半）；"定义里有没有实现细节"是判断项，写在 docs/agents/domain.md 的约定里。
+$contextFiles = @(Get-ChildItem -File (Join-Path $repoRoot 'src/Services') -Recurse -Filter 'CONTEXT.md')
+if ($contextFiles.Count -eq 0) {
+    Add-Problem '检查自身' '一个上下文 CONTEXT.md 都没找到——词表格式检查等于没跑，不能当作通过。'
+}
+foreach ($contextFile in $contextFiles) {
+    $pendingTerm = $null
+    foreach ($line in (Get-Content $contextFile.FullName -Encoding UTF8)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\*\*.+?\*\*\s*[:\uFF1A]?\s*$' -or $trimmed -match '^\*\*.+?\*\*\s*[:\uFF1A]\s*\S') {
+            if ($pendingTerm) {
+                Add-Problem '词表格式' "$($contextFile.Name) 的术语 $pendingTerm 没有 _Avoid_ 行"
+            }
+            $pendingTerm = $trimmed
+            continue
+        }
+        if ($trimmed.StartsWith('_Avoid_')) { $pendingTerm = $null }
+    }
+    if ($pendingTerm) {
+        Add-Problem '词表格式' "$($contextFile.Name) 的术语 $pendingTerm 没有 _Avoid_ 行"
+    }
+}
+
+# 19：spec.md 的形状（`to-spec` 的模板）。
+#
+# 来源：bundled-skills/to-spec/SKILL.md 的 `<spec-template>`——七个**逐字** H2，
+# 以及"编号用户故事，形式为 `As an <actor>, I want a <feature>, so that <benefit>`"。
+# 这份 spec 的原文逐字保留在附录里，七节是新补的；两者并存是**有意的**（附录是证据）。
+$specPath = Join-Path $scratch 'spec.md'
+if (-not (Test-Path $specPath)) {
+    Add-Problem '规范文件' "spec.md 不存在（$scratch）——to-spec 的产物缺了，这一层没有对象可查"
+}
+else {
+    $specText = Get-Content $specPath -Encoding UTF8 -Raw
+
+    foreach ($heading in @('Problem Statement', 'Solution', 'User Stories', 'Implementation Decisions',
+            'Testing Decisions', 'Out of Scope', 'Further Notes')) {
+        if ($specText -notmatch "(?m)^##\s+$([regex]::Escape($heading))\s*$") {
+            Add-Problem 'spec 形状' "spec.md 缺少逐字小节 '## $heading'（to-spec 的模板要求七节都在）"
+        }
+    }
+
+    $storyPattern = '^\d+\.\s+As an? .+,\s+I want .+,\s+so that .+$'
+    $storyLines = @($specText -split "`n" | ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -match '^\d+\.\s+As\s' })
+
+    if ($storyLines.Count -eq 0) {
+        Add-Problem '检查自身' 'spec.md 里一条用户故事都没解析到——检查等于没跑，不能当作通过。'
+    }
+    else {
+        foreach ($story in $storyLines) {
+            if ($story -notmatch $storyPattern) {
+                Add-Problem '用户故事' "spec.md 的用户故事形式不对（应为 'As an <actor>, I want a <feature>, so that <benefit>'）：$story"
+            }
+        }
+    }
+}
+
+# 20：历史对话**住在 `## Comments` 里**——面板唯一认的锚点。
+#
+# 这一条的前身是"**变体必须被声明**"：36 张票的历史原先用 `## Answer` / `## 第 N 轮：…`
+# 两套标题，面板读不到，所以当时的守则退一步只要求"把变体写下来"。
+# 2026-09-30 把那 33 张票迁进了文末的 `## Comments`（迁移带逐行等价证明，并用 deck 自己的
+# `parseMd` 跑出 **40 条评论**），**变体没有了**，于是这条检查换了对象：
+#   它现在守"**别再长回来**"（旧标题一律违规）以及"那份说明还在"（声明义务仍在：
+#   将来若又出现某种变体，它必须先被写下来）。
+$trackerDocPath = Join-Path $repoRoot 'docs/agents/issue-tracker.md'
+if (-not (Test-Path $trackerDocPath)) {
+    Add-Problem '规范文件' 'docs/agents/issue-tracker.md 不存在——跟踪器的约定没有落点，变体也就无从声明'
+}
+else {
+    $trackerDoc = Get-Content $trackerDocPath -Encoding UTF8 -Raw
+
+    foreach ($needle in @('### 三、面板能读到什么', '## Comments', 'Wayfinding operations')) {
+        if ($trackerDoc -notmatch [regex]::Escape($needle)) {
+            # 注意：`(` 跨行的续行在**命令参数位置**是不成立的（隐式续行只在表达式语法里），
+            # 所以这里先把消息拼出来。写错过两次，解析器报的是"缺少右括号"。
+            $message = "docs/agents/issue-tracker.md 里找不到 '$needle'：" +
+                '锚点与面板行为是这套跟踪器与面板之间唯一的契约，必须写在文档里'
+            Add-Problem '变体声明' $message
+        }
+    }
+}
+
+$issueDir20 = Join-Path $scratch 'issues'
+$issueFiles20 = @(Get-ChildItem $issueDir20 -Filter '*.md' -ErrorAction SilentlyContinue)
+
+if ($issueFiles20.Count -eq 0) {
+    Add-Problem '检查自身' 'issues/ 下一张票都没有——第 20 条没有对象，不能当作通过'
+}
+else {
+    $legacyTickets = @()
+    $withComments = @()
+
+    foreach ($ticket in $issueFiles20) {
+        $ticketText = Get-Content $ticket.FullName -Encoding UTF8 -Raw
+
+        # 旧标题一律违规：历史必须挂在 `## Comments` 之下（`### ` 块），不能自成 H2。
+        if ($ticketText -match '(?m)^## (Answer|第 )') { $legacyTickets += $ticket.Name }
+        if ($ticketText -match '(?m)^## Comments\s*$') { $withComments += $ticket.Name }
+    }
+
+    foreach ($legacy in $legacyTickets) {
+        $message = "$legacy 用了 `## Answer` / `## 第 N 轮：…` 这两套旧标题——" +
+            '面板只认 `## Comments`，那种写法在面板里等于没有历史'
+        Add-Problem '历史位置' $message
+    }
+
+    if ($withComments.Count -eq 0) {
+        Write-Host '  提示：当前没有票带 `## Comments`——若这是有意的（全新 effort），可以删掉这一段。' -ForegroundColor DarkGray
+    }
+}
+
+# 21：**指针必须指向存在的东西**（`writing-for-agents` 的核心规则）。
+#
+# `AGENTS.md` 是给 agent 读的入口，它的价值几乎全在指针上——所以"指针指向的东西还在不在"
+# 是最该被守住的一条。指着空气的指针比没有指针更坏：它让人以为那里有东西。
+$agentsPath = Join-Path $repoRoot 'AGENTS.md'
+if (-not (Test-Path $agentsPath)) {
+    Add-Problem '规范文件' 'AGENTS.md 不存在——给 agent 的入口没有了'
+}
+else {
+    $agentsText = Get-Content $agentsPath -Encoding UTF8 -Raw
+
+    # 这份清单是**枚举常量**，不是被扫出来的集合——所以它没有"空枚举"的风险；
+    # 风险在另一边：有人删掉一个文件却留下指针。
+    $pointers = @(
+        'docs/agents/issue-tracker.md',
+        'docs/agents/triage-labels.md',
+        'docs/agents/domain.md',
+        'docs/agents/design-vocabulary.md',
+        'docs/agents/coding-standards.md'
+    )
+
+    foreach ($pointer in $pointers) {
+        if (-not (Test-Path (Join-Path $repoRoot $pointer))) {
+            Add-Problem '指针' "AGENTS.md 指向 $pointer，而那个文件不存在——指着空气的指针比没有指针更坏"
+        }
+        elseif ($agentsText -notmatch [regex]::Escape($pointer)) {
+            Add-Problem '指针' "AGENTS.md 没有提到 $pointer：文件存在，却没有任何入口指向它"
+        }
+    }
+}
+
+# 22：ADR 的 `status` frontmatter **取值必须来自封闭集**（`ADR-FORMAT`）。
+#
+# 这一条**不要求**每份 ADR 都写 `status`——`ADR-FORMAT` 说它可选
+# （"Only include these when they add genuine value. Most ADRs won't need them."）。
+# 守的是"**写了就必须合法**"：把 `status: 部分取代` 这种话写进去，
+# 机器读不懂，而它读起来像已经被记录了——这正是本仓最反复吃的那类亏。
+$adrDir = Join-Path $repoRoot 'docs/adr'
+$adrFiles = @(Get-ChildItem $adrDir -Filter '*.md' -ErrorAction SilentlyContinue)
+
+if ($adrFiles.Count -eq 0) {
+    Add-Problem '检查自身' 'docs/adr/ 下一份 ADR 都没有——第 22 条没有对象，不能当作通过'
+}
+else {
+    $allowedPrefixes = @('proposed', 'accepted', 'deprecated', 'superseded by ADR-')
+
+    foreach ($adr in $adrFiles) {
+        $adrText = Get-Content $adr.FullName -Encoding UTF8 -Raw
+
+        if ($adrText -match '(?ms)^---\s*\r?\n(.*?)\r?\n---\s*$') {
+            $frontMatter = $Matches[1]
+
+            if ($frontMatter -match '(?m)^status:\s*(.+)$') {
+                $status = $Matches[1].Trim().Trim('"').Trim("'")
+                $legal = $false
+
+                foreach ($prefix in $allowedPrefixes) {
+                    if ($status.StartsWith($prefix, [System.StringComparison]::Ordinal)) { $legal = $true; break }
+                }
+
+                if (-not $legal) {
+                    # （同 §20 的注释：`(` 跨行在**命令参数位置**不成立，先把消息拼出来。
+                    #   这条注释是第二次写下的——第一次写完之后我又踩了一次。）
+                    $message = "$($adr.Name) 的 status 不在封闭集里：'$status'" +
+                        '（应为 proposed / accepted / deprecated / superseded by ADR-NNNN）'
+                    Add-Problem 'ADR 状态' $message
+                }
+            }
+        }
+    }
+}
+
+# 23：`review/` 的编号**唯一且连续**（`issue-tracker.md` §四 定了 `NN-<slug>.md` 这条规则）。
+#
+# 这条是**被我自己的错逼出来的**：符合性矩阵我随手编了 `05`，而 `05-deep-modules.md`
+# 已经在那儿了——同一个号两份文件，按编号找东西的人必然找错。
+# **没有检查会说话，因为我从没写过这条规则**；而"没写过"与"不需要"看起来一样。
+$reviewDir = Join-Path $scratch 'review'
+
+# **只扫 `*.md`**：编号规则（`issue-tracker.md` §四）说的就是 `NN-<slug>.md`，
+# 所以把过滤条件写成这条规则本身，而不是靠"这一层恰好没有别的东西"。
+#
+# 这一层里确实有别的东西：`review/acl-report/`（ACL 诊断技能留下的 `.jsonl`）。
+# 它在**子目录**里，而 `-File` 不递归，所以它现在扫不到——
+# 但"扫不到"是它的位置恰好如此，不是一条规则。
+#
+# > **这里原来写的是另一个原因，而那个原因是错的。** 我一度以为它是**隐藏文件**、
+# > 于是"别的机器上会误报没有 NN- 前缀"，还把这句写进了注释。
+# > 真去反向验证时才发现：它只是住在子目录里，从来不存在跨平台误报。
+# > **一个听起来合理的机制，被写下来之后就成了"事实"**——而它没有经过验证。
+$reviewFiles = @(Get-ChildItem $reviewDir -File -Filter '*.md' -ErrorAction SilentlyContinue)
+
+if ($reviewFiles.Count -eq 0) {
+    Add-Problem '检查自身' 'review/ 下一份评审都没有——第 23 条没有对象，不能当作通过'
+}
+else {
+    $reviewNumbers = @()
+
+    foreach ($review in $reviewFiles) {
+        if ($review.Name -match '^(\d{2})-') { $reviewNumbers += [int]$Matches[1] }
+        else { Add-Problem '评审编号' "$($review.Name) 没有 NN- 前缀（issue-tracker.md §四 规定形如 NN-<slug>.md）" }
+    }
+
+    if ($reviewNumbers.Count -gt 0) {
+        $sortedReviews = @($reviewNumbers | Sort-Object)
+        $dupeReviews = @($sortedReviews | Group-Object | Where-Object { $_.Count -gt 1 })
+
+        foreach ($dupe in $dupeReviews) {
+            $message = "review/ 里编号 $($dupe.Name) 有 $($dupe.Count) 份文件——同一号两份，按编号找必然找错"
+            Add-Problem '评审编号' $message
+        }
+
+        $missingReviews = @(1..$sortedReviews[-1] | Where-Object { $sortedReviews -notcontains $_ })
+        if ($missingReviews.Count -gt 0) {
+            Add-Problem '评审编号' "review/ 里跳号：$($missingReviews -join ', ')（编号是索引，跳号让人以为文件丢了）"
+        }
+    }
+}
+
+# 24：**已 resolved 的票不得留未打勾的验收框。**
+#
+# 这条检查是被两张票逼出来的：`15-test-harness`（5 个框一个没打）与
+# `08-identity-application`（差 1 个），两张都置成了 `resolved`，而验收标准一条都没勾。
+# 它一直没人看见——直到有人问"还有没有待完成的票据"，按这个形状去筛才浮出来。
+#
+# 为什么这条规则成立：`resolved` 的意思就是"验收标准成立"。留着未打勾的框只有两种可能——
+# 漏打（补上并写明证据），或者**验收标准已被取代**（那就必须写明取代者：
+# 15 号票里两条与后来"绝不能并行跑共享库"的决定直接冲突）。两种都不是"不用管"。
+$ticketFiles24 = @(Get-ChildItem $issueDir20 -Filter '*.md' -ErrorAction SilentlyContinue)
+
+if ($ticketFiles24.Count -eq 0) {
+    Add-Problem '检查自身' 'issues/ 下一张票都没有——第 24 条没有对象，不能当作通过'
+}
+else {
+    foreach ($ticket in $ticketFiles24) {
+        $ticketText24 = Get-Content $ticket.FullName -Raw -Encoding UTF8
+
+        $status24 = if ($ticketText24 -match '(?m)^Status:\s*(.+)$') { $Matches[1].Trim() } else { '' }
+        if ($status24 -ne 'resolved') { continue }
+
+        $unchecked = ([regex]::Matches($ticketText24, '(?m)^\s*-\s*\[ \]')).Count
+
+        if ($unchecked -gt 0) {
+            $message = "$($ticket.Name) 已 resolved，却还留着 $unchecked 个未打勾的验收框——" +
+                'resolved 的意思就是"验收成立"：要么补证据打勾，要么写明它被哪张票取代'
+            Add-Problem '验收框' $message
+        }
     }
 }
 

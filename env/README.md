@@ -44,9 +44,24 @@ pwsh -File scripts\run-host.ps1 gateway
 AgileConfig__AppId=nexusstack_platform
 AgileConfig__Secret=<从后台应用列表的眼睛图标复制>
 AgileConfig__Nodes=http://your-agileconfig:8010
+Jwt__SigningKey=<至少 32 字节的随机串>
 ```
 
 `#` 开头是注释，空行忽略。**值里不要加引号**（不像 shell 那样需要）。
+
+### `Jwt__SigningKey` 是**必填**的（与 AgileConfig 不同）
+
+它没有降级路径：**没配它，平台宿主启动即失败**——
+
+```
+OptionsValidationException: Jwt:SigningKey 至少需要 32 字节。请在配置中心或环境变量里配置，不要放进仓库。
+```
+
+这是有意的（认证能力的配置不该缺省 succeed），代价是"干净机器上先设一个环境变量"这一步必须写下来——
+`run-host.ps1 -Init` 生成的骨架里已经带上了这一行。
+
+网关**不对称**：缺它时照常启动，而所有要求认证的路由一律 **401**（fail-closed），
+并在 stderr 说明缺什么。两侧取舍不同，是因为"边缘不可用"与"后端不可用"的后果不同。
 
 ## 变量名里的双下划线
 
@@ -61,6 +76,29 @@ AgileConfig__Nodes=http://your-agileconfig:8010
 | `AgileConfig__Name` | `AgileConfig:Name` |
 | `AgileConfig__Tag` | `AgileConfig:Tag` |
 | `Files__StorageRoot` | `Files:StorageRoot` |
+| `Jwt__SigningKey` | `Jwt:SigningKey` |
+| `Identity__Root__UserName` | `Identity:Root:UserName` |
+| `Identity__Root__Password` | `Identity:Root:Password` |
+
+### 根账号：`Identity__Root__*` 是**引导用的**，配了就会播种
+
+平台宿主启动时读这两个键，按配置**播种一个内置根账号**（存在同名账号则**跳过**，绝不重置口令）。
+它是这条链的第一环：`AccessPolicy` 里有一条 `IsRoot` 旁路，而在这条播种逻辑存在之前，
+**它没有任何真实的账号能走上去**——没有根账号 ⇒ 建不出菜单 ⇒ 授权链永远断在第一环 ⇒
+所有受权限保护的端点永远 403。
+
+| 行为 | 什么时候 |
+|---|---|
+| 两个键都为空 | **安静跳过**（记一条 Information）。很多部署不需要根账号，这是合法的 |
+| 用户名已存在 | **跳过，口令不动**——绝不用配置里的值覆盖一个可能已经被人改过的账号 |
+| 配了却建不出来（用户名非法等） | **宿主启动失败**并说明原因。否则它会以"启动成功、但没有人能授权"的形态活着 |
+
+**它为什么值得写进部署文档**（票据 71 的决定原话）：*配置文件里有一个能进一切的账号*。
+`IsRoot` 旁路不对它做权限判定，所以：
+
+- **上线后第一件事是轮换它的口令**，或者在不需要它的环境里**根本不要配这两个键**；
+- 口令是明文放在这里的（播种时当场哈希——Pbkdf2 带随机盐，人手算不出可复现的哈希值），
+  所以它和其它凭据一样必须待在被 gitignore 的 `env/*.dev` 或配置中心里。
 
 ## `env/test.dev` —— 集成测试的连接串
 

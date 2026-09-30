@@ -1,0 +1,15 @@
+# 行尾的权威在这里。
+#
+# **为什么需要这一条。** `.editorconfig` 里写着 `end_of_line = lf`，但那只对**编辑器**生效——
+# git 自己的 `core.autocrlf`（本机是 `true`）会在 **checkout 时**把 LF 换成 CRLF。
+# 实测过两个后果，都不是理论：
+#
+#   1. `dotnet format --verify-no-changes` 报 **363 处 `ENDOFLINE`**，其中两个测试文件
+#      整体是 CRLF，而 `.editorconfig` 说它们该是 LF——**声明了规则，没有任何东西执行它**；
+#   2. `scripts/setup-wizard.sh` 是 bash 脚本：一旦被 checkout 成 CRLF，
+#      `set -euo pipefail` 会带上 `\r` 而直接失败（`$'\r': command not found`），
+#      而那时错误信息离原因很远。
+#
+# 所以行尾的单一事实源是这一行：**仓库里存 LF，checkout 出来也是 LF**。
+# 它同时是 `dotnet format` 那 363 处违规不会复发的原因。
+* text=auto eol=lf

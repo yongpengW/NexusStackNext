@@ -1,4 +1,14 @@
+---
+status: superseded by ADR-0013
+---
+
 # 每个上下文独占一个 PostgreSQL 数据库，放弃多数据库支持
+
+> 三份 ADR 里两处"状态不是 accepted"的地方，形状应当一致，而且都照 `ADR-FORMAT`：
+> **状态是文件头上的 frontmatter 字段**（`status:`），取值来自封闭集
+> `proposed | accepted | deprecated | superseded by ADR-NNNN`。
+> 原来只在开头写一段引用块，读的人找不到那个字段。补记 2026-09-30；
+> 下面那段引用块**逐字保留**——它解释的是"为什么只是部分取代"。
 
 > **2026-09-29 已被 [ADR-0013](0013-platform-capabilities-are-one-host.md) 部分取代。**
 >
