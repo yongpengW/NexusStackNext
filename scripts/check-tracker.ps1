@@ -199,6 +199,25 @@ foreach ($line in ($mapText -split "`n")) {
 # ---------- 6~7：上下文规范完整性 ----------
 $contexts = Get-ChildItem -Directory $servicesDir | Select-Object -ExpandProperty Name
 
+# **报违规之前，先证明自己看得见对象。**
+#
+# 这条守卫是被 CI 逼出来的：这一段的路径匹配原来写的是 `\\adr\\`（只认 Windows 反斜杠），
+# 而 CI 跑在 ubuntu 上——那边路径是 `/`，于是**一个 adr 目录都匹配不上**，
+# 于是循环里逐个上下文报"没有 docs/adr/"：**五个冤枉**，而真正的问题是匹配写错了。
+#
+# 它和 `AGENTS.md` 那条纪律是同一枚硬币的两面：
+# 枚举为空时**不得报告通过**，同样也**不得报告违规**——因为那两种报告都不是观察到的结论。
+$allContextAdrDirs = @(Get-ChildItem -Recurse -Directory $servicesDir -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq 'adr' -and $_.FullName -notmatch '[\\/](bin|obj)[\\/]' })
+
+if ($allContextAdrDirs.Count -eq 0) {
+    # 先拼进变量再调用：跨行的 `(...)` 在**命令参数位置**不成立（隐式续行只在表达式语法里）。
+    # 这个坑我在这个文件里踩了第三次——所以这次把原因写在旁边。
+    $adrGuardMessage = 'src/Services 下一个 docs/adr 目录都没扫到——' +
+        '这不是"五个上下文都缺 ADR"，而是这条检查的路径匹配没对上（分隔符？大小写？）'
+    Add-Problem '检查自身' $adrGuardMessage
+}
+
 foreach ($context in $contexts) {
     $dir = Join-Path $servicesDir $context
 
@@ -206,9 +225,10 @@ foreach ($context in $contexts) {
         Add-Problem '上下文规范' "$context 缺少 CONTEXT.md"
     }
 
+    # 分隔符写成 `[\\/]` 而不是 `\\`：**同一段代码在 Windows 与 Linux 上都要能匹配**。
     $adrs = @(Get-ChildItem -Recurse -File $dir -Filter '*.md' -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match '\\adr\\' })
-    if ($adrs.Count -eq 0) {
+              Where-Object { $_.FullName -match '[\\/]adr[\\/]' })
+    if ($adrs.Count -eq 0 -and $allContextAdrDirs.Count -gt 0) {
         Add-Problem '上下文规范' "$context 没有 docs/adr/ ——上下文级决定无处安放"
     }
 
@@ -235,7 +255,7 @@ foreach ($context in $contexts) {
 
 # ---------- 8：ADR 编号连续 ----------
 $adrDirs = @(Get-ChildItem -Recurse -Directory $repoRoot -ErrorAction SilentlyContinue |
-             Where-Object { $_.Name -eq 'adr' -and $_.FullName -notmatch '\\(bin|obj)\\' })
+             Where-Object { $_.Name -eq 'adr' -and $_.FullName -notmatch '[\\/](bin|obj)[\\/]' })
 
 foreach ($dir in $adrDirs) {
     $numbers = @(Get-ChildItem -File $dir.FullName -Filter '*.md' |
@@ -308,7 +328,7 @@ if (Test-Path $solutionForProjects) {
 
     $onDisk = @(
         Get-ChildItem -Recurse -File $repoRoot -Filter *.csproj |
-            Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } |
+            Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
             ForEach-Object { $_.FullName.Substring($repoRoot.Length + 1).Replace('\', '/') } |
             Sort-Object
     )

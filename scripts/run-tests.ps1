@@ -160,7 +160,7 @@ if ($LASTEXITCODE -ne 0) {
 # 并行只是把争抢变成了等待。而且这里会打印每个工程的耗时——
 # "哪一类慢"正是上一次排查时最缺的信息（票据 66）。
 $testProjects = Get-ChildItem -Recurse -File (Join-Path $repoRoot 'tests') -Filter '*.csproj' |
-    Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' } |
+    Where-Object { $_.FullName -notmatch '[\\/](bin|obj)[\\/]' } |
     Where-Object {
         # `TestSupport` 与 `IntegrationSupport` 是**库**不是测试工程（它们显式写着
         # `<IsTestProject>false</IsTestProject>`）。`dotnet test` 对它们会立刻成功退出，

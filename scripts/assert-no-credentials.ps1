@@ -75,7 +75,7 @@ $patterns = [ordered]@{
 
 $files = Get-ChildItem -Recurse -File $out |
     Where-Object {
-        $_.FullName -notmatch '\\(bin|obj)\\' -and
+        $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and
         # 不扫自己：本脚本里写着样本口令与正则本身，扫自己必然命中。
         $_.Name -ne 'assert-no-credentials.ps1'
     }
