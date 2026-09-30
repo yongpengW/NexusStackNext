@@ -568,12 +568,28 @@ if (-not (Test-Path $trackerDocPath)) {
 else {
     $trackerDoc = Get-Content $trackerDocPath -Encoding UTF8 -Raw
 
-    foreach ($needle in @('### 三、面板能读到什么', '## Comments', 'Wayfinding operations')) {
+    # **跟着后端声明走**（ADR-0016，2026-09-30）。
+    #
+    # 这份文件的第一行就是后端声明。后端是 markdown 时，下面那两个锚点（`## Comments`、
+    # "面板能读到什么"）就是面板与跟踪器之间唯一的契约；后端切到 GitHub 之后它们**失去了对象**
+    # ——但"面板要读得到东西"这条**义务没有消失**，只是换了载体：原生评论、原生依赖、`wayfinder:map`。
+    #
+    # 这条检查第一次红就是被这次切换逼出来的：契约一翻，它还去找 markdown 的锚点，
+    # 于是**它自己**成了"失去对象"的那一个。改写（而不是删掉）才对：义务要留在原处。
+    $declaredBackend = if ($trackerDoc -match '(?m)^#\s*issue\s*tracker\s*:\s*github') { 'github' } else { 'markdown' }
+
+    $anchors = if ($declaredBackend -eq 'github') {
+        @('Wayfinding operations', 'wayfinder:map', 'blocked_by', 'gh issue')
+    } else {
+        @('### 三、面板能读到什么', '## Comments', 'Wayfinding operations')
+    }
+
+    foreach ($needle in $anchors) {
         if ($trackerDoc -notmatch [regex]::Escape($needle)) {
             # 注意：`(` 跨行的续行在**命令参数位置**是不成立的（隐式续行只在表达式语法里），
             # 所以这里先把消息拼出来。写错过两次，解析器报的是"缺少右括号"。
-            $message = "docs/agents/issue-tracker.md 里找不到 '$needle'：" +
-                '锚点与面板行为是这套跟踪器与面板之间唯一的契约，必须写在文档里'
+            $message = "docs/agents/issue-tracker.md（声明为 $declaredBackend）里找不到 '$needle'：" +
+                '面板与跟踪器之间的锚点是唯一的契约，必须写在文档里'
             Add-Problem '变体声明' $message
         }
     }

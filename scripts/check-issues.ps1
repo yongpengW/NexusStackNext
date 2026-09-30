@@ -34,10 +34,15 @@ $problems = @()
 # "没有违反"与"什么都没查到"长得一样——所以先把这个歧义掐掉。
 $gh = (Get-Command gh -ErrorAction SilentlyContinue)
 if (-not $gh) {
+    # **必须包在 @() 里**：只有一个候选时 `-join`/索引的语义会把字符串当数组用，
+    # `$candidates[0]` 于是取到第一个**字符**（'C'），随后 `& 'C'` 报"术语 'C' 不被识别"——
+    # 一个看起来像"工具没装"的错误，其实是索引语义。这条是实测踩出来的。
     $candidates = @(
-        (Join-Path $env:ProgramFiles 'GitHub CLI\gh.exe'),
-        (Join-Path ${env:ProgramFiles(x86)} 'GitHub CLI\gh.exe')
-    ) | Where-Object { $_ -and (Test-Path $_) }
+        @(
+            (Join-Path $env:ProgramFiles 'GitHub CLI\gh.exe'),
+            $(if (${env:ProgramFiles(x86)}) { Join-Path ${env:ProgramFiles(x86)} 'GitHub CLI\gh.exe' })
+        ) | Where-Object { $_ -and (Test-Path $_) }
+    )
     if ($candidates.Count -eq 0) {
         Write-Host '找不到 gh——GitHub 后端的检查没有它就没有对象可查。' -ForegroundColor Red
         exit 1
