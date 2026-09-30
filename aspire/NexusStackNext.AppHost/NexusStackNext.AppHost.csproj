@@ -12,6 +12,20 @@
       NuGet 包与这个 MSBuild SDK 提供——工作负载不再需要。
     -->
     <IsPackable>false</IsPackable>
+
+    <!--
+      **ASPIRE010 在这里被明确抑制，理由写在旁边。**
+
+      它说的是"没启用 Aspire CLI bundle，因此某些 Aspire 特性不可用"。而本仓按 ADR-0005 只做一件事：
+      编排**应用进程**，中间件走外部依赖——那些需要 CLI bundle 的特性我们一个都不用。
+
+      所以既不需要 bundle，也不需要为了消掉这行警告去打开 `AspireUseCliBundle=true`
+      （那等于为了安静而引入一个用不上的依赖）。
+
+      按 `Directory.Build.props` 的纪律（**不允许在共享配置里成批 NoWarn**）：
+      这里只抑制这一个 code、只在这个工程里，而且理由与它放在一起。
+    -->
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

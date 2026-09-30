@@ -46,12 +46,14 @@ gh run view --log-failed     # 红了先读原文，别猜
 | `gh` | 已装并登录：2.102.0，账号 `yongpengW`，scopes `repo` / `workflow` / `gist` / `read:org` |
 | 仓库可见性 | **公开**（`private=false`）——只读的 `gh api` 与 `curl api.github.com` 无需凭据 |
 | git 的推送凭据 | Windows 凭据管理器（`credential.helper=manager`），**没有**切给 gh |
-| `main` 保护规则 | **尚未开启（2026-09-30）** |
+| `main` 保护规则 | **尚未开启**（2026-09-30 用 `gh api repos/yongpengW/NexusStackNext/branches/main/protection` 核实：`404 Branch not protected`） |
 
 两条值得说明：
 
 - **为什么没把 git 切给 gh（`gh auth setup-git`）**：现在这条路是通的，切换只会多一个失败点。
   等哪天真需要 gh 的作用域去推 `.github/workflows/`，再切。
 - **`main` 保护规则是这套约定的执行者**：要求 PR + CI 通过才可合并。它**不在仓库文件里**，
-  只能在 GitHub 网页上设，所以**开了之后请把上表那一行改成"已开启（日期）"**——
-  留着旧的"未开启"比不写更坏：读的人会以为直推被拦，而实际上没有。
+  只能在 GitHub 网页上设（Settings → Branches → Require a pull request + Require status checks → `构建与测试`），
+  所以**开了之后请把上表那一行改成"已开启（日期）"**——留着旧的"未开启"比不写更坏：
+  读的人会以为直推被拦，而实际上没有。
+  **核实方法就是上表括号里那条命令**：它返回 200 表示已开、404 表示没开。
