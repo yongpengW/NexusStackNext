@@ -46,14 +46,35 @@ gh run view --log-failed     # 红了先读原文，别猜
 | `gh` | 已装并登录：2.102.0，账号 `yongpengW`，scopes `repo` / `workflow` / `gist` / `read:org` |
 | 仓库可见性 | **公开**（`private=false`）——只读的 `gh api` 与 `curl api.github.com` 无需凭据 |
 | git 的推送凭据 | Windows 凭据管理器（`credential.helper=manager`），**没有**切给 gh |
-| `main` 保护规则 | **尚未开启**（2026-09-30 用 `gh api repos/yongpengW/NexusStackNext/branches/main/protection` 核实：`404 Branch not protected`） |
+| `main` 保护规则 | **已开启**（2026-09-30）：ruleset `main-pr-role`，Active，目标 = 默认分支，**绕过名单为空**。规则 = 必须走 PR（批准数 **0**）+ 必需检查 **`构建与测试`** + 禁删除 + 禁强推 |
 
 两条值得说明：
 
 - **为什么没把 git 切给 gh（`gh auth setup-git`）**：现在这条路是通的，切换只会多一个失败点。
   等哪天真需要 gh 的作用域去推 `.github/workflows/`，再切。
-- **`main` 保护规则是这套约定的执行者**：要求 PR + CI 通过才可合并。它**不在仓库文件里**，
-  只能在 GitHub 网页上设（Settings → Branches → Require a pull request + Require status checks → `构建与测试`），
-  所以**开了之后请把上表那一行改成"已开启（日期）"**——留着旧的"未开启"比不写更坏：
-  读的人会以为直推被拦，而实际上没有。
-  **核实方法就是上表括号里那条命令**：它返回 200 表示已开、404 表示没开。
+- **这套约定的执行者现在是 GitHub 自己**：直推 `main` 会被拒。实测（2026-09-30，造一个空提交试推）：
+
+  ```
+  remote: error: GH013: Repository rule violations found for refs/heads/main.
+  remote: - Changes must be made through a pull request.
+  remote: - Required status check "构建与测试" is expected.
+  ```
+
+  **为什么"绕过名单为空"是关键**：agent 用的是仓库所有者的身份，而规则集里**不在绕过名单上的人都要遵守**
+  ——名单一填上 `Repository admin` 或所有者本人，规则对 agent 就失效了。
+  **代价是所有者自己也直推不了 `main`**：要改就临时把 Enforcement 设成 Disabled，改完设回 Active。
+
+  **两个容易设错的地方**（都踩过）：Enforcement 默认是 `Disabled`（**不改成 Active 等于没设**）；
+  `Required approvals` 必须为 **0**——本仓只有一个账号，而 **PR 作者不能批准自己的 PR**，
+  设成 1 会让 PR 永远拿不到批准、永远合不了。
+
+  **核实方法**（以 API 为准，不看网页）：
+
+  ```powershell
+  gh api repos/yongpengW/NexusStackNext/rules/branches/main   # 生效的规则
+  gh api repos/yongpengW/NexusStackNext/rulesets              # 规则集本身
+  ```
+
+  **一个仍未强制的地方**：合并由谁点。规则集拦的是"直推"，而**谁来按合并键**仍靠约定——
+  合并属于 agent"必须先问"的动作。想在机制上也强制"只有人能合并"，单账号做不到
+  （作者不能自批），得另建一个协作者账号当批准人。
