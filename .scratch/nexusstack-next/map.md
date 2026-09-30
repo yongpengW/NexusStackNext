@@ -4,7 +4,7 @@ Labels: wayfinder:map
 
 ## Destination
 
-在 `D:\LeoProject\DotNetProject\NexusStackNext\` 建成一套**真正的微服务 + DDD 面向领域**的后端模板：
+在 `D:\LeoProject\NexusStackNext\` 建成一套**真正的微服务 + DDD 面向领域**的后端模板：
 以 5 个限界上下文承载原 NexusStackBackend 的系统管理能力，保留其已验证的工程资产，
 补齐微服务与 DDD 的缺口，且仓库本身仍可作为 `dotnet new` 模板复用。
 
@@ -36,7 +36,16 @@ Labels: wayfinder:map
 - **定位**：模板 + 一个参考业务域。
 - **第一轮完成定义**：骨架成立 + Identity 端到端跑通 + 四层测试；其余四个上下文只建骨架。（用户 2026-09-29 选定）
 - **密钥处理**：给参照仓库加打包排除规则，密钥文件本体保留。（用户 2026-09-29 选定，见票据 16）
-- **落盘**：`D:\LeoProject\DotNetProject\NexusStackNext\`，独立 git 仓库。
+- **落盘**：`D:\LeoProject\NexusStackNext\`——独立 git 仓库，远端 `github.com/yongpengW/NexusStackNext`，
+  2026-09-30 已推送（HEAD `7d2cb86`）。
+  **迁移前的副本已删除（2026-09-30，用户确认）。** 删之前逐项核过：
+  它**不是 git 仓库**（没有 `.git`，所以没有历史可丢），源文件 429 个是当前仓库的子集——
+  唯一差的只有那对**已被取代**的旧迁移（`20260929154816_InitialIdentity.*`，单列连接表主键那一版，
+  仍可从 `f51b7fd` 取回）；其余 **309 MB 是 `bin/obj`、6.5 MB 是 `.vs`**（真源码 2.1 MB）。
+  被删的是整个 `D:\LeoProject\DotNetProject\`（318 MB）：除副本外还有同批遗留——
+  14 行的早期地图、8 行的单上下文版 `AGENTS.md`、`docs/agents/*`（两份与当前逐字节相同、两份被取代）、
+  以及一份含明文连接串的旧配置快照 `nexusstack_api.json`（当前仓库没有这个文件，也不依赖它）。
+  **7 个非凭据的遗留小文件存了一份存档**：`%TEMP%\nexusstack-premigration-leftovers-2026-09-30.zip`。
 - **节奏**：先出方案（评审 → ADR → spec → 票据）给用户过一遍，再动代码。
 - **2026-09-29：目标达成。** 三条原始要求（全面评审 / 真正的微服务 + DDD 新项目 / MattSkills 规范）
   逐条验收通过，用户定义的第一轮完成标准**已达成并超出**（五个上下文全部端到端）。
