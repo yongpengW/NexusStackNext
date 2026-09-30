@@ -78,3 +78,20 @@ gh run view --log-failed     # 红了先读原文，别猜
   **一个仍未强制的地方**：合并由谁点。规则集拦的是"直推"，而**谁来按合并键**仍靠约定——
   合并属于 agent"必须先问"的动作。想在机制上也强制"只有人能合并"，单账号做不到
   （作者不能自批），得另建一个协作者账号当批准人。
+
+## 实跑记录（2026-09-30，规则上线当天）
+
+| PR | 内容 | 观察 |
+|---|---|---|
+| [#1](https://github.com/yongpengW/NexusStackNext/pull/1) | 文档：保护规则已开启 | 首个 PR。CI 没跑完时 `mergeState=BLOCKED`，跑完 **2m51s** 变 `CLEAN` —— **这就是那道闸在动** |
+| [#2](https://github.com/yongpengW/NexusStackNext/pull/2) | ADR-0016：票据后端下一轮切 GitHub Issues | 与 #1 无文件重叠；`required_status_checks` 没开 strict，所以**不要求分支追平 main**，两条都能独立合并 |
+
+三件事值得记：
+
+- **规则生效的第一个后果是"agent 改不动 `main` 了"**：连"把保护规则写进文档"这件事本身也只能走 PR
+  —— #1 就是它。**一条只写在文档里的约定，与一条会拒绝你的规则，差别就在这里。**
+- **`gh pr merge --squash` 不删分支**（要 `--delete-branch` 才删）。本仓把"删分支或 tag"列在
+  agent **必须先问**的动作里，所以合并后本地与远端都会留着分支——
+  **看到残留的已合并分支是约定，不是故障。**
+- **`mergeStateStatus` 是一个能读的状态**（`gh pr view --json mergeStateStatus`）：
+  `BLOCKED` = 还差必需检查/批准，`CLEAN` = 可以合。合并前读它一眼，比猜省事。
