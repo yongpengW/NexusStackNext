@@ -105,13 +105,27 @@ gh run view --log-failed     # 红了先读原文，别猜
 |---|---|---|
 | [#1](https://github.com/yongpengW/NexusStackNext/pull/1) | 文档：保护规则已开启 | 首个 PR。CI 没跑完时 `mergeState=BLOCKED`，跑完 **2m51s** 变 `CLEAN` —— **这就是那道闸在动** |
 | [#2](https://github.com/yongpengW/NexusStackNext/pull/2) | ADR-0016：票据后端下一轮切 GitHub Issues | 与 #1 无文件重叠；`required_status_checks` 没开 strict，所以**不要求分支追平 main**，两条都能独立合并 |
+| [#17](https://github.com/yongpengW/NexusStackNext/pull/17) | 文档：更正八处过期声明 | 完整走了一遍：本地三段 → CI **2m48s** 绿 → `mergeState=CLEAN` → 合并。**合并后远端 head branch 被仓库设置自动删除**——见下面第二条 |
 
-三件事值得记：
+四件事值得记：
 
 - **规则生效的第一个后果是"agent 改不动 `main` 了"**：连"把保护规则写进文档"这件事本身也只能走 PR
   —— #1 就是它。**一条只写在文档里的约定，与一条会拒绝你的规则，差别就在这里。**
-- **`gh pr merge --squash` 不删分支**（要 `--delete-branch` 才删）。本仓把"删分支或 tag"列在
-  agent **必须先问**的动作里，所以合并后本地与远端都会留着分支——
-  **看到残留的已合并分支是约定，不是故障。**
+- **"谁删了分支"有两个来源，命令行只是其中一个。** `gh pr merge --squash` 不带 `--delete-branch`
+  确实不删，但**仓库设置 `delete_branch_on_merge=true` 会替你把远端的 head branch 删掉**。
+  实测（2026-09-30）：PR #17 合并后再 `git fetch --prune`，输出是
+  `- [deleted] (none) -> origin/docs/stale-claims-cleanup`。所以合并之后**两层的结果不一样**：
+
+  | 层 | 结果 | 谁决定的 |
+  |---|---|---|
+  | 远端 head branch | **已删** | 仓库设置——与命令行参数无关 |
+  | 本地分支 | **留着** | 人——删本地分支是 agent"必须先问"的动作 |
+
+  **"看到残留的已合并分支是约定"这句话只对本地成立。** 它原来写的是"本地与远端都会留着"——
+  那是**只验了命令那一层、没验仓库设置那一层**（`AGENTS.md` 纪律第九条：定性的话要指到某一层）。
+  与它相邻的那段（"仓库开着'合并后自动删除 head branch'"）写的是对的，两段当时互相矛盾。
+- **squash 合并过的分支，`git branch -d` 会拒绝删除。** `main` 上那个提交是新造的，
+  分支上的原提交从 SHA 看永远"没被合并"。**别把这个拒绝当成"还有东西没合进去"的证据**——
+  先证明等价（`git diff main <branch>` 为空、且分支那笔提交与合并提交空 diff），再用 `-D` 删。
 - **`mergeStateStatus` 是一个能读的状态**（`gh pr view --json mergeStateStatus`）：
   `BLOCKED` = 还差必需检查/批准，`CLEAN` = 可以合。合并前读它一眼，比猜省事。
