@@ -18,6 +18,21 @@
 #     23：`review/` 的编号唯一且连续（这条是被我自己撞号逼出来的——见那段注释）
 #     24：已 resolved 的票不得留未打勾的验收框（这条是被两张"结票时漏打勾"的票逼出来的）
 #
+# ---------- 后端的那个问题：这个脚本现在守什么 ----------
+#
+# **2026-09-30 起，票据后端是 GitHub Issues**（`docs/agents/issue-tracker.md` 的首行标题就是声明，
+# 见 ADR-0016）。所以这个脚本里"读 `.scratch/` 下的票与地图"的那些组，**职责变了**：
+#
+#   1. 它们守的是**冻结的归档**（`.scratch/nexusstack-next/`）——那一轮 72 张票记录怎么走过来的，
+#      形状自洽与否仍然是有意义的性质；
+#   2. 它们同时是**markdown 后端的检查**：谁把首行标题切回 `Local Markdown`，这些组当天就该用。
+#
+# **在线票据的形状由另一个脚本守**：`scripts/check-issues.ps1`（地图唯一、票据挂在地图下、
+# 阻塞边指向真实存在的票、标签与调色盘一致）。两个脚本在 CI 的同一个步骤里跑。
+#
+# 为什么不把那些组删掉：删了就等于"后端切回来时没有人检查"——而本仓的纪律是
+# **失去对象的检查必须改写或退役并写明理由**，不是留着当空壳、也不是一删了事。
+#
 # （这张清单原来只写到第 8 条，而实际早就不是 8 条了——**清单本身也是会被读的声明**，
 #   所以它跟代码一起更新。）
 
@@ -553,12 +568,28 @@ if (-not (Test-Path $trackerDocPath)) {
 else {
     $trackerDoc = Get-Content $trackerDocPath -Encoding UTF8 -Raw
 
-    foreach ($needle in @('### 三、面板能读到什么', '## Comments', 'Wayfinding operations')) {
+    # **跟着后端声明走**（ADR-0016，2026-09-30）。
+    #
+    # 这份文件的第一行就是后端声明。后端是 markdown 时，下面那两个锚点（`## Comments`、
+    # "面板能读到什么"）就是面板与跟踪器之间唯一的契约；后端切到 GitHub 之后它们**失去了对象**
+    # ——但"面板要读得到东西"这条**义务没有消失**，只是换了载体：原生评论、原生依赖、`wayfinder:map`。
+    #
+    # 这条检查第一次红就是被这次切换逼出来的：契约一翻，它还去找 markdown 的锚点，
+    # 于是**它自己**成了"失去对象"的那一个。改写（而不是删掉）才对：义务要留在原处。
+    $declaredBackend = if ($trackerDoc -match '(?m)^#\s*issue\s*tracker\s*:\s*github') { 'github' } else { 'markdown' }
+
+    $anchors = if ($declaredBackend -eq 'github') {
+        @('Wayfinding operations', 'wayfinder:map', 'blocked_by', 'gh issue')
+    } else {
+        @('### 三、面板能读到什么', '## Comments', 'Wayfinding operations')
+    }
+
+    foreach ($needle in $anchors) {
         if ($trackerDoc -notmatch [regex]::Escape($needle)) {
             # 注意：`(` 跨行的续行在**命令参数位置**是不成立的（隐式续行只在表达式语法里），
             # 所以这里先把消息拼出来。写错过两次，解析器报的是"缺少右括号"。
-            $message = "docs/agents/issue-tracker.md 里找不到 '$needle'：" +
-                '锚点与面板行为是这套跟踪器与面板之间唯一的契约，必须写在文档里'
+            $message = "docs/agents/issue-tracker.md（声明为 $declaredBackend）里找不到 '$needle'：" +
+                '面板与跟踪器之间的锚点是唯一的契约，必须写在文档里'
             Add-Problem '变体声明' $message
         }
     }
