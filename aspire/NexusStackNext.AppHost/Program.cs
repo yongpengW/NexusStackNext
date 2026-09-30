@@ -36,9 +36,22 @@ string Require(string name)
 }
 
 var postgres = Require("NEXUSSTACK_DB");
-var redis = Require("NEXUSSTACK_REDIS");
 var rabbit = Require("NEXUSSTACK_RABBITMQ");
 var otlp = Environment.GetEnvironmentVariable("NEXUSSTACK_OTLP") ?? string.Empty;
+
+// ---------- Redis：**本仓不用它，所以这里不再要求它** ----------
+//
+// 这一行原来写着 `var redis = Require("NEXUSSTACK_REDIS");`，并把它注成
+// `Redis__Configuration`。核实过：本仓**没有任何东西消费那个键**——
+//   · `src/` 里 "Redis" 只出现在**注释**里（讲"要跨实例共享时该换 Redis 之类"的升级路径）；
+//   · `Directory.Packages.props` 里没有任何 Redis 客户端包；
+//   · 两个宿主的 `appsettings.json` 里连 `Redis` 节都没有。
+//
+// 它是从参照仓库的技术栈里带过来的（那边确实用 Redis），后果是**验收 1 永远起不来**：
+// 缺一个没人用的变量 ⇒ AppHost 直接退出 1，而错误信息让人以为自己少配了中间件。
+// 同一类错误这张票已经抓过一次（第一版注了个没人消费的 Seq 键）。
+//
+// **"这个变量有没有人读"是一个能查的事实**，不是风格问题。
 
 if (missing.Count > 0)
 {
@@ -69,7 +82,7 @@ var platform = builder
     .AddProject<Projects.NexusStackNext_PlatformHost>("platform")
     .WithEnvironment("ConnectionStrings__PostgreSQL", postgres)
     .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
-    .WithEnvironment("Redis__Configuration", redis)
+    // 这里**不再**注入 `Redis__Configuration`：本仓没有任何东西读它（见上面的说明）。
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。
     //
     // 这里**不注入 Seq**：本仓的 Serilog 只有 Console sink，而日志模板配了
