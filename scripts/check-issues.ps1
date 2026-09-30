@@ -101,12 +101,18 @@ if ($issues.Count -eq 0) {
         #
         # 只查"带 wayfinder:task 标签的票"：地图下可能还有别的类型（research / prototype / grilling）。
         $tasks = @($issues | Where-Object { @($_.labels | ForEach-Object { $_.name }) -contains 'wayfinder:task' })
-        $subIds = @()
+        # **按编号比，不按内部 id**；查不到子票据时**明确失败**（#11）。
+        # 这条检查第一次写出来时"永远通过"：故意造一张不挂到地图下的票，它照样报干净。
+        $childNumbers = @()
         $subJson = & $ghPath api "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" --paginate 2>&1
-        if ($LASTEXITCODE -eq 0) { $subIds = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_.id }) }
+        if ($LASTEXITCODE -eq 0) {
+            $childNumbers = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { [int]$_.number })
+        } else {
+            Add-Problem '检查自身' '查地图的子票据失败——父子关系这一组没有对象可查，不能当作通过'
+        }
 
         foreach ($t in $tasks) {
-            if ($subIds -notcontains $t.id) {
+            if ($childNumbers -notcontains [int]$t.number) {
                 Add-Problem '父子关系' "#$($t.number) $($t.title) 带 wayfinder:task，却没挂在地图 #$($map.number) 下面"
             }
         }
