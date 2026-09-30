@@ -611,7 +611,8 @@ else {
         'docs/agents/triage-labels.md',
         'docs/agents/domain.md',
         'docs/agents/design-vocabulary.md',
-        'docs/agents/coding-standards.md'
+        'docs/agents/coding-standards.md',
+        'docs/agents/pr-and-credentials.md'
     )
 
     foreach ($pointer in $pointers) {
@@ -620,6 +621,41 @@ else {
         }
         elseif ($agentsText -notmatch [regex]::Escape($pointer)) {
             Add-Problem '指针' "AGENTS.md 没有提到 $pointer：文件存在，却没有任何入口指向它"
+        }
+    }
+
+    # **上面那张表守不住"新加的指针"**——它是枚举常量，而指针随时会新增。
+    # 这不是推测：2026-09-30 我加了 `docs/agents/pr-and-credentials.md` 并在 AGENTS.md 里指它，
+    # 把那个路径改成不存在的名字，检查**依然全绿**（表里没有它）。
+    # 所以再加两条**派生**规则；它们的对象是扫出来的，因此各自带一条空枚举守卫。
+
+    # (1) 反向：`docs/agents/` 下每个 .md 都要有入口。
+    $agentsDocsDir = Join-Path $repoRoot 'docs/agents'
+    $agentDocs = @(Get-ChildItem $agentsDocsDir -File -Filter '*.md' -ErrorAction SilentlyContinue)
+    if ($agentDocs.Count -eq 0) {
+        Add-Problem '检查自身' 'docs/agents/ 下一个 .md 都没扫到——第 21 条的反向规则没有对象，不能当作通过'
+    }
+
+    foreach ($doc in $agentDocs) {
+        $relative = "docs/agents/$($doc.Name)"
+        if ($agentsText -notmatch [regex]::Escape($relative)) {
+            Add-Problem '指针' "$relative 存在，而 AGENTS.md 没提到它——文件存在，却没有任何入口指向它"
+        }
+    }
+
+    # (2) 正向：AGENTS.md 里写出来的仓库路径，必须真的存在。
+    $mentionedPaths = @([regex]::Matches(
+            $agentsText,
+            '(?<![\w/.-])((?:docs|scripts|tests|src|aspire)/[A-Za-z0-9_./-]+\.(?:md|ps1|sh|json|cs|csproj|slnx))') |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+
+    if ($mentionedPaths.Count -eq 0) {
+        Add-Problem '检查自身' 'AGENTS.md 里一个仓库文件路径都没扫到——第 21 条的正向规则没有对象，不能当作通过'
+    }
+
+    foreach ($mentioned in $mentionedPaths) {
+        if (-not (Test-Path (Join-Path $repoRoot $mentioned))) {
+            Add-Problem '指针' "AGENTS.md 提到 $mentioned，而那个文件不存在——指着空气的指针比没有指针更坏"
         }
     }
 }
