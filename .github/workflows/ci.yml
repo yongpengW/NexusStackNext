@@ -2,8 +2,17 @@ name: ci
 
 on:
   push:
-    branches: [ main, dev ]
+    # **推送时只有 main 跑 CI。** `dev` 是集成分支：直推、不跑 CI，为的是开发时不等那 2–3 分钟。
+    #
+    # 代价是真实的：CI 是**唯一的"平台差异"检查**（Linux / 干净检出）——这一轮它就抓到过
+    # "路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文"。所以约定是：
+    #   ① 推 dev 之前**本地三段必跑**（build → run-tests.ps1 → check-format.ps1）；
+    #   ② 改动涉及脚本/路径/编码/换行时，用 `gh workflow run ci` 手动在 dev 上跑一次全套；
+    #   ③ dev 不要活太久，每完成一个小块就 dev → main 一次。
+    branches: [ main ]
   pull_request:
+  # 手动触发：给"平时不跑的 dev"留一条随时能跑全套的路。
+  workflow_dispatch:
 
 # **并发取消**：连推几次时只跑最后一次 —— 不改变"每个 PR 都得到一次完整检查"这条保证，
 # 只省掉被取代的运行。
