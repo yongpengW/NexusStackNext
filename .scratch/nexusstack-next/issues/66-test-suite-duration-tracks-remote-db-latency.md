@@ -1,7 +1,7 @@
 # 66 — 跑全量测试压垮了共享数据库，并连锁拖垮了配置中心
 
 Status: resolved
-Type: bug
+Type: task
 Labels: ready-for-agent
 Blocked by: —
 

@@ -2,7 +2,7 @@
 
 Status: resolved
 Type: task
-Labels: needs-info
+Labels: ready-for-agent
 Blocked by: 06, 09
 
 ## 形态已定：**A. 自研签发 + ASP.NET JWT Bearer**（ADR-0014）
@@ -86,9 +86,13 @@ Blocked by: 06, 09
 **与形态无关的部分已经做完**，所以这个决定不再是"开工前的门槛"，
 而是"最后三分之一的岔路口"。
 
-## 第 5 轮完成
+## Comments
 
-### 交付
+### local
+
+**第 5 轮完成**
+
+#### 交付
 
 | 东西 | 位置 |
 |---|---|
@@ -97,19 +101,19 @@ Blocked by: 06, 09
 | JWT 签发、SHA-256 哈希、随机秘密串、EF/内存仓储 | `Identity.Infrastructure/IdentityTokenAdapters.cs` |
 | HTTP：`POST /login`、`POST /refresh` | `Identity.Endpoints/IdentityModule.cs` |
 
-### 一处必须说清的设计决定：为什么不用 `IPasswordHasher`
+#### 一处必须说清的设计决定：为什么不用 `IPasswordHasher`
 
 刷新令牌的哈希**必须确定性**——因为刷新时要**按哈希把它查回来**。
 而口令哈希每次加随机盐、故意慢 21 万次迭代；用它存刷新令牌，**第二次刷新就再也查不到它了**。
 
 刷新令牌原文有 256 位熵，不需要慢哈希抗爆破；SHA-256 在这里只有一个作用：**让库里不出现原文**。
 
-### 重放按被盗处理
+#### 重放按被盗处理
 
 分不出"客户端重试"与"令牌被偷"，所以按坏的那种：**撤销该用户的全部刷新令牌**。
 丢掉一次"客户端重试"，换掉一次"攻击者一直能用"。
 
-### 本轮踩到的三个坑
+#### 本轮踩到的三个坑
 
 **① 测试的作用域形状与宿主不一致。** 第一版整个用例只建一个 DI 作用域，于是
 `IdentityDbContext` 被两条命令共用，处理器从**变更跟踪器**里读到了上一条命令缓存的实体——

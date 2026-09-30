@@ -5,7 +5,16 @@ Type: task
 Labels: ready-for-agent
 Blocked by: —
 
-## Answer
+## 未做（有意）
+
+- **未 `git init`** —— 等你确认新仓库的托管方式（独立仓库 / 子目录 / 后续挂在别处）再建，避免建错位置。
+- 未创建 `aspire/`、`deploy/` 空目录 —— 空目录不进 git，等有内容时再建。
+
+## Comments
+
+### local
+
+**Answer**
 
 **产出（7 个文件）**
 
@@ -41,8 +50,3 @@ Blocked by: —
    > 现在 `check-tracker.ps1` 有双向比对守着这件事。
 2. **`CA1716`：`Error` 与 VB 保留字冲突** —— 处理方式是**显式 `[SuppressMessage]` + 写明 Justification**，并把"不许成批 `NoWarn`，要豁免就关在源头"这条纪律写进 `Directory.Build.props`。
 3. **`IDE0005=error` 与测试项目的 `GenerateDocumentationFile=false` 冲突** —— 该规则需要文档生成才能运行，编译器直接报 `EnableGenerateDocumentationFile`。在测试项目组里精准豁免这两条。
-
-## 未做（有意）
-
-- **未 `git init`** —— 等你确认新仓库的托管方式（独立仓库 / 子目录 / 后续挂在别处）再建，避免建错位置。
-- 未创建 `aspire/`、`deploy/` 空目录 —— 空目录不进 git，等有内容时再建。

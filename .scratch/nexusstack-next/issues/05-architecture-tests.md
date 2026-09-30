@@ -5,7 +5,25 @@ Type: task
 Labels: ready-for-agent
 Blocked by: 01
 
-## Answer
+## 说明：为什么不用"每条不变量一个测试"的字面形式
+
+> **2026-09-29 修订（票据 03 期间）**：`BuildingBlocks_MustStayAtTheFoundingSet` 已更名为
+> `BuildingBlocks_MustNotGrowBeyondTheDeclaredSharedKernel`。原断言"集合恰好等于创始的那一个"
+> 会在每次正常新增共享内核时误报；改为断言实际集合是 ADR-0001 声明的那四个的**子集**。
+> 语义更准：不是"不许新增"，而是"不许长出声明之外的东西"。触发这次修订的正是下面说的哨兵——
+> 新增 `BuildingBlocks.Application` 时它按设计变红了。
+
+不变量 4（一个聚合一个事务）是**运行时行为**，不是静态结构。用 NetArchTest 或源码扫描去"测"它只能是假测试。
+它真正的归属是票据 03 的管线实现与票据 04 的事务边界测试。不变量 6 同理，由 3 的结构保证 + 领域测试的行为保证共同覆盖。
+
+把假测试写出来会让"8/8 覆盖"这句话变得廉价——那正是参照仓库 `MQ-Idempotency-Review.md` 犯过的错：
+它宣称"重试路由正确性已通过最终审查"，但审查只覆盖了"进重试队列"，漏了 DLX 回程（review/04 发现 1）。
+
+## Comments
+
+### local
+
+**Answer**
 
 **产出**
 
@@ -53,17 +71,3 @@ dotnet build  → 已成功生成，0 个警告
 dotnet test   → 28 + 8 = 36/36 通过
 领域层 PackageReference 数量 = 0
 ```
-
-## 说明：为什么不用"每条不变量一个测试"的字面形式
-
-> **2026-09-29 修订（票据 03 期间）**：`BuildingBlocks_MustStayAtTheFoundingSet` 已更名为
-> `BuildingBlocks_MustNotGrowBeyondTheDeclaredSharedKernel`。原断言"集合恰好等于创始的那一个"
-> 会在每次正常新增共享内核时误报；改为断言实际集合是 ADR-0001 声明的那四个的**子集**。
-> 语义更准：不是"不许新增"，而是"不许长出声明之外的东西"。触发这次修订的正是下面说的哨兵——
-> 新增 `BuildingBlocks.Application` 时它按设计变红了。
-
-不变量 4（一个聚合一个事务）是**运行时行为**，不是静态结构。用 NetArchTest 或源码扫描去"测"它只能是假测试。
-它真正的归属是票据 03 的管线实现与票据 04 的事务边界测试。不变量 6 同理，由 3 的结构保证 + 领域测试的行为保证共同覆盖。
-
-把假测试写出来会让"8/8 覆盖"这句话变得廉价——那正是参照仓库 `MQ-Idempotency-Review.md` 犯过的错：
-它宣称"重试路由正确性已通过最终审查"，但审查只覆盖了"进重试队列"，漏了 DLX 回程（review/04 发现 1）。

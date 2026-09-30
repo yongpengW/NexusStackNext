@@ -1,11 +1,15 @@
-# 02 — BuildingBlocks.Domain：领域基元
+﻿# 02 — BuildingBlocks.Domain：领域基元
 
 Status: resolved
 Type: task
 Labels: ready-for-agent
 Blocked by: 01
 
-## Answer
+## Comments
+
+### local
+
+**Answer**
 
 **产出**
 

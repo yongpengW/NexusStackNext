@@ -26,21 +26,6 @@ DDD 本来把子域分三类（核心域 / 支撑子域 / 通用子域），**�
 只合并数据库、保留五个服务 = **分布式单体**（分布式部署的全部复杂度 + 共享数据的全部耦合）。
 **共享一个库的前提是共享一个进程**，二者必须一起选。用户选了包 B。
 
-## Answer
-
-```
-src/Services/<Ctx>/{Domain,Application,Infrastructure}   五个模块，程序集边界不变
-src/Services/<Ctx>/NexusStackNext.<Ctx>.Api/             模块的 HTTP 面
-src/Hosts/NexusStackNext.PlatformHost/                   唯一宿主，显式组装五个模块
-数据库：nexusstack_platform，库内五个 schema
-```
-
-模块对宿主暴露两个扩展方法：`Add<Ctx>Module(...)` 与 `Map<Ctx>Endpoints(...)`。
-
-**`Failure(Error)` 仍然各模块各写一份**——四个模块的映射**确实不同**：
-Platform 全部 400、Files 的 `not_found` 是 404、Scheduling 的 `task.not_found` 是 404、
-Identity 还区分 409 冲突。这印证了票据 48 里那个"例外"是决定而非遗漏。
-
 ## 什么没有变（决定了风险面）
 
 - 五个上下文的 `Domain` / `Application` / `Infrastructure` 程序集照旧独立
@@ -101,3 +86,22 @@ System.ArgumentException: An item with the same key has already been added. Key:
 `src/Hosting/`（宿主组装**库**）与 `src/Hosts/`（**宿主**）并排，名字太近。
 我倾向于把前者重命名为 `src/Composition/NexusStackNext.Composition`，
 但那是纯改名、涉及十几处引用，留到下一次单独做——**不为顺手的美化冒险**。
+
+## Comments
+
+### local
+
+**Answer**
+
+```
+src/Services/<Ctx>/{Domain,Application,Infrastructure}   五个模块，程序集边界不变
+src/Services/<Ctx>/NexusStackNext.<Ctx>.Api/             模块的 HTTP 面
+src/Hosts/NexusStackNext.PlatformHost/                   唯一宿主，显式组装五个模块
+数据库：nexusstack_platform，库内五个 schema
+```
+
+模块对宿主暴露两个扩展方法：`Add<Ctx>Module(...)` 与 `Map<Ctx>Endpoints(...)`。
+
+**`Failure(Error)` 仍然各模块各写一份**——四个模块的映射**确实不同**：
+Platform 全部 400、Files 的 `not_found` 是 404、Scheduling 的 `task.not_found` 是 404、
+Identity 还区分 409 冲突。这印证了票据 48 里那个"例外"是决定而非遗漏。

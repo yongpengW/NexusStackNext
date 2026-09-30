@@ -2,7 +2,7 @@
 
 Status: resolved
 Type: task
-Labels: needs-info
+Labels: ready-for-agent
 Blocked by: 48
 
 > 接入代码、优先级顺序与降级路径都已完成并验证（票据 48）。

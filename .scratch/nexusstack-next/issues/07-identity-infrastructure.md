@@ -2,7 +2,7 @@
 
 Status: resolved
 Type: task
-Labels: needs-triage
+Labels: ready-for-agent
 Blocked by: 19
 
 > **2026-09-29 更新阻塞关系**：票据 04（消息基座）已完成，但本票真正依赖的是 **票据 19（EF Core 基座）**，

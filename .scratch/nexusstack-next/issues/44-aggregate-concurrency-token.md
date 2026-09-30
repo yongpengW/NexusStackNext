@@ -9,18 +9,6 @@ Blocked by: 02
 > 写成了参照仓库的缺陷，然后在自己的 `AggregateRoot` 里原样犯下——全仓 0 处并发令牌，
 > 而且它不在票据 42 的"没做什么"清单里。
 
-## Answer
-
-**产出**
-
-| 文件 | 内容 |
-|---|---|
-| `docs/adr/0011-optimistic-concurrency-in-the-aggregate.md` | 为什么版本号是领域概念而不是 EF 的 `[Timestamp]` 配置 |
-| `BuildingBlocks.Domain/AggregateRoot.cs` | `Version` + `Changed()` + `Changed<T>()` + `BumpVersion()` |
-| 九个聚合 | 每条改变路径自增；每条空操作路径**不**自增 |
-| 三个测试工程 | 27 条版本测试 |
-| `AGENTS.md` | 把契约写成规则 |
-
 ## 让契约"看得见"
 
 `Changed()` 不只是自增——它是**给读代码的人看的**：
@@ -67,3 +55,19 @@ Blocked by: 02
 
 `Version` 直接映射成并发令牌列（`IsConcurrencyToken`），**领域层一个字都不用改**——
 这正是现在做这件事的理由：等那时再改，动的是九个聚合的每一个改变状态的方法。
+
+## Comments
+
+### local
+
+**Answer**
+
+**产出**
+
+| 文件 | 内容 |
+|---|---|
+| `docs/adr/0011-optimistic-concurrency-in-the-aggregate.md` | 为什么版本号是领域概念而不是 EF 的 `[Timestamp]` 配置 |
+| `BuildingBlocks.Domain/AggregateRoot.cs` | `Version` + `Changed()` + `Changed<T>()` + `BumpVersion()` |
+| 九个聚合 | 每条改变路径自增；每条空操作路径**不**自增 |
+| 三个测试工程 | 27 条版本测试 |
+| `AGENTS.md` | 把契约写成规则 |

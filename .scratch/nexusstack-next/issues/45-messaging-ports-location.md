@@ -8,27 +8,6 @@ Blocked by: 04
 > 整份引用矩阵里**唯一一处** `Application → Infrastructure`，原因就是三个端口住错了程序集。
 > 而守住这条规则的测试**此前根本不存在**——所以那处破例一直没被发现。
 
-## Answer
-
-**上移到 `BuildingBlocks.Application/Events/`（契约侧）**
-
-| 文件 | 为什么属于契约侧 |
-|---|---|
-| `IEventBus` | 端口 |
-| `IInboxStore` | 端口 |
-| `IOutboxStore` | 端口 |
-| `EventEnvelope` + `MessagingErrors` | **端口两侧共用的消息形状** |
-| `OutboxEntry` | 端口签名里的数据类型 |
-| `IIntegrationEventSerializer` | 端口（"变的是序列化格式"） |
-
-**留在 `BuildingBlocks.Infrastructure`（实现侧）**
-
-`SystemTextJsonIntegrationEventSerializer`、`EventTopology`、`OutboxDeliveryOptions`、
-`OutboxPublisher`、`InMemoryInboxStore`、`RabbitMq/*`
-
-**这一步顺带拆开了一个文件**：`IntegrationEventSerializer.cs` 里原本同时放着接口与实现，
-现在接口在 Application、实现在 Infrastructure。这正是这道缝该有的形状。
-
 ## 结果
 
 ```
@@ -68,3 +47,28 @@ Files / Identity / Platform / Scheduling.Application   全部干净
 
 构建 0 警告 0 错误；架构测试 **10/10**（新增 1 条）；全量测试 **420/420**。
 `AGENTS.md` 已把"端口在里、实现在外"写成规则，并注明**两层都要查**的理由。
+
+## Comments
+
+### local
+
+**Answer**
+
+**上移到 `BuildingBlocks.Application/Events/`（契约侧）**
+
+| 文件 | 为什么属于契约侧 |
+|---|---|
+| `IEventBus` | 端口 |
+| `IInboxStore` | 端口 |
+| `IOutboxStore` | 端口 |
+| `EventEnvelope` + `MessagingErrors` | **端口两侧共用的消息形状** |
+| `OutboxEntry` | 端口签名里的数据类型 |
+| `IIntegrationEventSerializer` | 端口（"变的是序列化格式"） |
+
+**留在 `BuildingBlocks.Infrastructure`（实现侧）**
+
+`SystemTextJsonIntegrationEventSerializer`、`EventTopology`、`OutboxDeliveryOptions`、
+`OutboxPublisher`、`InMemoryInboxStore`、`RabbitMq/*`
+
+**这一步顺带拆开了一个文件**：`IntegrationEventSerializer.cs` 里原本同时放着接口与实现，
+现在接口在 Application、实现在 Infrastructure。这正是这道缝该有的形状。

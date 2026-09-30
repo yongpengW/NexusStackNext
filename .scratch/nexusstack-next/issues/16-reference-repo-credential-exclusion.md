@@ -16,7 +16,11 @@ Blocked by: —
 - 真实风险在**分发**：`NexusStack.Template.csproj`（`Content Include="**\*"` + `NoDefaultExcludes=true`）
   与 `.template.config/template.json` 的排除列表都未覆盖 `agile/**` 或 `*.cache`。
 
-## Answer
+## Comments
+
+### local
+
+**Answer**
 
 **改动（2 个文件，7 insertions / 2 deletions，`git diff --stat` 已核）**
 

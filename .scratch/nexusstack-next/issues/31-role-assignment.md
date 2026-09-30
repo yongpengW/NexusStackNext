@@ -20,7 +20,19 @@ Blocked by: 06
 这是只有把两段接起来才会暴露的问题：各聚合的单元测试都过，
 因为它们从没试过把一个聚合的输出喂给另一个。
 
-## Answer
+## 下一步（同一纵向切片）
+
+1. `Identity.Application`：`CreateUser` / `CreateRole` / `GrantMenusToRole` / `AssignRoleToUser`
+2. 内存适配器：`User` / `Role` / `MenuTree` 的仓储
+3. `Identity.Api`：端点接线 + 一条调用 `AccessPolicy.Decide` 的授权判定端点，
+   让 RBAC 核心（票据 22）第一次有**真实调用方**
+4. 运行时端到端验证
+
+## Comments
+
+### local
+
+**Answer**
 
 **产出（4 个文件）**
 
@@ -50,11 +62,3 @@ Blocked by: 06
 **反向验证**：去掉幂等守卫（重复分配也发事件）后 **1 条测试变红**，精确命中。改动已还原。
 
 **当前状态**：构建 0 警告 0 错误；Identity 领域测试 **100/100**（原 92）；全量 **338/338**。
-
-## 下一步（同一纵向切片）
-
-1. `Identity.Application`：`CreateUser` / `CreateRole` / `GrantMenusToRole` / `AssignRoleToUser`
-2. 内存适配器：`User` / `Role` / `MenuTree` 的仓储
-3. `Identity.Api`：端点接线 + 一条调用 `AccessPolicy.Decide` 的授权判定端点，
-   让 RBAC 核心（票据 22）第一次有**真实调用方**
-4. 运行时端到端验证

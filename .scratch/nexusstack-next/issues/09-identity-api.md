@@ -2,7 +2,7 @@
 
 Status: resolved
 Type: task
-Labels: needs-triage
+Labels: ready-for-agent
 Blocked by: 08
 
 ## 要做什么

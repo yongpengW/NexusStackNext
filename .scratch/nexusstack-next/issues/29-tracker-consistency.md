@@ -8,21 +8,6 @@ Blocked by: 28
 > 本票是票据 28 那条教训的推广：**一句关于"我们做了什么"的声明，如果不受检查，
 > 就会在没人注意的时候变成谎话。** 票据 28 处理的是测试覆盖声明；本票处理跟踪器。
 
-## Answer
-
-**产出（1 个脚本 + CI 接入）**：`scripts/check-tracker.ps1`
-
-八项检查：
-
-1. 每张票据都有 `Status` / `Type` / `Labels` / `Blocked by`
-2. `Status` 是五个规范角色之一
-3. `Blocked by` 引用的票据**真实存在**
-4. 已 `resolved` 的票据**不得仍被未解决的票据阻塞**（自相矛盾）
-5. `map.md` 的票据索引与 `issues/` 下的文件**双向**一一对应
-6. 每个上下文都有 `CONTEXT.md`、至少一份 `docs/adr/`、一个宿主
-7. `CONTEXT-MAP.md` 提到每一个上下文
-8. 每个 ADR 目录的编号连续，无跳号
-
 ## 第一次运行就抓到一个真实矛盾
 
 ```
@@ -64,3 +49,22 @@ Blocked by: 28
 
 已接进 CI。**本机可执行，所以这一次不是"已写未验"**——
 与 `ci.yml` 本身不同，它的输出是当场跑出来的。
+
+## Comments
+
+### local
+
+**Answer**
+
+**产出（1 个脚本 + CI 接入）**：`scripts/check-tracker.ps1`
+
+八项检查：
+
+1. 每张票据都有 `Status` / `Type` / `Labels` / `Blocked by`
+2. `Status` 是五个规范角色之一
+3. `Blocked by` 引用的票据**真实存在**
+4. 已 `resolved` 的票据**不得仍被未解决的票据阻塞**（自相矛盾）
+5. `map.md` 的票据索引与 `issues/` 下的文件**双向**一一对应
+6. 每个上下文都有 `CONTEXT.md`、至少一份 `docs/adr/`、一个宿主
+7. `CONTEXT-MAP.md` 提到每一个上下文
+8. 每个 ADR 目录的编号连续，无跳号

@@ -12,15 +12,35 @@ Labels: wayfinder:map
 
 ## Notes
 
+**本 effort 覆盖 wayfinder 的默认取向。** wayfinder 默认"只产出决策，不产出交付物"；本 effort 按它
+`## Notes` 的 override 条款，**把执行也纳入地图**——所以下面票据是可交付的垂直切片（tracer bullet），
+不是纯决策票。`## Destination` 写的是一个可交付物，与这条 override 一致。
+
+**每会话应查的技能**：决策与砍范围用 `grilling` + `domain-modeling`（结论就地落 `CONTEXT.md` / ADR）；
+实现用 `tdd` + `code-review`（Standards + Spec 两轴）；缺陷用 `diagnosing-bugs`（先建红得起来的复现命令）；
+调研用 `research`。约定见 `docs/agents/issue-tracker.md`。
+
 - 参照物是 .NET 10 的**单 WebAPI 分层应用**：4 个可部署单元全部 `ProjectReference` 同一个 `NexusStack.Core`，
   "我是哪个服务" 用运行时枚举 `CoreServiceType` 表达，而非程序集边界 → 网关被迫携带 EF Core/FFmpeg/Excel。
-- 评审证据在 `review/`（**6 份**）：`01`–`04` 量参照仓库（核心/基础设施、数据/持久化、宿主/集成、
-  消息/缓存/鉴权/设计文档），逐条带 `file:line`；`05` 用深模块的尺子量自己；
-  `06` 是覆盖率核对（结论：01–04 **没有缺口**，并记录了一次假发现）。
+- 评审证据在 `review/`（**24 份**）：`01`–`04` 量参照仓库（核心/基础设施、数据/持久化、宿主/集成、
+  消息/缓存/鉴权/设计文档），逐条带 `file:line`；`05`–`22` 量本仓自己（深模块尺度、覆盖率核对、
+  不变量反向验证、真实 HTTP 旅程、最后四条没人走过的路径）；`23` 是 **MattSkills 逐技能符合性矩阵**；
+  `24` 是**架构机会的 HTML 报告**（`improve-codebase-architecture` 要的形状）。
 - 方案主体：`spec.md`
-- 票据：`issues/01..41-*.md`
+- 票据：`issues/01..71-*.md`
 - 本仓库自带 MattSkills 规范：`.scratch/` 跟踪器、`docs/agents/*`、`CONTEXT-MAP.md`、`docs/adr/`。
 - 架构不变量写在 `AGENTS.md`，违反即 bug，并由 `Architecture.Tests`（票据 05）断言。
+
+### 既定前提（决定，没有对应票据）
+
+- **定位**：模板 + 一个参考业务域。
+- **第一轮完成定义**：骨架成立 + Identity 端到端跑通 + 四层测试；其余四个上下文只建骨架。（用户 2026-09-29 选定）
+- **密钥处理**：给参照仓库加打包排除规则，密钥文件本体保留。（用户 2026-09-29 选定，见票据 16）
+- **落盘**：`D:\LeoProject\DotNetProject\NexusStackNext\`，独立 git 仓库。
+- **节奏**：先出方案（评审 → ADR → spec → 票据）给用户过一遍，再动代码。
+- **2026-09-29：目标达成。** 三条原始要求（全面评审 / 真正的微服务 + DDD 新项目 / MattSkills 规范）
+  逐条验收通过，用户定义的第一轮完成标准**已达成并超出**（五个上下文全部端到端）。
+  交付状态、保留项、补齐项与**没有做什么**的诚实清单见票据 42。
 
 ## Decisions so far
 
@@ -33,14 +53,18 @@ Labels: wayfinder:map
 - [0007 事件契约名显式版本化，不用 CLR 类型名](../docs/adr/0007-versioned-event-contracts.md) — 否则拆程序集即静默断链。
 - [0008 不引入需要商业授权的依赖](../docs/adr/0008-no-commercial-dependencies.md) — 商业批量库会绕过审计。
 - [0009 主键唯一权威：应用侧生成，数据库不做 IDENTITY](../docs/adr/0009-application-generated-ids.md)
-- **定位**：模板 + 一个参考业务域。
-- **第一轮完成定义**：骨架成立 + Identity 端到端跑通 + 四层测试；其余四个上下文只建骨架。（用户 2026-09-29 选定）
-- **密钥处理**：给参照仓库加打包排除规则，密钥文件本体保留。（用户 2026-09-29 选定，见票据 16）
-- **落盘**：`D:\LeoProject\DotNetProject\NexusStackNext\`，独立 git 仓库。
-- **节奏**：先出方案（评审 → ADR → spec → 票据）给用户过一遍，再动代码。
-- **2026-09-29：目标达成。** 三条原始要求（全面评审 / 真正的微服务 + DDD 新项目 / MattSkills 规范）
-  逐条验收通过，用户定义的第一轮完成标准**已达成并超出**（五个上下文全部端到端）。
-  交付状态、保留项、补齐项与**没有做什么**的诚实清单见票据 42。
+- [0015 第一个根账号由配置播种](../docs/adr/0015-root-account-is-seeded-from-config.md) — 引导期怎么起步：幂等播种 + 菜单管理端点只对根账号开放；含"上线后轮换口令"的部署义务
+- [69 两次 review 出来的问题](issues/69-review-fixes-and-mattskills-conformance.md) — 消息重试链、连接表主键、拦截器接线、结构检查守卫、聚合契约、假通过断言、四上下文进程内授权，全部带变异证据；规范侧把符合性变成了 18 项检查
+- [70 MattSkills 符合性收口](issues/70-mattskills-conformance-closeout.md) — spec 补齐 to-spec 的七节、编码标准单源、format 门禁（首次跑出 448 处违规）、词表收紧、变体声明（§19/§20/§21）；产物是 `review/23` 的逐技能矩阵
+- [72 六处差异全部消除](issues/72-six-differences-eliminated.md) — 33 张票的历史迁进 `## Comments`（deck 自己的解析器读出 40 条评论）、等待态改由阻塞边表达、`scripts/setup-wizard.sh`、`review/24` 的 HTML 机会报告、临时目录的交接文档；矩阵现在是满的
+- [71 决定：根账号与菜单](issues/71-decide-root-account-and-menus.md) — **启动播种根账号 + 加菜单管理端点**（人选；两处实现偏离记在票里）
+- [67 授权链的第一环](issues/67-authorization-chain-is-open.md) — 断链其实是**四处**（菜单端口 / 根账号 / 令牌从不签发 `Root` 声明 / `AssignRole` 不失效缓存）；`AuthorizationChainJourneyTests` 走真实 HTTP 从零到 200，5 处变异全部变红
+
+<!--
+  这个索引只放 "- [标题](链接) — 要点" 形式的行：面板（MattSkills deck 的 markdown 后端）
+  只收这种行，别的一律看不见。本 effort 那些**没有对应票据**的既定前提（定位 / 完成定义 /
+  密钥处理 / 落盘 / 节奏）放在 `## Notes`，它们不是"走过的路线"，是 standing preference。
+-->
 
 ## Ticket index
 
@@ -59,11 +83,11 @@ Labels: wayfinder:map
 | 11 | 授权：预计算权限与过滤器 | 08, 10 | ✅ resolved（过滤器 + 撤销） |
 | 12 | Gateway 真正的边缘 | 01, 10 | ✅ resolved（管理 API + 单写者设计；配置中心升级待凭据） |
 | 13 | 其余四个上下文骨架 | 01, 02 | ✅ resolved |
-| 14 | Aspire AppHost | 01 | 🔄 claimed（3/4；验收 1 卡在开发证书信任） |
+| 14 | Aspire AppHost | 01 | ✅ resolved（4/4；验收 1 的根因是**代码里一个没人读的变量**，不是机器） |
 | 15 | 测试工程与测试库接线 | 04, 05 | ✅ resolved |
 | 16 | 参照仓库凭据打包口子 | — | ✅ resolved |
 | 17 | 新项目模板化与 CI | 01, 13 | ✅ resolved |
-| 18 | 【严重】appsettings 里提交了 AgileConfig secret | — | ⏸️ needs-info（决定轮换；等新 secret） |
+| 18 | 【严重】appsettings 里提交了 AgileConfig secret | — | ✅ resolved（**决定：接受/wontfix**——那台 VM 可随时重置；另有一个阿里云 AK 不属于 VM，建议轮换） |
 | 19 | EF Core 基座（DbContext/主键/软删/审计/UoW/Outbox-Inbox 存储） | 04, 15 | ✅ resolved |
 | 20 | RabbitMQ 拓扑规划与消费决策 | 04 | ✅ resolved |
 | 21 | RabbitMQ 通道绑定与消费循环 | 20 | ✅ resolved（6/6 真 broker 验收） |
@@ -112,8 +136,12 @@ Labels: wayfinder:map
 | 64 | 测试 schema 会残留，且没有清理路径 | 19 | ✅ resolved |
 | 65 | 测试工程命名一半带前缀、一半不带 | — | ✅ resolved（22 工程全部统一） |
 | 66 | 测试套件耗时完全由远端数据库延迟决定 | — | ✅ resolved（测试从 1 小时降到 78 秒） |
-| 67 | 授权链的第一环是断的 | 28 | ⏸️ needs-info（等产品决策） |
-| 68 | Platform 的设置写入经边缘不可达 | 30 | ⏸️ needs-info（等产品决策） |
+| 67 | 授权链的第一环是断的 | 28, 71 | ✅ resolved（**四处断链**：菜单端口/根账号/令牌 Root 声明/缓存失效；旅程 2 条测试，5 处变异全变红） |
+| 68 | Platform 的设置写入经边缘不可达 | 30 | ✅ resolved（第 16 轮：选了"该经边缘改"，加 `platform-write` 路由） |
+| 69 | 两次 review 出来的问题：处理与证据 | — | ✅ resolved（代码 7 类 + 规范 4 类，逐条带变异/真库/真 broker 证据） |
+| 70 | MattSkills 符合性收口 | — | ✅ resolved（spec 七节 / 标准单源 / format 门禁 / 词表收紧 / 变体声明 + 逐技能矩阵） |
+| 71 | 决定：根账号从哪儿来，菜单从哪儿来 | — | ✅ resolved（**启动播种根账号 + 加菜单管理端点**；67 随即可开工） |
+| 72 | 六处差异全部消除 | — | ✅ resolved（评论迁移 + 决定票 + 向导 + HTML 报告 + 交接 + 留痕判定） |
 
 **剩余部分几乎全部阻塞在外部输入上。** 已经切完的"不需要外部输入"的片段：
 票据 20、22、23、24、25、26、27、28、29、以及 12 的限流与持久化。
@@ -124,8 +152,11 @@ Labels: wayfinder:map
 
 ## 已完成阶段的证据
 
-- 构建：`dotnet build NexusStackNext.slnx` → 成功，**0 警告 0 错误**（35 个项目）。
-- 测试：`dotnet test NexusStackNext.slnx` → **382/382 通过**。
+- 构建：`dotnet build NexusStackNext.slnx` → 成功，**0 错误**（**52 个项目**）。
+  有 **1 个警告**：`ASPIRE010`（AppHost 未启用 Aspire CLI bundle）——不阻塞构建，但它说明
+  "0 警告"这句话不再是真的，所以写在这里而不是省掉。
+- 测试：`pwsh scripts/run-tests.ps1`（串行、全局互斥）→ **21 个测试工程全部通过**，合计约 **102 秒**，
+  含真 PostgreSQL 与真 RabbitMQ 的集成测试，**0 跳过**。
 - **补测试补出三个真缺陷**（票据 39）：其中一个**会静默丢消息**——
   `AuditIngestion` 原来先登记去重再校验聚合，于是非法消息占掉名额，
   重投时被判为重复而**永久丢弃，且从任何地方都看不出来**。
@@ -253,14 +284,30 @@ Labels: wayfinder:map
 
 ## Not yet specified
 
-- **数据权限**（`DataRange` + `RegionIds`）：原项目建模了但零消费点。补齐还是砍掉？（票据 11 的阻塞点）
-- **认证形态**：自研 JWT / OpenIddict / Authentik（git 里有 `dev-authentik` 分支）。（票据 10 的阻塞点）
-- **审计写入路径**：Outbox 事件消费（默认）还是各上下文同步写本地审计表。
-- **OSS / 短信 / FFmpeg / Excel 导出**：归 Files 还是拆独立集成层。
-- **模板参数面**：`dotnet new` 暴露哪些开关。（票据 17）
-- **测试库**：可用的 PostgreSQL 从哪来。（票据 15 的阻塞点）
-- **SignalR backplane** 与多实例粘性会话策略。
-- **集成测试**在无容器前提下如何做到隔离（独立 schema + 回滚已定，待验证）。
+**这一节是 fog**：还看不清、因此**还没立票**的东西。已经定下的不在这里——
+它们在 `## Decisions so far` 里，或者已经成了票/ADR。
+
+> **2026-09-30 清点过一次。** 这一节此前挂着 8 条，而其中 **6 条早就定下了**，
+> 于是"地图上的 fog"读起来像"还有 6 件没定"，实际不是。逐条核过之后只剩 2 条真开着。
+
+- **多实例**：SignalR backplane 与粘性会话策略。本仓现在是**单实例**：`GatewayHub` 已建、
+  `AddSignalR` 已接，而 **backplane 0 处引用**。它要等"第二个实例"这个前提真的出现——
+  那正是 ADR-0005 与不变量 7 的同一条道理（**第二个消费者才让它成立**）。
+- **对外集成的归属**：OSS / 短信 / FFmpeg / Excel 导出归 Files，还是拆一个独立的集成层？
+  这四样本仓**一个都没有**（`src/` 里 0 处引用）——所以它不是"还没实现"，
+  而是**还没有决定要不要有**。（`spec.md` 的「明确砍掉」一节砍掉的是**参照仓库里的反射式 Excel 模板调用**，
+  不是这几样能力本身。）
+
+**那 6 条定到哪里去了**（照原样留一行，免得有人以为它们消失了）：
+
+| 原 fog 条目 | 落点 |
+|---|---|
+| 认证形态（自研 JWT / OpenIddict / Authentik） | **ADR-0014**：令牌由本上下文签发、验签交给框架；已实现（`AddJwtBearer` 两处） |
+| 数据权限（`DataRange` / `RegionIds`） | **删除，且零残留**——本仓从未建模过（票据 11 的验收里写死了这一条） |
+| 审计写入路径（Outbox 消费 vs 各上下文同步写） | **事件进入 → 幂等去重 → 落库**（票据 37 + Auditing ADR-0001 的"只写上下文"） |
+| 测试库从哪来 | `env/test.dev`（用户的虚拟机）+ `scripts/run-tests.ps1` 的串行与全局互斥 |
+| 集成测试怎么隔离 | **独立 schema，用完 `DROP … CASCADE`**——已在跑（52 处引用），票据 15 结票 |
+| 模板参数面（`dotnet new` 开关） | `.template.config` 已定（票据 17），产物由 `assert-no-credentials.ps1` 守着 |
 
 ## Out of scope
 

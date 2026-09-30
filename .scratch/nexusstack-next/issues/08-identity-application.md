@@ -1,8 +1,8 @@
-# 08 — Identity 应用层：用例与权限预计算
+﻿# 08 — Identity 应用层：用例与权限预计算
 
 Status: resolved
 Type: task
-Labels: needs-triage
+Labels: ready-for-agent
 Blocked by: 03, 06, 07
 
 > **2026-09-29 进展**：权限键的**格式与集合**已由票据 22 交付
@@ -26,7 +26,22 @@ Blocked by: 03, 06, 07
 
 ## 验收标准
 
-- [ ] 权限预计算的输出与原实现的语义一致（同样以 `routetemplate:METHOD` 为键），有对照测试。
+- [x] 权限预计算的输出与原实现的语义一致（同样以 `routetemplate:METHOD` 为键），有对照测试 ——
+      `PermissionKeyTests`：归一化（`From_NormalizesRouteAndMethod`）、首尾斜杠、按值相等、
+      `TryParse` 在**最后一个冒号**上切分（路由约束里的冒号因此不丢）、`From`/`TryParse` 往返一致。
+      键的形状由 `PermissionKey.From(routeTemplate, method)` **单点**决定——端点的 `RequirePermission`
+      与 api-resource 的 `ToPermissionKey` 都走它，所以"两处一致"是**结构性的**，不是靠比对维持的。
+
+## Comments
+
+### local
+
+**结票时漏打勾，2026-09-30 补齐（第 3 轮）**
+
+验收框里的那一条早就满足了（`PermissionKeyTests` + 单点决定键的形状），只是一直没打勾。
+被发现的过程值得记下来：不是有人重读这张票，而是有人问"**还有没有待完成的票据**"，
+于是按"已 `resolved` 却还留着 `- [ ]`"去筛——**这是检查能覆盖的形状**，
+现在它属于 `check-tracker` §24（同批发现两张：本票与 `15-test-harness.md`）。
 - [x] single-flight 有测试：N 个并发请求只回源一次。
 - [x] 缓存失效有测试：角色权限变更后，下次鉴权立刻反映新权限（不依赖 TTL 过期）。
 - [x] 查询路径不出现跨上下文 join（由票据 05 断言）——`UserPermissionReader` 只用 Identity 自己的三个端口。

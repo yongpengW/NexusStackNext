@@ -1,8 +1,8 @@
 # 14 — Aspire AppHost 与 ServiceDefaults
 
-Status: claimed
+Status: resolved
 Type: task
-Labels: needs-info
+Labels: ready-for-agent
 Blocked by: 01
 
 ## **阻塞点已解除**（第 13 轮核实）
@@ -47,7 +47,10 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 
 ## 验收标准
 
-- [ ] `dotnet run --project aspire/NexusStackNext.AppHost` 能拉起全部服务，Aspire 面板可见。
+- [x] `dotnet run --project aspire/NexusStackNext.AppHost` 能拉起全部服务，Aspire 面板可见 ——
+      **实测通过（第 18 轮）**：三个进程（AppHost + 平台宿主 + 网关）、5190/5191 都在听且
+      `/health/live` **双 200**、面板 `http://localhost:49210/login` 返回 **200**、OTLP 49208/49209 在听；
+      跑完按名字清掉那三个进程，五个端口**全部释放**。
 - [x] 未设置连接信息时给出**可操作的**错误提示——实测：退出码 1，消息点名缺哪四个变量、去哪儿找、以及"只想跑单个服务不需要 AppHost"。
 - [x] 把 AppHost 项目整体删除后，各服务仍可用环境变量独立启动——**实测**：先从 slnx 移除、再把整个 `aspire/` 目录移走，解决方案仍然**构建通过**（exit 0）。
 - [x] OTel 追踪的**跨服务关联 ID** —— **实测通过**，见下。（"Seq 或 Aspire 面板"里的 Seq 在本仓不成立，见下。）
@@ -57,13 +60,17 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 - `review/03` 发现 3：网关因无条件 `UseRedis` + 空连接串在生产起不来。
 - 本机环境：无 Docker / Podman / WSL，无本机 PostgreSQL/Redis/RabbitMQ；`dotnet new list` 也没有 Aspire 模板（需先装模板包）。
 
-## 第 14 轮：AppHost（4 条验收里的 2 条）
+## Comments
 
-### 交付
+### local
+
+**第 14 轮：AppHost（4 条验收里的 2 条）**
+
+#### 交付
 
 `aspire/NexusStackNext.AppHost` + `scripts/run-apphost.ps1`。
 
-### 三处与票据原文不符的现状（都已纠正）
+#### 三处与票据原文不符的现状（都已纠正）
 
 **一、只有两个进程，不是六个。** 票据写"编排 5 个服务 + 网关"。而 ADR-0013 已经把
 五个平台能力合成**一个宿主**——所以是**平台宿主 + 网关**两个。
@@ -80,13 +87,13 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 **顺带一条**：`IsAspireHost` 属性会让 SDK 报 `NETSDK1228`（已弃用的 Aspire **工作负载**路径）。
 正解是 `<Project Sdk="Aspire.AppHost.Sdk/13.6.0">`——Aspire 现在通过 NuGet 包与 MSBuild SDK 提供。
 
-### 验收 3 验得很硬
+#### 验收 3 验得很硬
 
 先把 AppHost 从 slnx 移除 → 构建通过；再把**整个 `aspire/` 目录**移走 → 仍然构建通过。
 **"没有焊死"不是声明，是实测。** 这正是 ADR-0005 想要的那个性质：
 编排是编排，服务是服务，删掉编排服务照跑。
 
-### "可操作的错误"长什么样
+#### "可操作的错误"长什么样
 
 ```
 缺少下面这些环境变量，AppHost 无法给出可用的连接信息：
@@ -106,7 +113,7 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 **写这段提示时我发现自己在引用一个不存在的脚本**（`run-apphost.ps1`）——
 于是把它补上了。**提示里给出的路径必须是能用的，否则它比不提示更糟。**
 
-### 还剩两条
+#### 还剩两条
 
 - **`dotnet run --project aspire/...` 真的拉起两个进程、面板可见**——没跑。
   它会占用 5190/5191 并留下长驻进程，值得单独一轮做完并清理。
@@ -114,9 +121,12 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 
 所以本票标 `claimed`。
 
-## 第 15 轮：ServiceDefaults 与跨服务关联（验收 3/4）
 
-### 交付
+### local
+
+**第 15 轮：ServiceDefaults 与跨服务关联（验收 3/4）**
+
+#### 交付
 
 `aspire/NexusStackNext.ServiceDefaults`：OpenTelemetry（追踪 + 指标）、健康检查、HTTP 韧性、服务发现。
 两个宿主都接上了。
@@ -124,7 +134,7 @@ ADR-0005 已改为"**Aspire 只编排应用进程，中间件走外部依赖**"�
 **它刻意不依赖 Aspire**：有 OTLP 端点就导出，没有就只是不导出。
 这是 ADR-0005 那条"不把 Aspire 的注入方式写进业务代码"的直接落实。
 
-### 验收 4 实测通过（这是本轮最有价值的一条）
+#### 验收 4 实测通过（这是本轮最有价值的一条）
 
 起了**两个真进程**（平台宿主 5191、网关 5190），经网关发一个请求：
 
@@ -140,7 +150,7 @@ X-Correlation-Id                → 6c470604a22d4ff880efd3d0e7625aa5
 
 脚本留在 `scripts/verify-cross-service-trace.ps1`，可重复跑。
 
-### 一个**前提是错的**：本仓不用 Seq
+#### 一个**前提是错的**：本仓不用 Seq
 
 票据写"OTel 追踪能在 **Seq** 或 Aspire 面板看到"。核实结果：
 
@@ -154,7 +164,7 @@ X-Correlation-Id                → 6c470604a22d4ff880efd3d0e7625aa5
 `Serilog__WriteTo__0__Args__serverUrl`——那是我照参照仓库想当然写的，
 本仓没有任何东西消费它。已删，换成 `OTEL_EXPORTER_OTLP_ENDPOINT`（配了才导出）。
 
-### 验收 1 没做成：卡在一张**未受信任**的开发证书
+#### 验收 1 没做成：卡在一张**未受信任**的开发证书
 
 `dotnet run --project aspire/...` 起不来：
 
@@ -172,7 +182,7 @@ and the default developer certificate could not be found or is out of date.
 
 两个选择：信任那张开发证书，或者用别的只看"服务起没起"的方式验（面板本身看不到）。
 
-### 三条验收
+#### 三条验收
 
 | 验收 | 状态 |
 |---|---|
@@ -181,7 +191,10 @@ and the default developer certificate could not be found or is out of date.
 | 删掉 AppHost 后各服务仍能独立启动 | ✅ 实测（整个 `aspire/` 目录移走仍构建通过） |
 | OTel 跨服务关联 ID | ✅ **实测**（两个进程共享一个 TraceId） |
 
-## 第 17 轮：验收 1 的四个环境阻塞，逐个定位
+
+### local
+
+**第 17 轮：验收 1 的四个环境阻塞，逐个定位**
 
 第一次失败之后我没有停在"证书受信任"这一条上，而是**继续往下试**——因为每修一个就会露出下一个，
 而"它起不来"这句话对下一个接手的人没有任何用。
@@ -197,7 +210,7 @@ and the default developer certificate could not be found or is out of date.
 而是 `Unhandled exception` 把整个进程带走。**一条附带日志失败杀掉主程序**，而那行错误
 （"Cannot open log for source"）与"AppHost 起不来"之间的联系需要读完整堆栈才看得出来。
 
-### 阻塞 4：诊断过，**不是 ACL 问题**
+#### 阻塞 4：诊断过，**不是 ACL 问题**
 
 `Directory.CreateTempSubdirectory` 在 **4 个不同目录**下都失败——包括我刚用
 `New-Item` 建出来的、自己拥有的目录。所以它不是目录权限。
@@ -222,8 +235,79 @@ reason: No package allow ACE was observed and both required rights are available
 
 诊断报告留在 `.scratch/nexusstack-next/review/acl-report/`。
 
-### 结论
+#### 结论
 
 验收 1 **在本机无法完成**，卡点与代码无关，且已经定位到**具体一行 API**。
 换一台 `CreateTempSubdirectory` 正常的机器，或等这台机器的该问题被解决之后，再来跑这条。
 **其余三条验收全部实测通过**，包括那条最有价值的跨服务关联 ID。
+
+### local
+
+**第 18 轮：验收 1 做成，而根因与上一轮的结论**相反**（2026-09-30）**
+
+上一轮的结论是"**卡点与代码无关，换台机器才能验**"。有人问了一句"这个问题的原因弄清楚了吗"，
+于是把它当问题查了一遍——**结论是反的：根因就在代码里，而且能修。**
+
+#### 一、"机器上那个 API 坏了" —— 不成立
+
+`Directory.CreateTempSubdirectory` 在 **.NET 10 宿主**里当场跑通（临时控制台工程，同一个 `TEMP`）：
+
+```
+运行时: .NET 10.0.12
+CreateTempSubdirectory → 成功: C:\Users\Administrator\AppData\Local\Temp\nexusstack-probe-pc0syqss.h11
+Directory.CreateDirectory → 成功（对照）
+```
+
+这台机器的那个 API **是好的**。上一轮那次失败是**当时的运行上下文**造成的：最可能是会话的
+**文件沙箱**——它拒绝工作区之外的写入，而"沙箱拒绝"与"ACL 拒绝"在消息上长得一样
+（这也是为什么 ACL 诊断技能给的是 `NOT_THIS_CLASS`：它没看错，它只是不在那一类里）。
+**"换个环境再试"当时被读成了"换台机器才能验"——这两句话不是一回事。**
+
+#### 二、真正挡住验收 1 的，是**代码里一个没人读的变量**
+
+修完三处环境阻塞之后，AppHost 仍然退出 1：
+
+```
+缺少下面这些环境变量，AppHost 无法给出可用的连接信息：
+  NEXUSSTACK_DB
+  NEXUSSTACK_REDIS
+```
+
+查下去是**两处**，都在本仓的代码/脚本里：
+
+1. **AppHost 要求 `NEXUSSTACK_REDIS`，而本仓不用 Redis。** 核实过：`src/` 里 "Redis" 只出现在
+   **注释**里（讲"要跨实例共享时该换 Redis 之类"的升级路径）、`Directory.Packages.props` 没有
+   Redis 客户端、两个宿主的 `appsettings.json` 里连 `Redis` 节都没有——而它还把值注成
+   `Redis__Configuration`，**没有任何东西读那个键**。
+   这与本票第 15 轮抓到的 Seq 注入是**同一类错误**：照参照仓库的技术栈想当然写的。
+2. **启动脚本只读 `env/platform.dev`，而库连接串住在 `env/test.dev`**（`NEXUSSTACK_TEST_POSTGRES`）
+   ——于是 `NEXUSSTACK_DB` 永远推导不出来。**错的是读法，不是配置。**
+
+两处都已修：AppHost 不再要求也不再注入 Redis（并在代码里写下"**这个变量有没有人读，是一个能查的事实**"）；
+`run-apphost.ps1` 改成"主文件 + 用 `test.dev` 补**没有的**键（不覆盖）"。
+
+#### 三、上一轮定位的三处环境阻塞，现在**写进脚本**了
+
+它们此前只住在这张票的注释里，所以下一个人跑脚本会再撞一遍：
+
+- `ASPIRE_ALLOW_UNSECURED_TRANSPORT=true` —— 面板默认要 HTTPS，而开发证书未受信任；
+  **不动你的证书存储**（那是机器级安全改动，得你点头）；
+- 建出 `%USERPROFILE%\.aspire\cli\bch` —— 目录不存在时 Aspire 报的是"**拒绝访问**"而不是"不存在"，
+  那句话会把人往权限方向带；
+- `Logging__EventLog__LogLevel__Default=None` —— **一条附带日志失败会杀掉主程序**。
+
+#### 四条验收
+
+| 验收 | 状态 |
+|---|---|
+| AppHost 拉起全部服务、面板可见 | ✅ **实测**（三进程 / 双 200 / 面板 200 / 端口释放） |
+| 未设连接信息时给出可操作的错误 | ✅ 实测 |
+| 删掉 AppHost 后各服务仍能独立启动 | ✅ 实测 |
+| OTel 跨服务关联 ID | ✅ 实测 |
+
+#### 留下的教训（与 `AGENTS.md` 那几条同源）
+
+**"我试了三次都失败"和"这件事在这台机器上做不到"是两句话。** 上一轮把它们合并了，
+于是一处**本来能在代码里修的问题**被记成了"换台机器才能验"，而它就此停了一轮。
+**换环境重试的时候要问"我换掉了什么"**——这次换掉的恰好是问题所在的那一层；
+而"换个环境就好了"如果没有解释为什么，那它只是把原因挪出了视野。

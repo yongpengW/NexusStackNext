@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NexusStackNext — 架构深化机会（review/24）</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1d212a; --line: #2a2f3a;
+    --fg: #e6e9ef; --dim: #9aa3b2; --accent: #6ea8fe; --good: #57d38c;
+    --warn: #f0b429; --bad: #f27a72; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f7f8fa; --panel:#fff; --panel2:#f0f2f6; --line:#dfe3ea; --fg:#1a1d23; --dim:#5b6472;
+            --accent:#1f5fd0; --good:#1a7f4b; --warn:#9a6b00; --bad:#b3261e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.65 system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 27px; margin: 0 0 6px; letter-spacing: -.01em; }
+  h2 { font-size: 19px; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .sub { color: var(--dim); font-size: 13.5px; margin-bottom: 26px; }
+  .meta { display:flex; flex-wrap:wrap; gap:8px; margin: 18px 0 6px; }
+  .chip { font: 12px/1.4 var(--mono); background: var(--panel2); border:1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--dim); }
+  .card { background: var(--panel); border:1px solid var(--line); border-radius: 12px; padding: 20px 22px; margin: 16px 0; }
+  .card h3 { margin: 0 0 4px; font-size: 17px; }
+  .card .why { color: var(--dim); font-size: 13.5px; margin-bottom: 14px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(230px,1fr)); gap: 12px; }
+  .cell { background: var(--panel2); border:1px solid var(--line); border-radius: 9px; padding: 11px 13px; }
+  .cell .k { font: 11.5px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--dim); display:block; margin-bottom: 6px; }
+  .cell .v { font-size: 13.5px; }
+  .tag { display:inline-block; font: 11.5px/1 var(--mono); padding: 3px 8px; border-radius: 6px; border:1px solid var(--line); }
+  .tag.pass { color: var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+  .tag.hold { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--line)); }
+  .tag.no   { color: var(--bad);  border-color: color-mix(in oklab, var(--bad) 40%, var(--line)); }
+  .tag.info { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 40%, var(--line)); }
+  code { font-family: var(--mono); font-size: 12.8px; background: var(--panel2); border:1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  table { width:100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+  th, td { text-align:left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 600; font-size: 12.5px; }
+  .note { border-left: 3px solid var(--accent); background: var(--panel2); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14px; }
+  .rank { font: 12px/1 var(--mono); color: var(--dim); }
+  ol.steps { padding-left: 20px; }
+  ol.steps li { margin: 6px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--dim); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>架构深化机会 — NexusStackNext</h1>
+  <p class="sub">一次扫描的结果，<b>不是已完成的工作</b>。每条机会都给出：缝在哪、删除测试过不过、杠杆多大、代价是什么。</p>
+
+  <div class="meta">
+    <span class="chip">review/24</span>
+    <span class="chip">2026-09-30</span>
+    <span class="chip">52 个项目 / 21 个测试工程 / 524 条测试</span>
+    <span class="chip">技能：improve-codebase-architecture + codebase-design</span>
+    <span class="chip">方法：读源码 + 本次会话的实际改动面</span>
+  </div>
+
+  <div class="note">
+    <b>这份报告为什么是 HTML。</b><code>improve-codebase-architecture</code> 要求"可视化 HTML 报告"，
+    而本仓此前的评审是 Markdown（<code>review/01</code>–<code>23</code>）。两种都要：
+    Markdown 进版本库、能 diff；HTML 给人**扫一眼**。这是同一个扫描的**呈现**，不是第二份证据。
+  </div>
+
+  <h2>判据（来自 codebase-design，非本报告自创）</h2>
+  <div class="grid">
+    <div class="cell"><span class="k">删除测试</span><span class="v">把模块删掉，复杂度是不是在 N 个调用点重新长出来？是 → 它是个真模块。</span></div>
+    <div class="cell"><span class="k">接口就是测试面</span><span class="v">测试必须越过与调用方同一道缝。绕过接口才能测 = 缝画错了。</span></div>
+    <div class="cell"><span class="k">两个适配器</span><span class="v">一个适配器只是假设的缝，两个才是真的缝。<b>本仓的端口基本都有两个</b>（内存 + EF/磁盘）。</span></div>
+  </div>
+
+  <h2>机会一：授权在五个模块里长成了两种形状 <span class="tag info">杠杆最大</span></h2>
+  <div class="card">
+    <h3>一个关注点，两种机制，五处声明</h3>
+    <p class="why">Identity 挂自己的授权过滤器（算权限键 + 查会话版本）；其余四个模块手写 <code>RequireAuthorization()</code> / <code>AllowAnonymous()</code>。同一件事——"这个端点谁能碰"——在仓库里有两种写法，而它们**必须与边缘的路由表逐条对应**。</p>
+    <div class="grid">
+      <div class="cell"><span class="k">模块</span><span class="v">既有的<code>授权判定</code>：过滤器住在 <code>Identity.Endpoints</code>，另外四处各写一遍框架调用</span></div>
+      <div class="cell"><span class="k">接口（提议）</span><span class="v">按分组声明意图：<code>RequirePermission(key)</code> / <code>RequireAuthenticated()</code> / <code>Public()</code></span></div>
+      <div class="cell"><span class="k">实现</span><span class="v">权限键的解析与会话版本检查——调用方看不见</span></div>
+      <div class="cell"><span class="k">删除测试</span><span class="v"><span class="tag pass">通过</span> 删掉它，五个模块会各自长回一份判定逻辑</span></div>
+      <div class="cell"><span class="k">第二消费者</span><span class="v"><span class="tag pass">已满足</span> 不变量 7 要求 ≥2 个消费者；这里有 5 个</span></div>
+      <div class="cell"><span class="k">代价</span><span class="v">新增一个共享程序集（<code>BuildingBlocks.AspNetCore</code>）——而不变量 7 的判据是"被第二个消费者证明需要"，它正好卡在边界上</span></div>
+    </div>
+    <p class="why" style="margin-top:14px">现状的隐患不在"能不能跑"（它有测试：<code>ContextAuthorizationTests</code>），而在**它只对了一半**：四个模块的判定与边缘路由表的对应关系，靠人读两份文件维持。</p>
+  </div>
+
+  <h2>机会二：三个 verify 脚本里同一坨"起宿主 + 等就绪 + curl" <span class="tag info">最便宜</span></h2>
+  <div class="card">
+    <h3>三段旅程，三份几乎相同的引导代码</h3>
+    <p class="why"><code>verify-user-journey.ps1</code>、<code>verify-write-paths.ps1</code>、<code>verify-cross-service-trace.ps1</code> 各自：起两个进程、轮询 <code>/health/ready</code>、装 curl、收尾清理。它们验的是**不同的旅程**（同一个接口面），复用不了的是实现。</p>
+    <div class="grid">
+      <div class="cell"><span class="k">模块</span><span class="v"><code>scripts/lib/hosts.ps1</code>：<code>Start-Hosts</code> / <code>Wait-Ready</code> / <code>Stop-Hosts</code></span></div>
+      <div class="cell"><span class="k">接口就是测试面</span><span class="v"><span class="tag pass">通过</span> 三个脚本点同样的三个函数；旅程本身留在各自脚本里</span></div>
+      <div class="cell"><span class="k">删除测试</span><span class="v"><span class="tag pass">通过</span> 删掉它，第三份引导代码会再抄一遍</span></div>
+      <div class="cell"><span class="k">杠杆</span><span class="v">第 4 条旅程正在变便宜；而"只杀自己起的进程"这类修补只写一次</span></div>
+      <div class="cell"><span class="k">代价</span><span class="v">几乎为零——但它**不在测试射程内**（这些脚本手动跑），所以改动得靠真跑一遍验</span></div>
+      <div class="cell"><span class="k">已知教训</span><span class="v">本轮刚修过：三个脚本此前都 <code>Stop-Process -Name dotnet</code>，会杀掉机器上所有 .NET 进程</span></div>
+    </div>
+  </div>
+
+  <h2>机会三：不变量覆盖率表靠字符串指针 <span class="tag info">低风险</span></h2>
+  <div class="card">
+    <h3>表 → 测试名是字符串，改名靠一条测试兜着</h3>
+    <p class="why"><code>InvariantCoverage.cs</code> 把八条不变量指向具体测试的**名字**；<code>InvariantCoverage_IsCompleteAndPointsAtRealTests</code> 保证指针不悬空。它有效——但"有效"靠的是每次改名都跑那条测试。</p>
+    <div class="grid">
+      <div class="cell"><span class="k">接口（提议）</span><span class="v"><code>[Trait("invariant","3")]</code> + 反射枚举，表由事实生成而不是抄写</span></div>
+      <div class="cell"><span class="k">删除测试</span><span class="v"><span class="tag hold">一半</span> 删掉表，八条不变量的可达性就只剩测试名可读</span></div>
+      <div class="cell"><span class="k">代价</span><span class="v">反射枚举要走 <code>SourceAssemblyPaths()</code> 那套守卫（空枚举必须响亮失败），否则会复制出本仓最反复吃的那类亏</span></div>
+      <div class="cell"><span class="k">建议</span><span class="v">现在够用。<b>不做</b>，除非表里再长出第 9 条不变量</span></div>
+    </div>
+  </div>
+
+  <h2>看过的机会（<b>有意不做</b>，附理由）</h2>
+  <table>
+    <tr><th>机会</th><th>为什么不做</th><th>什么会改变这个决定</th></tr>
+    <tr>
+      <td>把各模块的 <code>Failure(Error)</code>（6 行 × 5 份）上移</td>
+      <td><code>AGENTS.md</code> 把它写成**决定而非遗漏**：那是每个服务自己的 HTTP 契约，统一等于用一个共用函数锁死五个服务的状态码语义</td>
+      <td>出现第六个模块，且它们的映射表逐字相同</td>
+    </tr>
+    <tr>
+      <td>把内存适配器从产品代码里移出去，只留测试替身</td>
+      <td>它们不是替身：是本仓"无库也能端到端跑起来"的能力（ADR-0005 的落地形态），且每个端口两个适配器正是"缝是真的"的证据</td>
+      <td>内存适配器开始与 EF 适配器语义漂移（那才是它变成负债的信号）</td>
+    </tr>
+    <tr>
+      <td>给 <code>NexusStackDbContextOptionsExtensions</code> 再抽一层"上下文构建器"</td>
+      <td>它已经是那个深的模块：三个知识（迁移历史表归 schema、瞬时重试、模型缓存键含 schema）藏在两行调用背后。再抽只是加壳</td>
+      <td>出现第三种数据库或第二套命名约定</td>
+    </tr>
+  </table>
+
+  <h2>已经深、别动的部分（扫描的副产品）</h2>
+  <div class="card">
+    <ul>
+      <li><b>消息基座</b>：<code>IOutboxStore</code>/<code>IInboxStore</code> 各两个适配器；重点在**六条真 broker 验收**（重试档位、死信、恢复、幂等、拓扑幂等），而且每条都做过反向验证。深度的来源不是抽象层数，是"违约时会红"。</li>
+      <li><b>聚合版本号契约</b>：一句话（<i>Version 改变当且仅当可观察状态改变</i>）+ 九个聚合各一条"改状态 +1 / 空操作不变"的测试。接口极小，语义极大——教科书式的深。</li>
+      <li><b>跟踪器四脚本</b>：<code>check-tracker.ps1</code> 23 组检查、<code>check-format.ps1</code>、<code>assert-no-credentials.ps1</code>、<code>run-tests.ps1</code>——它们把"规范"变成了会失败的东西，这是本仓最深的一处。</li>
+    </ul>
+  </div>
+
+  <h2>下一步（技能要求的后半段）</h2>
+  <ol class="steps">
+    <li><b>挑一个</b>：机会一（授权形状）或机会二（脚本引导库）。</li>
+    <li><b>grill 一轮</b>：<code>/grilling</code>——把选中的那条拷问到代价清楚为止（技能明确要求"再逐个拷问"）。</li>
+    <li>拷问通过之后才开票，而不是现在就开——**机会不是票据**，它们还差一个决定。</li>
+  </ol>
+
+  <footer>
+    扫描：agent，2026-09-30。判据与词表来自 <code>codebase-design</code>（模块 / 接口 / 实现 / 深度 / 缝 / 适配器 / 杠杆 / 局部性）。
+    本文件是 <code>review/24</code>；编号唯一且连续由 <code>scripts/check-tracker.ps1</code> §23 守着。
+  </footer>
+
+</div>
+</body>
+</html>

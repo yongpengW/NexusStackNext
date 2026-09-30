@@ -2,7 +2,7 @@
 
 Status: resolved
 Type: task
-Labels: needs-info
+Labels: ready-for-agent
 Blocked by: 51
 
 > 评审 08 查出六条，四条当场修了。这里是**不适合当场做**的那两条，

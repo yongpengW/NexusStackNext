@@ -1,8 +1,8 @@
 # 68 — Platform 的设置写入经边缘不可达
 
-Status: needs-info
+Status: resolved
 Type: task
-Labels: needs-info
+Labels: ready-for-agent
 Blocked by: —
 
 ## 现象
@@ -53,9 +53,32 @@ Blocked by: —
 
 ## 验收标准
 
-- [ ] 选定的那条路上有**真实 HTTP** 的证据：要么经网关改得动一条设置并读回新值，
+- [x] 选定的那条路上有**真实 HTTP** 的证据：要么经网关改得动一条设置并读回新值，
       要么文档里写明它只能走内部通道、并且断言经网关确实打不进来。
-- [ ] `EveryModuleEndpointIsRoutedOrDeclaredInternalTests` 覆盖这一条。
+- [x] `EveryModuleEndpointIsRoutedOrDeclaredInternalTests` 覆盖这一条。
       它已经**从"前缀"细化到"方法 + 路径"**了（就是这一轮做的），
       而被取代的前缀版已经删掉——方法级版严格涵盖它。
       本票选的方案落地后，把 `DeclaredInternal` 里那两行 `platform/settings` 换成真正的归宿。
+
+## Comments
+
+### local
+
+**第 16 轮：选了"该经边缘改"**
+
+**决定（第 31 轮 review 时按推荐方案落地）：设置的写路径应当经边缘可达，由认证与限流护着。**
+理由是 `Platform` 是配置的**唯一真相**，而"只读的真相"不是真相。
+
+落地：
+
+- `routes.json` 新增 `platform-write`：`/api/platform/{**catch-all}`、`methods: [PUT, DELETE]`、
+  `requireAuthentication: true`、限流 `gateway.default`。与只放 GET 的 `platform-read` **按方法分开**，
+  于是"读公开、写要令牌"这条与边缘策略逐字对应。
+- `DeclaredInternal` 里那两行 `platform/settings` **移走**——它们有归宿了，不再需要豁免。
+  （豁免的意思本来就是"还没归宿"，留着它会让这条检查从"守着"退化成"记着"。）
+- 进程内也补上了同一侧判定：写端点 `.RequireAuthorization()`、读端点 `.AllowAnonymous()`
+  （见 `ContextAuthorizationTests`）。**直连后端**不再能绕过写路径的保护。
+
+验证：`Gateway.Routing.Tests` 48/48、`HostIntegration.Tests` 19/19；
+后者的变异验证是——把某个端点的 `RequireAuthorization()` 摘掉，未认证直连会拿到 **201 Created**
+（不是 401），测试立刻红。

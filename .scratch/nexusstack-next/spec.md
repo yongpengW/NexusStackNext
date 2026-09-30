@@ -1,11 +1,143 @@
 # Spec: NexusStackNext — 真正的微服务 + DDD 后端模板
 
-Status: ready-for-human（等你过目后再开工）
+Status: ready-for-agent
 Effort: `nexusstack-next`
 参照物：`D:\NexusStack\NexusStackBackend`（只读，未修改一个字节）
 证据：`review/01..04-*.md`（4 份，1746 行，逐条带 `file:line`）
 
+> **这份 spec 在 2026-09-30 按 `to-spec` 的模板补过一次形态。** 原文（`## 1. 目标` 起）
+> **逐字保留**在文末的附录里——它记录的是当时的推理与实测，不是可以被"整理"掉的草稿。
+> 补上来的是模板要求的七节。
+>
+> 原文的 `Status: ready-for-human`（"等你过目后再开工"）是当时的事实；
+> 按模板发布时该字段应为 `ready-for-agent`，所以上面那一行已经改了，历史写在附录里。
+
 ---
+
+## Problem Statement
+
+团队要开一个新的 .NET 后端：需要限界上下文，需要**真能跑通**的边界。而上一版的形态让边界
+只存在于文档里——四个可部署单元引用同一个 Core，"我是哪个服务"由运行时枚举表达；
+28,130 行代码**零测试工程**，CI 是个空目录；实体在构造函数里取静态服务定位器，
+于是 `new User()` 在单元测试里直接抛异常——**这个项目从结构上就无法做单元测试**。
+
+同时它还带着几处会安静失效的东西：授权在配置缺失时 **fail-open**（一次配置事故等于全站放开）、
+消息不可路由时只记日志却照样 ACK（上游以为发出去了，而没有人收到）、
+权限缓存的失效窗口最长 10 小时、刷新令牌明文存库且可重放、数据权限**建模了但零消费点**。
+
+最后一条是关于"证据"的：这些结论都是**读出来的**，而它们的共同点是——
+**没有任何检查会在它们复发时说话**。
+
+## Solution
+
+一套**面向领域的 .NET 微服务解决方案模板**：五个平台能力（Identity / Platform / Scheduling /
+Auditing / Files）各自是独立的程序集，由**一个**宿主组装（它们是通用子域，一起演进、一起部署），
+边缘是一个独立的 YARP 网关；**架构不变量由编译期与测试守着**，而不是靠自觉。
+
+模板本身可被 `dotnet new` 使用，且**不携带任何凭据**——包括那些容易随运行产物一起被打包的东西。
+
+## User Stories
+
+1. As a backend engineer starting a new service, I want the build to fail when two bounded contexts reference each other, so that a boundary violation is caught before review.
+2. As a backend engineer, I want a domain layer that depends on nothing, so that I can write `new User()` in a unit test without booting a process.
+3. As a backend engineer, I want identifiers supplied by the caller instead of pulled from a static singleton, so that my tests are deterministic.
+4. As a backend engineer, I want one aggregate to equal one transaction, so that I never have to reason about partial writes inside a use case.
+5. As a backend engineer, I want cross-aggregate and cross-context consistency to be eventual and outbox-driven, so that a failed publish cannot lose the business change.
+6. As a backend engineer, I want a message that cannot be routed to fail loudly instead of being acknowledged, so that "sent" and "received" cannot diverge silently.
+7. As a backend engineer, I want consumer idempotency keyed by the message identity, so that two legitimate identical operations are not collapsed into one.
+8. As a backend engineer, I want each consumer to have its own retry tiers and dead-letter queue, so that one failing consumer cannot force another to reprocess.
+9. As a backend engineer, I want a failed handler to release its idempotency slot, so that the retry tiers actually re-invoke it.
+10. As a security-minded engineer, I want an unknown authorization decision to deny, so that a configuration accident cannot open the whole surface.
+11. As an operator, I want unauthenticated requests to a protected route to fail closed even when the signing key is missing, so that a missing secret degrades to "nobody gets in" rather than "everybody gets in".
+12. As an operator, I want the service to refuse to start with a clear message when a required secret is missing, so that I learn it at deploy time instead of at first login.
+13. As an operator, I want liveness and readiness to answer different questions, so that a dependency outage stops traffic without restarting the process.
+14. As an operator, I want the documentation of every backend aggregated at the edge, so that I can read the whole API surface without exposing the backends.
+15. As a platform owner, I want the edge to be the only published entry point, so that edge authentication cannot be bypassed by connecting to a backend directly.
+16. As a platform owner, I want configuration priority (environment over config centre over files) to be pinned by a test, so that "I changed it and nothing happened" is impossible.
+17. As a template user, I want `dotnet new` to produce a project that builds and passes its own tests, so that the first five minutes are not spent debugging the template.
+18. As a template user, I want the generated project to contain no credentials, so that I cannot leak someone else's secrets by using it.
+19. As a maintainer, I want every claim about "what is covered" to be machine-checked, so that a statement in the docs cannot quietly become false.
+20. As a maintainer, I want each invariant to have been validated by breaking it once, so that "there is a test for this" is evidence rather than a pointer.
+
+## Implementation Decisions
+
+- **Five bounded contexts as separate assemblies, one host, one database with a schema per context.**
+  These five are generic/supporting subdomains: they are not where the business differs, and they
+  evolve and deploy together. Bounded context, deployable unit, and database are three different
+  decisions that were deliberately not forced into a 1:1:1 mapping. Future business contexts get
+  their own service and their own database.
+- **A shared kernel admitted only by proof**: code moves into it after a second consumer appears,
+  not before. The allow-list of what may live there is itself checked.
+- **Ports in the application layer, adapters at the host.** The domain layer depends on nothing;
+  the application layer does not depend on infrastructure.
+- **Every host composes itself explicitly.** There is no module key, no runtime "which service am I"
+  enum, and no assembly scanning that decides what a process is made of.
+- **Aggregates own an optimistic-concurrency version whose contract is "the version changes if and
+  only if observable state changed".** No-op paths deliberately do not bump it.
+- **IDs are generated by the application and mapped as never-database-generated**; the database has
+  no identity columns.
+- **Integration events carry an explicit, versioned name**; routing keys, queue names, and idempotency
+  keys derive from it, never from CLR type names.
+- **The edge authenticates; contexts authorize.** Authentication is a signature check at the edge;
+  per-endpoint authorization happens inside each context.
+- **Authorization defaults to deny, including "no requirement declared".** Public endpoints must say so.
+- **Configuration priority is environment > config centre > environment-specific file > file**, and it
+  is pinned by a test against the host's real configuration manager.
+- **Observability**: structured logs always reach the console; traces propagate across the edge to
+  backends; readiness checks the dependencies that actually exist for that process.
+- **The repository is the template**: what ships is the same tree that is tested, minus local secrets
+  and the effort tracker.
+
+## Testing Decisions
+
+- **A good test here crosses a seam the production code also crosses, and asserts external behaviour,
+  not implementation detail.** Callers and tests cross the same interface; a test that has to reach
+  past it means the module shape is wrong.
+- **Test doubles live only at system boundaries** — the database, the broker, the clock, the file
+  system — and only one definition of each exists, in a shared test-support project.
+- **The invariant checks are the test suite's spine**: they assert the dependency graph, not behaviour,
+  and each was validated by breaking the rule once and watching it fail.
+- **Modules under test**: the domain aggregates (invariants and version contract), the application
+  dispatcher pipeline (validation, transaction boundary, save-on-success only), the message base
+  (outbox delivery, retry tiers, dead-lettering, consumer idempotency), the edge (route model,
+  routing coverage, fail-closed authentication), and each context's use cases.
+- **Prior art in this codebase**: the aggregate version tests (one per aggregate, asserting both
+  "changed ⇒ +1" and "no-op ⇒ unchanged"), the inbox contract test that every implementation
+  inherits, and the structural checks that fail loudly when they have nothing to scan.
+- **Real dependencies are used where a double would prove nothing**: PostgreSQL for persistence
+  conventions and concurrency, a real broker for publish confirmation, retry routing, and dead-lettering.
+  Where those are unavailable the tests skip **with the reason in the skip message** — a skip must be
+  distinguishable from a pass.
+- **Suite hygiene is a test concern too**: the suite runs projects serially against a shared database,
+  prints the target host and per-project durations, and holds a global lock — because the last time it
+  did not, it took down the shared database and the configuration centre with it.
+
+## Out of Scope
+
+- No front end; the back end only.
+- No data migration from the previous system.
+- No database provider other than PostgreSQL.
+- No container runtime dependency for local development or tests (there is none on the target machine);
+  orchestration is process-level and middleware stays external.
+- No business functionality for the four supporting contexts beyond a working end-to-end slice each —
+  this effort delivers the skeleton plus one complete vertical slice per context.
+
+## Further Notes
+
+- The original plan — including the reference-repository findings that motivated each decision, the
+  keep/cut lists, and the open questions that were still unanswered at the time — is preserved verbatim
+  in the appendix below. **It is the evidence, not the summary.**
+- Decisions are recorded as ADRs: system-wide ones at `docs/adr/`, context-scoped ones under each
+  context. The tracker lives under `.scratch/`, and its conventions are described in `docs/agents/`.
+- Where this spec and a later ADR disagree, **the ADR is right** — this document records what was
+  decided at the time, and ADRs record why it changed.
+
+---
+
+# 附录：原始方案（历史，逐字保留）
+
+> 下面这一部分**没有被改写**。它的 `Status: ready-for-human`、它对票据与轮次的引用、
+> 以及当时未答的开放问题，都是那一刻的真实状态。改写的部分只在上面的七节里。
 
 ## 1. 目标
 
