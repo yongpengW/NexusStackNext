@@ -97,14 +97,31 @@ public sealed class IdentityPersistenceTests(IdentityDatabaseFixture fixture)
             command.Parameters.AddWithValue("schema", IdentitySchema);
 
             var offending = new List<string>();
+            var scanned = new List<string>();
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
+                scanned.Add($"{reader.GetString(0)}.{reader.GetString(1)}");
+
                 if (!string.IsNullOrEmpty(reader.GetString(2)))
                 {
                     offending.Add($"{reader.GetString(0)}.{reader.GetString(1)} → {reader.GetString(2)}");
                 }
             }
+
+            // **守卫：先问"扫到了几列"。**
+            //
+            // 上面那句 `a.attname = 'Id'` 是大小写敏感的。列名一旦被折成 `id`，
+            // 这个循环体一次都不执行，`offending` 就是空的——
+            // 于是"每一个 Id 列都没有 IDENTITY"在**什么都没查**的情况下通过。
+            // 这正是 AGENTS.md「检查没有对象可查时不得报告通过」说的那个形状。
+            //
+            // 有 Id 列的表是 6 张（users / roles / api_resources / refresh_tokens /
+            // menu_trees / menu_nodes）；outbox / inbox / user_roles / role_menus 没有 Id 列。
+            Assert.True(
+                scanned.Count >= 6,
+                $"只扫到 {scanned.Count} 个 Id 列（至少应有 6 个）——这组断言等于没跑，不能当作通过。"
+                    + "（多半是列名大小写变了，而不是「表里真的没有 Id 列」）");
 
             Assert.True(
                 offending.Count == 0,

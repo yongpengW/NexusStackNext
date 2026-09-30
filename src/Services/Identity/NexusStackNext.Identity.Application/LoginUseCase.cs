@@ -1,6 +1,6 @@
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -114,7 +114,7 @@ public sealed class LoginHandler(
         {
             // **连"用户名格式不对"也不能单独报。** 否则攻击者可以靠格式规则
             // 反推哪些名字是合法用户名——而规则本身是公开的，于是这一步只泄露、
-         	// 不保护任何东西。
+            // 不保护任何东西。
             return Result.Failure<LoginOutcome>(InvalidCredentials);
         }
 

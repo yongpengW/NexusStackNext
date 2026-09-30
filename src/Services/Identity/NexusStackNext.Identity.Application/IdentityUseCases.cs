@@ -1,14 +1,15 @@
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Validation;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Application.Validation;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Domain.Authorization;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -70,6 +71,39 @@ public sealed record CreateApiResourceCommand(string Path, string Method, long? 
 /// <param name="ApiResourceId">资源标识。</param>
 /// <param name="PermissionKey">由它产生的权限键。</param>
 public sealed record ApiResourceCreated(long ApiResourceId, string PermissionKey);
+
+/// <summary>创建一个菜单节点。</summary>
+/// <param name="Title">标题。</param>
+/// <param name="SortOrder">同级排序。</param>
+/// <param name="ParentMenuId">父菜单；<c>null</c> 表示根节点。</param>
+public sealed record CreateMenuCommand(string Title, int SortOrder, long? ParentMenuId)
+    : ICommand<MenuCreated>;
+
+/// <summary>新建菜单节点的结果。</summary>
+/// <param name="MenuId">节点标识——后续"把 api-resource 挂上去""把菜单授给角色"都要用它。</param>
+/// <param name="ParentMenuId">父节点；根节点为 <c>null</c>。</param>
+/// <param name="Title">标题。</param>
+/// <param name="Path">物化路径（形如 <c>/1/2</c>）。</param>
+public sealed record MenuCreated(long MenuId, long? ParentMenuId, string Title, string Path);
+
+/// <summary>列出菜单树。</summary>
+public sealed record GetMenusQuery : IQuery<IReadOnlyList<MenuView>>;
+
+/// <summary>一个菜单节点在 HTTP 上的样子。</summary>
+/// <param name="MenuId">节点标识。</param>
+/// <param name="ParentMenuId">父节点；根节点为 <c>null</c>。</param>
+/// <param name="Title">标题。</param>
+/// <param name="Path">物化路径。</param>
+/// <param name="SortOrder">同级排序。</param>
+/// <param name="Depth">深度（根为 1）。</param>
+public sealed record MenuView(long MenuId, long? ParentMenuId, string Title, string Path, int SortOrder, int Depth);
+
+/// <summary>
+/// 确保存在一个内置根账号。<b>幂等</b>：已经有同名账号时什么都不做。
+/// </summary>
+/// <param name="UserName">用户名。</param>
+/// <param name="Password">明文口令——与 <see cref="CreateUserCommand"/> 一样，只在这一次调用里存在。</param>
+public sealed record SeedRootAccountCommand(string UserName, string Password) : ICommand<bool>;
 
 /// <summary>判定某个用户能否执行某个请求。</summary>
 /// <param name="UserId">用户标识。</param>
@@ -147,9 +181,11 @@ public sealed class CreateUserHandler(
 /// <summary>给用户分配角色。</summary>
 /// <param name="users">用户仓储。</param>
 /// <param name="clock">时钟。</param>
+/// <param name="permissions">权限缓存——<b>角色变了，缓存必须失效</b>。</param>
 public sealed class AssignRoleHandler(
     IUserRepository users,
-    IClock clock) : ICommandHandler<AssignRoleCommand>
+    IClock clock,
+    IPermissionCache permissions) : ICommandHandler<AssignRoleCommand>
 {
     /// <inheritdoc />
     public async Task<Result> HandleAsync(
@@ -160,9 +196,27 @@ public sealed class AssignRoleHandler(
 
         var user = await users.FindAsync(new UserId(command.UserId), cancellationToken).ConfigureAwait(false);
 
-        return user is null
-            ? Result.Failure(new Error("identity.user.not_found", $"用户不存在：{command.UserId}。"))
-            : user.AssignRole(new RoleId(command.RoleId), clock.UtcNow);
+        if (user is null)
+        {
+            return Result.Failure(new Error("identity.user.not_found", $"用户不存在：{command.UserId}。"));
+        }
+
+        var result = user.AssignRole(new RoleId(command.RoleId), clock.UtcNow);
+
+        if (result.IsSuccess)
+        {
+            // **与菜单授权同一条规则：授权变了，缓存必须失效。**
+            //
+            // 这一处此前**漏了**（菜单授权与新增 api-resource 两处都有）。后果不是"慢一点"：
+            // 过滤器读到的仍是**旧的那份空集合**，于是一个刚刚被授权的用户会一直 403，
+            // 直到缓存自然过期——而票据 67 要求的那条真实 HTTP 旅程第一次跑就撞上了它。
+            //
+            // 它是"每个上下文各自记得失效"这种模式的第二个样本；这一处的修法不是"记得更牢"，
+            // 而是把失效钉在**唯一一条改角色的路径**上（本处理器）。
+            permissions.Invalidate();
+        }
+
+        return result;
     }
 }
 
@@ -343,6 +397,138 @@ public sealed class AuthorizeHandler(IPermissionCache cache)
     }
 }
 
+/// <summary>创建一个菜单节点。</summary>
+/// <param name="trees">菜单树仓储。</param>
+/// <param name="ids">标识生成。</param>
+public sealed class CreateMenuHandler(
+    IMenuTreeRepository trees,
+    IIdGenerator ids) : ICommandHandler<CreateMenuCommand, MenuCreated>
+{
+    /// <inheritdoc />
+    public async Task<Result<MenuCreated>> HandleAsync(
+        CreateMenuCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        var title = MenuTitle.Create(command.Title);
+        if (title.IsFailure)
+        {
+            return Result.Failure<MenuCreated>(title.Error);
+        }
+
+        // **树不存在就建一棵。** 刻意不要求"播种时记得先建树"：那样第一个建菜单的人
+        // 会撞上一个只有他知道的错误——票据 67 的现象正是"`AddRoot` 从来没有被调用过"。
+        var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+        if (tree is null)
+        {
+            tree = MenuTree.Create(new MenuTreeId(ids.NextId()));
+            await trees.AddAsync(tree, cancellationToken).ConfigureAwait(false);
+        }
+
+        var nodeId = new MenuId(ids.NextId());
+
+        var added = command.ParentMenuId is { } parentId
+            ? tree.AddChild(new MenuId(parentId), nodeId, title.Value, command.SortOrder)
+            : tree.AddRoot(nodeId, title.Value, command.SortOrder);
+
+        return added.IsFailure
+            ? Result.Failure<MenuCreated>(added.Error)
+            : Result.Success(new MenuCreated(
+                added.Value.Id.Value,
+                added.Value.ParentId?.Value,
+                added.Value.Title.Value,
+                added.Value.Path.ToString()));
+    }
+}
+
+/// <summary>列出菜单树。</summary>
+/// <param name="trees">菜单树仓储。</param>
+public sealed class GetMenusHandler(IMenuTreeRepository trees)
+    : IQueryHandler<GetMenusQuery, IReadOnlyList<MenuView>>
+{
+    /// <inheritdoc />
+    public async Task<Result<IReadOnlyList<MenuView>>> HandleAsync(
+        GetMenusQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+
+        // **"还没有树"与"树是空的"在 HTTP 上是同一件事**（都返回空列表）：
+        // 调用方不需要区分它们，那是存储的实现细节。
+        IReadOnlyList<MenuView> views = tree is null
+            ? []
+            : [.. tree.Nodes
+                .OrderBy(static node => node.Path.Depth)
+                .ThenBy(static node => node.SortOrder)
+                .ThenBy(static node => node.Id.Value)
+                .Select(static node => new MenuView(
+                    node.Id.Value,
+                    node.ParentId?.Value,
+                    node.Title.Value,
+                    node.Path.ToString(),
+                    node.SortOrder,
+                    node.Path.Depth))];
+
+        return Result.Success(views);
+    }
+}
+
+/// <summary>确保存在一个内置根账号。<b>幂等</b>。</summary>
+/// <param name="users">用户仓储。</param>
+/// <param name="hasher">口令哈希。</param>
+/// <param name="ids">标识生成。</param>
+/// <param name="clock">时钟。</param>
+public sealed class SeedRootAccountHandler(
+    IUserRepository users,
+    IPasswordHasher hasher,
+    IIdGenerator ids,
+    IClock clock) : ICommandHandler<SeedRootAccountCommand, bool>
+{
+    /// <inheritdoc />
+    public async Task<Result<bool>> HandleAsync(
+        SeedRootAccountCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        var userName = UserName.Create(command.UserName);
+        if (userName.IsFailure)
+        {
+            return Result.Failure<bool>(userName.Error);
+        }
+
+        // **存在就跳过，绝不重置口令。** 播种每次启动都会跑；而"第二次启动把一个人已经改过的
+        // 根账号口令重置回配置里那个值"是没人预期、事后也查不出来的行为。
+        // 返回值说明这一次到底做了什么（true = 新建），日志与测试都用它，而不是靠猜。
+        if (await users.UserNameExistsAsync(userName.Value, cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Success(false);
+        }
+
+        var passwordHash = PasswordHash.Create(hasher.Hash(command.Password));
+        if (passwordHash.IsFailure)
+        {
+            return Result.Failure<bool>(passwordHash.Error);
+        }
+
+        // `isBuiltIn: true` 是这一环的关键：`AccessPolicy` 里那条 `IsRoot` 旁路只认它，
+        // 而它此前**永远是 false**——所以那条旁路没有任何真实的账号能走上去。
+        var user = User.Register(
+            new UserId(ids.NextId()),
+            userName.Value,
+            passwordHash.Value,
+            clock.UtcNow,
+            isBuiltIn: true);
+
+        await users.AddAsync(user, cancellationToken).ConfigureAwait(false);
+
+        return Result.Success(true);
+    }
+}
+
 /// <summary>注册 Identity 的用例处理器。<b>显式注册，不做程序集扫描</b>（不变量 8）。</summary>
 public static class IdentityUseCaseServiceCollectionExtensions
 {
@@ -368,6 +554,15 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddScoped<ICommandHandler<CreateRoleCommand, long>, CreateRoleHandler>();
         services.AddScoped<ICommandHandler<GrantMenuToRoleCommand>, GrantMenuToRoleHandler>();
         services.AddScoped<ICommandHandler<CreateApiResourceCommand, ApiResourceCreated>, CreateApiResourceHandler>();
+
+        // 菜单这一环（票据 67）：建节点、读整棵树。
+        services.AddScoped<ICommandHandler<CreateMenuCommand, MenuCreated>, CreateMenuHandler>();
+        services.AddScoped<IQueryHandler<GetMenusQuery, IReadOnlyList<MenuView>>, GetMenusHandler>();
+
+        // 根账号播种。它是**命令**而不是"启动时的一段内联代码"：
+        // 于是它的幂等性、口令哈希、`isBuiltIn` 三件事都能被单独测到，
+        // 而宿主那边只剩"读配置 + 发这条命令"。
+        services.AddScoped<ICommandHandler<SeedRootAccountCommand, bool>, SeedRootAccountHandler>();
 
         services.AddScoped<IQueryHandler<GetUserPermissionsQuery, IReadOnlyList<string>>, GetUserPermissionsHandler>();
         services.AddScoped<IQueryHandler<AuthorizeQuery, AuthorizationOutcome>, AuthorizeHandler>();

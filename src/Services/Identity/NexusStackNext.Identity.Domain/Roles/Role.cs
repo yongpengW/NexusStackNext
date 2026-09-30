@@ -212,16 +212,24 @@ public sealed class Role : AggregateRoot<RoleId>
     /// <summary>整体替换授权集合。</summary>
     /// <param name="menuIds">新的授权集合。</param>
     /// <param name="at">操作时刻。</param>
-    /// <returns>成功，或集合中存在空标识。</returns>
+    /// <returns>成功。</returns>
+    /// <exception cref="ArgumentException">集合中包含空标识（那是调用方的编程错误，不是业务失败）。</exception>
     public Result ReplaceGrants(IEnumerable<MenuId> menuIds, DateTimeOffset at)
     {
         ArgumentNullException.ThrowIfNull(menuIds);
 
-        var target = menuIds.ToHashSet();
-        if (target.Any(static id => id is null))
+        // 先查空标识再建集合：一是省掉一次无谓的分配，二是**判据与文档一致**——
+        // 这个方法抛 `ArgumentException`（编程错误），而不是返回 `Result.Failure`（业务失败），
+        // 原来的 XML 文档却写着"或集合中存在空标识"作为返回值，读起来像业务失败。
+        foreach (var menuId in menuIds)
         {
-            throw new ArgumentException("授权集合中不能包含空标识。", nameof(menuIds));
+            if (menuId is null)
+            {
+                throw new ArgumentException("授权集合中不能包含空标识。", nameof(menuIds));
+            }
         }
+
+        var target = menuIds.ToHashSet();
 
         if (target.SetEquals(_grantedMenuIds))
         {

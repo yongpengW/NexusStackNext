@@ -111,11 +111,21 @@ public sealed class RefreshTokenTests
             .Select(static property => property.Name)
             .ToList();
 
-        Assert.Contains("TokenHash", members);
-        Assert.DoesNotContain("Token", members);
-        Assert.DoesNotContain("PlainToken", members);
-        Assert.DoesNotContain("RawToken", members);
-        Assert.DoesNotContain("Secret", members);
+        // **判据要落在"名字里有没有那个词"上，而不是精确匹配。**
+        //
+        // 原来写的是 `Assert.DoesNotContain("Token", members)`：那是**元素精确匹配**——
+        // 一个叫 `PlainTokenValue` 的属性照样通过，而它正是这条测试要拦的东西。
+        // 现在反过来问："名字里带 Token 的成员，**恰好只有** TokenHash 吗？"——
+        // 多出任何一个都会红，无论它叫什么。
+        Assert.Equal(["TokenHash"], members.Where(m => m.Contains("Token", StringComparison.OrdinalIgnoreCase)));
+
+        Assert.DoesNotContain(members, m =>
+            m.Contains("Plain", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("Raw", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("Secret", StringComparison.OrdinalIgnoreCase));
+
+        // 这一条**用精确匹配是对的**：它问的是"有没有一个成员就叫 `Value`"——
+        // 那是"直接把原文暴露出去"最省事的写法。
         Assert.DoesNotContain("Value", members);
     }
 
@@ -127,8 +137,9 @@ public sealed class RefreshTokenTests
             .Select(static property => property.Name)
             .ToList();
 
-        Assert.Contains("PasswordHash", members);
-        Assert.DoesNotContain("Password", members);
-        Assert.DoesNotContain("PlainPassword", members);
+        // 同上：判据是"名字里带 Password 的成员恰好只有 PasswordHash"。
+        Assert.Equal(["PasswordHash"], members.Where(m => m.Contains("Password", StringComparison.OrdinalIgnoreCase)));
+
+        Assert.DoesNotContain(members, m => m.Contains("Plain", StringComparison.OrdinalIgnoreCase));
     }
 }

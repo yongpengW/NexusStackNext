@@ -4,6 +4,7 @@ using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -124,6 +125,34 @@ public sealed class InMemoryApiResourceRepository : IApiResourceRepository
     }
 }
 
+/// <summary>
+/// 内存菜单树仓储。
+///
+/// <para><b>为什么必须注册成单例。</b>菜单树是单例聚合——整个上下文只有一棵。
+/// 注册成 Scoped 会让每个请求看到自己的那棵空树，"建了菜单之后别人看不见"，
+/// 而那种缺陷在内存存储下**只有跨请求才暴露**（本仓票据 54 踩过同形状的坑）。</para>
+///
+/// <para>与其它内存适配器一样，它保存的是聚合实例本身，不做拷贝——那条差异写在
+/// <see cref="InMemoryUserRepository"/> 的文档里，这里不重复。</para>
+/// </summary>
+public sealed class InMemoryMenuTreeRepository : IMenuTreeRepository
+{
+    private MenuTree? _tree;
+
+    /// <inheritdoc />
+    public Task<MenuTree?> FindAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(_tree);
+
+    /// <inheritdoc />
+    public Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(tree);
+
+        _tree = tree;
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>把 Identity 的端口接到内存适配器上。</summary>
 public static class IdentityInfrastructureServiceCollectionExtensions
 {
@@ -141,6 +170,9 @@ public static class IdentityInfrastructureServiceCollectionExtensions
         services.AddSingleton<IRoleRepository, InMemoryRoleRepository>();
         services.AddSingleton<IApiResourceRepository, InMemoryApiResourceRepository>();
         services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
+
+        // 菜单树是单例聚合，所以适配器也必须是单例——理由写在 InMemoryMenuTreeRepository 上。
+        services.AddSingleton<IMenuTreeRepository, InMemoryMenuTreeRepository>();
 
         // 秘密串的生成与哈希和"存在哪里"无关，所以两种存储都要注册。
         services.AddIdentityTokenSecrets();

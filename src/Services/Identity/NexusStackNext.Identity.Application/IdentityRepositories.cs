@@ -1,5 +1,6 @@
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -80,4 +81,31 @@ public interface IApiResourceRepository
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
     Task AddAsync(ApiResource resource, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 菜单树仓储端口。
+///
+/// <para><b>它此前根本不存在</b>——`MenuTree.AddRoot` 在领域层写好、也有测试，
+/// 但**没有任何地方调用它**，因为菜单这一环既没有用例也没有存储。于是权限链断在第一环：
+/// 建不出菜单 ⇒ api-resource 挂不上 ⇒ 角色授不到菜单 ⇒ 权限集合永远是空的（票据 67）。</para>
+///
+/// <para><b>为什么端口上没有标识参数。</b>菜单树是**单例聚合**——整个上下文只有一棵
+/// （ADR-0001：整棵树是一个聚合，因为"移动一个节点"必须同时改写它所有后代的物化路径）。
+/// 端口上开 `FindAsync(id)` 或者 `Delete`，会暗示"可以有多棵"，而那是另一个设计
+/// （多租户？多应用？）——**等真有第二个用例需要它时再加参数**，与不变量 7 同一条道理：
+/// 不要为假设的缝留参数。</para>
+/// </summary>
+public interface IMenuTreeRepository
+{
+    /// <summary>取菜单树；还没有时返回 <c>null</c>。</summary>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>菜单树，或 <c>null</c>。</returns>
+    Task<MenuTree?> FindAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>保存新树。</summary>
+    /// <param name="tree">菜单树聚合。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>任务。</returns>
+    Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default);
 }

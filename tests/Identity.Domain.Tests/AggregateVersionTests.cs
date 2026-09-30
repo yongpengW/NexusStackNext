@@ -208,6 +208,28 @@ public sealed class AggregateVersionTests
         Assert.Equal(before, tree.Version);
     }
 
+    /// <summary>
+    /// 标题与排序都没变时，<c>Update</c> 是**空操作**（ADR-0011："Version 改变，
+    /// 当且仅当可观察状态改变了"）。缺了这一条，一次什么都没改的保存会把聚合标成已修改，
+    /// 于是乐观并发会在没有冲突的情况下误报冲突。
+    /// </summary>
+    [Fact]
+    public void MenuTree_UpdatingWithTheSameContent_IsANoOp()
+    {
+        var tree = NewTree();
+        tree.AddChild(new MenuId(1), new MenuId(2), MenuTitle.Create("子").Value);
+
+        var node = Assert.Single(tree.ChildrenOf(new MenuId(1)));
+        var before = tree.Version;
+
+        Assert.True(tree.Update(node.Id, node.Title, node.SortOrder).IsSuccess);
+        Assert.Equal(before, tree.Version);
+
+        // 真的改了才算改变——否则上面那条断言可能只是因为 Update 从来不涨版本。
+        Assert.True(tree.Update(node.Id, MenuTitle.Create("改了").Value, node.SortOrder).IsSuccess);
+        Assert.Equal(before + 1, tree.Version);
+    }
+
     [Fact]
     public void MenuTree_FailedOperation_DoesNotBump()
     {

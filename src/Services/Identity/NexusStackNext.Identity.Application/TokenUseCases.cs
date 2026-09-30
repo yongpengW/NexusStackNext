@@ -62,7 +62,15 @@ public sealed class TokenIssuer(
 
         // **把当前的会话版本烤进令牌。** 之后任何一次撤销都会让它对不上号，
         // 而验签方不需要查任何名单——这正是无状态令牌能提前失效的唯一办法。
-        var access = accessTokens.Issue(user.Id, user.UserName.Value, sessions.Read(user.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)), now);
+        //
+        // `user.IsBuiltIn` 一并带上：它是**根账号的那条旁路**（`ICurrentUser.IsRoot`）的唯一来源。
+        // 它此前没有传——于是即使种出了内置根账号，真实 HTTP 上 `IsRoot` 也永远是 false。
+        var access = accessTokens.Issue(
+            user.Id,
+            user.UserName.Value,
+            sessions.Read(user.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            user.IsBuiltIn,
+            now);
         if (access.IsFailure)
         {
             return Result.Failure<TokenPair>(access.Error);

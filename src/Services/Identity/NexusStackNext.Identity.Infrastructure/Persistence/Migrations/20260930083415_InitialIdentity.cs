@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -174,7 +174,7 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_role_menus", x => x.menu_id);
+                    table.PrimaryKey("PK_role_menus", x => new { x.role_id, x.menu_id });
                     table.ForeignKey(
                         name: "FK_role_menus_roles_role_id",
                         column: x => x.role_id,
@@ -194,7 +194,7 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_user_roles", x => x.role_id);
+                    table.PrimaryKey("PK_user_roles", x => new { x.user_id, x.role_id });
                     table.ForeignKey(
                         name: "FK_user_roles_users_user_id",
                         column: x => x.user_id,
@@ -243,12 +243,6 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
                 column: "menu_id");
 
             migrationBuilder.CreateIndex(
-                name: "IX_role_menus_role_id",
-                schema: "identity",
-                table: "role_menus",
-                column: "role_id");
-
-            migrationBuilder.CreateIndex(
                 name: "ux_roles_code",
                 schema: "identity",
                 table: "roles",
@@ -260,12 +254,6 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
                 schema: "identity",
                 table: "user_roles",
                 column: "role_id");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_user_roles_user_id",
-                schema: "identity",
-                table: "user_roles",
-                column: "user_id");
 
             migrationBuilder.CreateIndex(
                 name: "ux_users_email",

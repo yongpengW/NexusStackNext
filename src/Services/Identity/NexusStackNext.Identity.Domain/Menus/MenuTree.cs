@@ -80,6 +80,13 @@ public sealed class MenuNode : Entity<MenuId>
         Title = title;
         SortOrder = sortOrder;
     }
+
+    /// <summary>标题与排序是否**已经**是这两个值——空操作的判据属于节点自己。</summary>
+    /// <param name="title">标题。</param>
+    /// <param name="sortOrder">排序。</param>
+    /// <returns>完全相同为 <c>true</c>。</returns>
+    internal bool HasSameContentAs(MenuTitle title, int sortOrder) =>
+        Title == title && SortOrder == sortOrder;
 }
 
 /// <summary>
@@ -260,6 +267,16 @@ public sealed class MenuTree : AggregateRoot<MenuTreeId>
         if (node is null)
         {
             return Result.Failure(IdentityErrors.MenuNotFound(nodeId.Value));
+        }
+
+        // **空操作不是改变**（ADR-0011 的契约："Version 改变，当且仅当可观察状态改变了"）。
+        //
+        // 标题与排序都没动时提前返回：版本号不动，也就不会在一次什么都没改的"保存"里
+        // 凭空制造出版本冲突——而误报冲突的代价是调用方开始重试、或者干脆忽略冲突，
+        // 那时这个机制就废了，且废得很安静。
+        if (node.HasSameContentAs(title, sortOrder))
+        {
+            return Result.Success();
         }
 
         node.Update(title, sortOrder);

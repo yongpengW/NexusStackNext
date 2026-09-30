@@ -45,6 +45,10 @@ public static class IdentityModule
         // 用例处理器与"存储是哪种"无关，所以注册在存储之后、且不随之切换。
         services.AddIdentityUseCases();
 
+        // **根账号播种**（票据 71 的决定）：每次启动跑一次，已有同名账号则跳过。
+        // 它在这里注册而不是在各宿主里：这是 Identity 自己的引导，五个宿主不该各写一遍。
+        services.AddHostedService<RootAccountSeeder>();
+
         return services;
     }
 
@@ -258,6 +262,43 @@ public static class IdentityModule
                 });
         }).RequirePermission("/api/identity/authorize", "POST");
 
+        // ---------- 菜单 ----------
+        //
+        // 菜单是**权限链的第一环**（票据 67）：菜单 → api-resource 挂在它下面 →
+        // 角色被授予菜单 → 用户拿到角色 → 权限键集合非空。
+        //
+        // 在这一组端点存在之前，`MenuTree.AddRoot` 在领域层写好、也有测试，
+        // 却**没有任何调用者**——于是整条链永远断在第一环，所有受权限保护的端点永远 403，
+        // 而所有测试都是绿的（它们直接构造聚合，绕过了"能不能建出那个聚合"）。
+        //
+        // **用 `RequirePermission` 而不是 `RequireAuthenticated`**：根账号靠 `IsRoot` 旁路通过
+        // （`AccessPolicy` 里那条旁路此前不可达，票据 71 决定了它的来源），
+        // 而普通用户没有这个键 → 403。它也顺带把"菜单管理可以授权给某个角色"留成了正规路径：
+        // 登记一条 `/api/identity/menus` + `POST` 的 api-resource 并授予即可，不必改代码。
+
+        identity.MapGet("/menus", async (ISender sender, CancellationToken cancellationToken) =>
+        {
+            var result = await sender.QueryAsync(new GetMenusQuery(), cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Ok(new { count = result.Value.Count, items = result.Value });
+        }).RequirePermission("/api/identity/menus", "GET");
+
+        identity.MapPost("/menus", async (
+            CreateMenuRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(
+                new CreateMenuCommand(request.Title, request.SortOrder, request.ParentMenuId),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
+        }).RequirePermission("/api/identity/menus", "POST");
+
         return endpoints;
     }
 
@@ -307,3 +348,9 @@ internal sealed record CreateApiResourceRequest(string Path, string Method, long
 /// <param name="Path">请求路径。</param>
 /// <param name="Method">HTTP 方法。</param>
 internal sealed record AuthorizeRequest(long UserId, string Path, string Method);
+
+/// <summary>创建一个菜单节点。</summary>
+/// <param name="Title">标题。</param>
+/// <param name="SortOrder">同级排序；不传按 0。</param>
+/// <param name="ParentMenuId">父菜单；<c>null</c>（不传）表示根节点。</param>
+internal sealed record CreateMenuRequest(string Title, int SortOrder, long? ParentMenuId);

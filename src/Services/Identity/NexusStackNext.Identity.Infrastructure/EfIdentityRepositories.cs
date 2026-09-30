@@ -5,6 +5,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -145,6 +146,35 @@ public sealed class EfApiResourceRepository(IdentityDbContext context) : IApiRes
     }
 }
 
+/// <summary>
+/// EF Core 菜单树仓储。
+///
+/// <para><b>节点是 <c>OwnsMany</c>，所以一次查询就把整棵树读了进来</b>——不需要 <c>Include</c>，
+/// 也不该有"只读一层节点"的方法：菜单树是一个聚合（ADR-0001），
+/// "移动一个节点必须同时改写它所有后代的物化路径"，半个树在内存里做不了这件事。</para>
+///
+/// <para>语义与其它 EF 适配器一致：<c>AddAsync</c> 自己保存（理由见
+/// <see cref="EfUserRepository"/> 的文档），而改动路径要经 <c>IUnitOfWork.SaveChangesAsync</c>。</para>
+/// </summary>
+/// <param name="context">上下文。</param>
+public sealed class EfMenuTreeRepository(IdentityDbContext context) : IMenuTreeRepository
+{
+    /// <inheritdoc />
+    public async Task<MenuTree?> FindAsync(CancellationToken cancellationToken = default) =>
+        await context.MenuTrees
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(tree);
+
+        await context.MenuTrees.AddAsync(tree, cancellationToken).ConfigureAwait(false);
+        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+}
+
 /// <summary>把 Identity 的端口接到 EF Core 上。</summary>
 public static class IdentityEntityFrameworkServiceCollectionExtensions
 {
@@ -168,12 +198,18 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        services.AddDbContext<IdentityDbContext>(options =>
-            options.UseNexusStackPostgres(connectionString, IdentityDbContext.SchemaName));
+        // 用带 `IServiceProvider` 的重载：拦截器（审计字段 + 发件箱）从容器里取依赖。
+        // 它们此前**写完了但没有任何注册点**——审计字段在生产里从不写、领域事件也不进发件箱，
+        // 而"没写"与"没有要写的"从外面看是一样的。接在装配这一处，新增上下文不必记得它。
+        services.AddDbContext<IdentityDbContext>((provider, options) =>
+            options
+                .UseNexusStackPostgres(connectionString, IdentityDbContext.SchemaName)
+                .UseNexusStackInterceptors(provider));
 
         services.AddScoped<IUserRepository, EfUserRepository>();
         services.AddScoped<IRoleRepository, EfRoleRepository>();
         services.AddScoped<IApiResourceRepository, EfApiResourceRepository>();
+        services.AddScoped<IMenuTreeRepository, EfMenuTreeRepository>();
         services.AddScoped<IRefreshTokenRepository, EfRefreshTokenRepository>();
 
         // 工作单元与仓储同生命周期（都持有同一个上下文）。

@@ -111,7 +111,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             // 代价是反方向——"谁拥有这个角色"——要么全表扫、要么建 GIN 索引。
             // 当前用例只需要正方向（[IUserRepository] 只有按 ID 查），所以先按正方向存；
             // 反方向真的成为热路径时再换成关系表，那时它是一次有依据的改动。
-                        // 角色分配：**连接表**（`user_roles`）。
+            // 角色分配：**连接表**（`user_roles`）。
             //
             // 元素类型 `RoleId` 是一个强类型 ID（record，带 `Value`），不是实体——
             // 但 EF 允许把它当作**被拥有的类型**映射：它自己补一个影子主键，
@@ -135,7 +135,13 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
                 // 键用**属性名**而不是列名：`HasKey`/`HasIndex` 认的是模型里的属性，
                 // 而 `role_id` 只是 `Value` 的列名。
-                roles.HasKey(roleId => roleId.Value);
+                //
+                // **必须是复合键 `(user_id, role_id)`，不能只有 `role_id`。**
+                // 只有一列的时候，"一个角色只能分配给一个用户"就成了数据库层的事实：
+                // 第二个用户拿到同一个角色会主键冲突。而这是**静默**的——
+                // 内存适配器不拦、领域测试不拦，只有真库上第二个用户才炸。
+                // 连接表的键天然是"两端"：所有者一端 + 被拥有的一端。
+                roles.HasKey("user_id", "Value");
                 roles.HasIndex(roleId => roleId.Value).HasDatabaseName("ix_user_roles_role");
             });
 
@@ -183,7 +189,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             builder.HasIndex(role => role.Code)
                 .IsUnique()
                 .HasDatabaseName("ux_roles_code");
-                        // 菜单授权：同样是连接表（`role_menus`），理由与 `User.RoleIds` 完全相同。
+            // 菜单授权：同样是连接表（`role_menus`），理由与 `User.RoleIds` 完全相同。
             builder.OwnsMany<MenuId>("_grantedMenuIds", menus =>
             {
                 menus.ToTable("role_menus");
@@ -193,7 +199,9 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
                     .HasColumnName("menu_id")
                     .ValueGeneratedNever();
 
-                menus.HasKey(menuId => menuId.Value);
+                // 同上：`(role_id, menu_id)` 才是连接表的键。只有 `menu_id` 时
+                // "一个菜单只能授予一个角色"——第二个角色授予同一个菜单即冲突。
+                menus.HasKey("role_id", "Value");
                 menus.HasIndex(menuId => menuId.Value).HasDatabaseName("ix_role_menus_menu");
             });
 

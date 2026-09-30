@@ -23,9 +23,21 @@ public interface IAccessTokenIssuer
     /// <param name="userId">用户标识。</param>
     /// <param name="userName">用户名（放进令牌便于诊断，不用于授权判定）。</param>
     /// <param name="sessionVersion">会话版本——它让"撤销一个已发出的令牌"成为可能（票据 11）。</param>
+    /// <param name="isRoot">
+    /// 是不是内置根账号。它会被写成一个声明，而 <c>ICurrentUser.IsRoot</c> 读的正是它。
+    ///
+    /// <para><b>为什么可以放进令牌，而权限键刻意不放</b>（见 <c>JwtAccessTokenIssuer</c> 的注释）：
+    /// "这个账号是不是内置的"从创建那一刻起**不再改变**——它是一个事实，不是一份授权；
+    /// 而权限会变，所以权限必须每次请求回源查。</para>
+    /// </param>
     /// <param name="now">签发时刻。</param>
     /// <returns>令牌与到期时刻。</returns>
-    Result<IssuedAccessToken> Issue(UserId userId, string userName, long sessionVersion, DateTimeOffset now);
+    Result<IssuedAccessToken> Issue(
+        UserId userId,
+        string userName,
+        long sessionVersion,
+        bool isRoot,
+        DateTimeOffset now);
 }
 
 /// <summary>生成不可猜测的秘密串（刷新令牌的原文）。</summary>

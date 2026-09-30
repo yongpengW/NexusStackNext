@@ -65,7 +65,12 @@ public sealed class JwtAccessTokenIssuer(IOptions<JwtOptions> options) : IAccess
     private readonly JwtOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
 
     /// <inheritdoc />
-    public Result<IssuedAccessToken> Issue(UserId userId, string userName, long sessionVersion, DateTimeOffset now)
+    public Result<IssuedAccessToken> Issue(
+        UserId userId,
+        string userName,
+        long sessionVersion,
+        bool isRoot,
+        DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(userId);
 
@@ -80,21 +85,36 @@ public sealed class JwtAccessTokenIssuer(IOptions<JwtOptions> options) : IAccess
 
         var expiresAt = now + _options.AccessTokenLifetime;
 
+        var claims = new List<System.Security.Claims.Claim>
+        {
+            // `sub` 是标准的主体声明——验签方不必知道我们的领域类型。
+            new(JwtRegisteredClaimNames.Sub, userId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            new(JwtRegisteredClaimNames.Name, userName),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
+
+            // 会话版本。过滤器每次比对它——版本对不上就是"这个令牌已被撤销"。
+            new(
+                NexusStackClaims.Session,
+                sessionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+        };
+
+        if (isRoot)
+        {
+            // **根账号声明。** `ICurrentUser.IsRoot` 读的就是它，而它此前**从来没有被签发过**——
+            // 令牌里只有 sub / name / jti / 会话版本，于是 `IsRoot` 在真实 HTTP 上永远是 false，
+            // 即使种出了一个内置根账号也走不上那条旁路（票据 67 的第三处断链）。
+            //
+            // 为什么它**可以**放进令牌，而权限键刻意不放（见下面的注释）：
+            // "这个账号是不是内置的"从创建那一刻起不再改变，是一个**事实**；
+            // 而权限会变，所以权限必须每次请求回源查。
+            claims.Add(new System.Security.Claims.Claim(NexusStackClaims.Root, "true"));
+        }
+
         var handler = new JwtSecurityTokenHandler();
         var token = handler.WriteToken(new JwtSecurityToken(
             issuer: _options.Issuer,
             audience: _options.Audience,
-            claims:
-            [
-                // `sub` 是标准的主体声明——验签方不必知道我们的领域类型。
-                new System.Security.Claims.Claim(JwtRegisteredClaimNames.Sub, userId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                new System.Security.Claims.Claim(JwtRegisteredClaimNames.Name, userName),
-                new System.Security.Claims.Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
-                // 会话版本。过滤器每次比对它——版本对不上就是"这个令牌已被撤销"。
-                new System.Security.Claims.Claim(
-                    NexusStackClaims.Session,
-                    sessionVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-            ],
+            claims: claims,
             notBefore: now.UtcDateTime,
             expires: expiresAt.UtcDateTime,
             signingCredentials: new SigningCredentials(
@@ -260,35 +280,35 @@ public static class IdentityTokenServiceCollectionExtensions
     }
 
     /// <summary>注册 JWT 签发，配置从 <c>IConfiguration</c> 绑定。</summary>
-/// <remarks>
-/// <para><b>为什么是"惰性绑定 + 启动校验"，而不是在注册时读一次值。</b>
-/// 第一版在注册时就把 <c>GetSection("Jwt").Get&lt;JwtOptions&gt;()</c> 读了——
-/// 于是**任何在之后才加上去的配置源都读不到**（测试里的 <c>ConfigureAppConfiguration</c>
-/// 就是这样，宿主的 AgileConfig 也是）。结果是签发拿到空密钥，
-/// 每一次登录都返回 400，而失败点离原因很远。</para>
-///
-/// <para><c>ValidateOnStart</c> 把"密钥不合格"从"第一次登录时"提前到**进程启动时**，
-/// 同时绑定发生在启动那一刻——两边的配置源都已经在了。</para>
-/// </remarks>
-/// <param name="services">服务集合。</param>
-/// <param name="configuration">配置。</param>
-/// <returns>同一个集合，便于链式调用。</returns>
-public static IServiceCollection AddIdentityJwtIssuer(
-    this IServiceCollection services,
-    IConfiguration configuration)
-{
-    ArgumentNullException.ThrowIfNull(services);
-    ArgumentNullException.ThrowIfNull(configuration);
+    /// <remarks>
+    /// <para><b>为什么是"惰性绑定 + 启动校验"，而不是在注册时读一次值。</b>
+    /// 第一版在注册时就把 <c>GetSection("Jwt").Get&lt;JwtOptions&gt;()</c> 读了——
+    /// 于是**任何在之后才加上去的配置源都读不到**（测试里的 <c>ConfigureAppConfiguration</c>
+    /// 就是这样，宿主的 AgileConfig 也是）。结果是签发拿到空密钥，
+    /// 每一次登录都返回 400，而失败点离原因很远。</para>
+    ///
+    /// <para><c>ValidateOnStart</c> 把"密钥不合格"从"第一次登录时"提前到**进程启动时**，
+    /// 同时绑定发生在启动那一刻——两边的配置源都已经在了。</para>
+    /// </remarks>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">配置。</param>
+    /// <returns>同一个集合，便于链式调用。</returns>
+    public static IServiceCollection AddIdentityJwtIssuer(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
 
-    services.AddOptions<JwtOptions>()
-        .Bind(configuration.GetSection("Jwt"))
-        .Validate(
-            options => Encoding.UTF8.GetByteCount(options.SigningKey) >= 32,
-            "Jwt:SigningKey 至少需要 32 字节。请在配置中心或环境变量里配置，不要放进仓库。")
-        .ValidateOnStart();
+        services.AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection("Jwt"))
+            .Validate(
+                options => Encoding.UTF8.GetByteCount(options.SigningKey) >= 32,
+                "Jwt:SigningKey 至少需要 32 字节。请在配置中心或环境变量里配置，不要放进仓库。")
+            .ValidateOnStart();
 
-    services.AddSingleton<IAccessTokenIssuer, JwtAccessTokenIssuer>();
+        services.AddSingleton<IAccessTokenIssuer, JwtAccessTokenIssuer>();
 
-    return services;
+        return services;
     }
 }

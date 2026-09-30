@@ -21,6 +21,12 @@ $env:Jwt__SigningKey = 'journey-check-signing-key-long-enough-for-hs256'
 $env:Jwt__Issuer = 'nexusstack'
 $env:Jwt__Audience = 'nexusstack'
 
+# **根账号只在这条旅程里注入**（票据 71 的决定：宿主启动时按配置播种）。
+# 走进程环境变量而不是改 `env/platform.dev`：那三个文件里是活凭据，
+# 而这条脚本只是要一个"能从零把授权链建起来"的宿主。
+$env:Identity__Root__UserName = 'journey-root'
+$env:Identity__Root__Password = 'journey-root-password-1234567890'
+
 $platformLog = Join-Path $outDir 'platform.log'
 $gatewayLog = Join-Path $outDir 'gateway.log'
 
@@ -52,6 +58,7 @@ function Call([string]$method, [string]$url, [string]$body, [string]$token) {
 
 try {
     $results = [System.Collections.Generic.List[string]]::new()
+    $chainStatus = '跳过（拿不到令牌或用户标识）'
 
     # ---------- 1. 经网关注册（产品决定：自注册是匿名端点）----------
     $username = 'journey' + (Get-Random -Maximum 99999)
@@ -124,12 +131,67 @@ try {
             $results.Add("     响应：$($uploadRaw.Substring(0,[Math]::Min(160,$uploadRaw.Length)))")
         }
 
-        $logout = Call 'POST' 'http://127.0.0.1:5190/api/identity/logout' '{}' $token
-        $results.Add("5. 经网关登出          → $($logout.Status)")
+        # ---------- 6. 授权链：从零到"普通用户调通一个受保护端点"（票据 67 的验收）----------
+        #
+        # 这一段与 `HostIntegration.Tests` 的旅程测试**刻意重复**，但走的是不同的路：
+        # 那一条直打宿主（`WebApplicationFactory` 跳过网关的路由策略），
+        # 这一条从 5190 打进来——而"`POST /api/identity/menus` 经不经得过边缘"
+        # 只有这一段能回答。按 `AGENTS.md` 的两条防线：静的那条每次构建都跑，动的那条才是事实。
+        #
+        # 顺序刻意是"先被拒、再授权、再调通"：少了中间那次被拒，
+        # "角色变了、权限缓存失效了吗"就验不出来（票据 67 的第 4 处断链）。
+        $userId = if ($register.Body -match '"userId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
 
-        # ---------- 6. 同一个访问令牌应当立刻失效 ----------
+        $rootLogin = Call 'POST' 'http://127.0.0.1:5190/api/identity/login' `
+            ("{""UserName"":""$($env:Identity__Root__UserName)"",""Password"":""$($env:Identity__Root__Password)""}") $null
+        $results.Add("6a. 根账号经网关登录    → $($rootLogin.Status)（期望 200，靠启动播种）")
+
+        $rootToken = if ($rootLogin.Body -match '"accessToken"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+
+        $chainStatus = '跳过（拿不到根账号令牌或用户标识）'
+
+        if ($rootToken -and $userId) {
+            $menu = Call 'POST' 'http://127.0.0.1:5190/api/identity/menus' `
+                '{"Title":"后台导航","SortOrder":1,"ParentMenuId":null}' $rootToken
+            $menuId = if ($menu.Body -match '"menuId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+            $results.Add("6b. 建菜单（根账号）    → $($menu.Status)（期望 201）menuId=$menuId")
+
+            $role = Call 'POST' 'http://127.0.0.1:5190/api/identity/roles' `
+                '{"Code":"journey-back-office","Name":"旅程后台"}' $rootToken
+            $roleId = if ($role.Body -match '"roleId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+            $results.Add("6c. 建角色（根账号）    → $($role.Status)（期望 201）roleId=$roleId")
+
+            if ($menuId -and $roleId) {
+                $grant = Call 'POST' "http://127.0.0.1:5190/api/identity/roles/$roleId/menus/$menuId" '{}' $rootToken
+                $results.Add("6d. 菜单授给角色        → $($grant.Status)（期望 204）")
+
+                $resource = Call 'POST' 'http://127.0.0.1:5190/api/identity/api-resources' `
+                    ("{""Path"":""/api/identity/users/{userId}/permissions"",""Method"":""GET"",""MenuId"":$menuId}") $rootToken
+                $results.Add("6e. 登记 api-resource   → $($resource.Status)（期望 201）")
+
+                $beforeGrant = Call 'GET' "http://127.0.0.1:5190/api/identity/users/$userId/permissions" $null $token
+                $results.Add("6f. 授权前调受保护端点  → $($beforeGrant.Status)（期望 403，且这一次会把空权限写进缓存）")
+
+                $assign = Call 'POST' "http://127.0.0.1:5190/api/identity/users/$userId/roles/$roleId" '{}' $rootToken
+                $results.Add("6g. 把角色给普通用户    → $($assign.Status)（期望 204）")
+
+                $afterGrant = Call 'GET' "http://127.0.0.1:5190/api/identity/users/$userId/permissions" $null $token
+                $results.Add("6h. 授权后再调同一个端点 → $($afterGrant.Status)（**期望 200**：票据 67 的验收）")
+
+                $escalation = Call 'POST' 'http://127.0.0.1:5190/api/identity/menus' `
+                    '{"Title":"我自己加的","SortOrder":9,"ParentMenuId":null}' $token
+                $results.Add("6i. 普通用户想建菜单    → $($escalation.Status)（期望 403）")
+
+                $chainStatus = if ($afterGrant.Status -eq '200' -and $escalation.Status -eq '403') { '通过' } else { "**不通过**（6h=$($afterGrant.Status) 6i=$($escalation.Status)）" }
+            }
+        }
+
+        $logout = Call 'POST' 'http://127.0.0.1:5190/api/identity/logout' '{}' $token
+        $results.Add("7. 经网关登出          → $($logout.Status)")
+
+        # ---------- 8. 同一个访问令牌应当立刻失效 ----------
         $after = Call 'GET' 'http://127.0.0.1:5190/api/identity/users/1/permissions' $null $token
-        $results.Add("6. 登出后同一个令牌    → $($after.Status)（期望 401）")
+        $results.Add("8. 登出后同一个令牌    → $($after.Status)（期望 401）")
     }
     else {
         $results.Add('3-6. 拿不到 accessToken，后续步骤跳过')
@@ -137,6 +199,15 @@ try {
 
     Write-Host ''
     $results | ForEach-Object { Write-Host "  $_" }
+
+    Write-Host ''
+    if ($chainStatus -eq '通过') {
+        Write-Host '授权链经网关走通了：从零 → 建菜单 → 挂 api-resource → 建角色授权 → 普通用户调通（票据 67 的验收）。' -ForegroundColor Green
+    }
+    else {
+        Write-Host "**授权链经网关没有走通**：$chainStatus" -ForegroundColor Red
+        Write-Host '这一步走不通意味着：经边缘没有任何人能拿到权限（而后端测试可能是全绿的）。' -ForegroundColor Red
+    }
 
     Write-Host ''
     if ($login.Status -eq '200') {
@@ -156,6 +227,13 @@ finally {
     foreach ($proc in @($gateway, $platform)) {
         if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
     }
-    Get-Process -Name dotnet, testhost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # **只收我们自己起的宿主。**
+    #
+    # 原来这里写的是 `Get-Process -Name dotnet, testhost | Stop-Process -Force`——
+    # 那会杀掉机器上**所有** .NET 进程：Visual Studio、别的服务、别人正在跑的构建。
+    # 一个验证脚本不该有那个权力，而且这种越界**不会有任何提示**。
+    # `dotnet run` 会派生真正的宿主进程，所以按它自己的进程名收尾。
+    Get-Process -Name NexusStackNext.PlatformHost, NexusStackNext.Gateway -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
     Write-Host "  日志留在 $outDir" -ForegroundColor DarkGray
 }
