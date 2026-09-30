@@ -63,6 +63,7 @@ Labels: wayfinder:map
 - [0008 不引入需要商业授权的依赖](../docs/adr/0008-no-commercial-dependencies.md) — 商业批量库会绕过审计。
 - [0009 主键唯一权威：应用侧生成，数据库不做 IDENTITY](../docs/adr/0009-application-generated-ids.md)
 - [0015 第一个根账号由配置播种](../docs/adr/0015-root-account-is-seeded-from-config.md) — 引导期怎么起步：幂等播种 + 菜单管理端点只对根账号开放；含"上线后轮换口令"的部署义务
+- [0016 票据后端下一轮切到 GitHub Issues](../docs/adr/0016-issue-tracker-moves-to-github-issues.md) — **尚未实施**：接入条件已具备（gh 已装并登录），切换时机定在下一个 effort；本文件同时是切换清单（含哪些检查会失去对象、以及不迁移 72 张历史票的理由）
 - [69 两次 review 出来的问题](issues/69-review-fixes-and-mattskills-conformance.md) — 消息重试链、连接表主键、拦截器接线、结构检查守卫、聚合契约、假通过断言、四上下文进程内授权，全部带变异证据；规范侧把符合性变成了 18 项检查
 - [70 MattSkills 符合性收口](issues/70-mattskills-conformance-closeout.md) — spec 补齐 to-spec 的七节、编码标准单源、format 门禁（首次跑出 448 处违规）、词表收紧、变体声明（§19/§20/§21）；产物是 `review/23` 的逐技能矩阵
 - [72 六处差异全部消除](issues/72-six-differences-eliminated.md) — 33 张票的历史迁进 `## Comments`（deck 自己的解析器读出 40 条评论）、等待态改由阻塞边表达、`scripts/setup-wizard.sh`、`review/24` 的 HTML 机会报告、临时目录的交接文档；矩阵现在是满的
@@ -162,8 +163,9 @@ Labels: wayfinder:map
 ## 已完成阶段的证据
 
 - 构建：`dotnet build NexusStackNext.slnx` → 成功，**0 错误**（**52 个项目**）。
-  有 **1 个警告**：`ASPIRE010`（AppHost 未启用 Aspire CLI bundle）——不阻塞构建，但它说明
-  "0 警告"这句话不再是真的，所以写在这里而不是省掉。
+  ~~有 1 个警告：`ASPIRE010`~~ → **2026-09-30 起 0 警告 0 错误**：ASPIRE010 在 AppHost 工程里
+  **明确抑制并写明理由**（本仓按 ADR-0005 不用需要 Aspire CLI bundle 的特性，
+  也不为此打开 `AspireUseCliBundle=true`）——按本仓纪律是工程级抑制，不是成批 `NoWarn`。
 - 测试：`pwsh scripts/run-tests.ps1`（串行、全局互斥）→ **21 个测试工程全部通过**，合计约 **102 秒**，
   含真 PostgreSQL 与真 RabbitMQ 的集成测试，**0 跳过**。
 - **补测试补出三个真缺陷**（票据 39）：其中一个**会静默丢消息**——
@@ -278,8 +280,11 @@ Labels: wayfinder:map
   `Hosts_MustComposeExplicitly` 在 Platform 出现时**变红**（把注释也算进了扫描，已修）；
   网关校验的"一次列全"测试抓出我自己写的 `continue`（把"列全"退化成了"只报第一个"，已修）。
 - 参照仓库改动面：`git diff --stat` = 2 个文件、7 insertions / 2 deletions（票据 16，用户已授权）。
-- 未验证项（诚实标注）：`.github/workflows/ci.yml` 已写但**未在 GitHub Actions 上跑过**——
-  本机无法执行 Actions，其命令是本地逐条验证过的等价命令。
+- ~~未验证项：`.github/workflows/ci.yml` 已写但未在 GitHub Actions 上跑过~~ →
+  **2026-09-30 已在 Actions 上跑起来**，而且是**绿**的（首次运行还抓到一个本机永远绿的平台差异：
+  检查脚本里三处路径正则只认 Windows 反斜杠，ubuntu 上逐个上下文冤枉"没有 docs/adr/"——见 `AGENTS.md` 纪律第六条）。
+  **`main` 保护规则也已开启**（ruleset `main-pr-role`：必须走 PR + 必需检查 `构建与测试`），
+  所以从这天起改动**必须经 PR 合并**——详情见 `docs/agents/pr-and-credentials.md`。
 
 **外部依赖一览**
 
