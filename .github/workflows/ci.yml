@@ -5,6 +5,15 @@ on:
     branches: [ main, dev ]
   pull_request:
 
+# **并发取消**：连推几次时只跑最后一次 —— 不改变"每个 PR 都得到一次完整检查"这条保证，
+# 只省掉被取代的运行。
+#
+# **刻意不加路径过滤**：纯文档 PR 一旦不触发运行，`main` 要求的必需检查 `构建与测试`
+# 就永远不上报，PR 会卡在 BLOCKED 合不了。要过滤得先做成"总是报到的轻量 job + 按路径跑的重活 job"。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: 构建与测试
