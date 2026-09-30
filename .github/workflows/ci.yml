@@ -2,8 +2,14 @@ name: ci
 
 on:
   push:
+    # **main 与 dev 都跑 CI**（2026-09-30 定）。公开仓库的 Actions 不计费，
+    # 而 CI 是**唯一的"平台差异"检查**（Linux / 干净检出）——这一轮它就抓到过
+    # "路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文"。
+    # 所以 dev 上的直推也过 CI：坏提交**立刻**看到红，而不是攒到 dev → main 的 PR。
     branches: [ main, dev ]
   pull_request:
+  # 手动触发：给"平时不跑的 dev"留一条随时能跑全套的路。
+  workflow_dispatch:
 
 # **并发取消**：连推几次时只跑最后一次 —— 不改变"每个 PR 都得到一次完整检查"这条保证，
 # 只省掉被取代的运行。
