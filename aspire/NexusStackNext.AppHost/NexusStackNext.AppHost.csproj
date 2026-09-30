@@ -1,0 +1,26 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.6.0">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NexusStackNext.Aspire.AppHost</RootNamespace>
+    <!--
+      **`IsAspireHost` 不要写了。** 第一版写了它，SDK 立刻报 NETSDK1228：
+      那条属性走的是**已弃用的 Aspire 工作负载**路径，而 Aspire 现在通过
+      NuGet 包与这个 MSBuild SDK 提供——工作负载不再需要。
+    -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Hosts\NexusStackNext.PlatformHost\NexusStackNext.PlatformHost.csproj" />
+    <ProjectReference Include="..\..\src\Gateway\NexusStackNext.Gateway\NexusStackNext.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>

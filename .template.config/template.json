@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json.schemastore.org/template",
+  "author": "Leo Wang",
+  "classifications": [ "Web", "API", "Microservices", "DDD" ],
+  "identity": "NexusStackNext.Solution.Template",
+  "name": "NexusStackNext - DDD Microservices Solution",
+  "shortName": "nexusstack-next",
+  "description": "面向领域的 .NET 微服务解决方案模板：五个限界上下文、Outbox/Inbox 消息基座、默认拒绝的授权、以及把架构不变量变成断言的在仓测试。",
+  "tags": {
+    "language": "C#",
+    "type": "solution"
+  },
+  "sourceName": "NexusStackNext",
+  "preferNameDirectory": true,
+  "primaryOutputs": [
+    {
+      "path": "NexusStackNext.slnx"
+    }
+  ],
+  "sources": [
+    {
+      "modifiers": [
+        {
+          "exclude": [
+            "**/bin/**",
+            "**/obj/**",
+            "**/.vs/**",
+            "**/.git/**",
+            "**/.idea/**",
+            "**/*.user",
+            "**/*.suo",
+            "**/.template.config/**",
+
+            "**/.scratch/**",
+
+            "**/*.nupkg",
+            "**/agile/**",
+            "**/*.cache",
+            "**/*.serviceid",
+            "**/appsettings.*.local.json",
+            "**/env/*.dev",
+            "**/*.pfx"
+          ]
+        }
+      ]
+    }
+  ],
+  "postActions": [
+    {
+      "description": "还原 NuGet 包",
+      "manualInstructions": [
+        {
+          "text": "运行 dotnet restore"
+        }
+      ],
+      "actionId": "210D431B-A78B-4D2F-B762-4ED3E3EA9025",
+      "continueOnError": true
+    }
+  ]
+}

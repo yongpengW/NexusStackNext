@@ -1,0 +1,30 @@
+{
+  "AllowedHosts": "*",
+  "DatacenterId": "1",
+
+  "Serilog": {
+    "LevelSwitches": {
+      "$controlSwitch": "Information"
+    },
+    "MinimumLevel": {
+      "ControlledBy": "$controlSwitch"
+    },
+    "Enrich": [ "WithSpan", "WithThreadId", "WithThreadName" ]
+  },
+
+  "RabbitMQ": {
+    "ClientName": "nsn",
+    "ConsumerDispatchConcurrency": "1",
+    "ExchangeName": "nsn_exchange",
+    "QueueName": "nsn_queue",
+    "VirtualHost": "/nexusstack",
+    "Port": "5672",
+    "HostName": "",
+    "Username": "",
+    "Password": ""
+  },
+
+  "Redis": {
+    "ConnectionString": ""
+  }
+}

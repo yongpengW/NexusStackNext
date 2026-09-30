@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.BuildingBlocks.Infrastructure</RootNamespace>
+    <AssemblyName>NexusStackNext.BuildingBlocks.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- DI 抽象：基础设施注册用。 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+
+    <!--
+      EF Core 基座（票据 19）。Relational 是显式引用的，不靠传递：
+      我们**直接**用它的类型（`MigrationsHistoryTable`、`HasDefaultSchema`、迁移命令），
+      显式写出来才能在升级时看见它的版本变化。
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="RabbitMQ.Client" />
+  </ItemGroup>
+
+</Project>

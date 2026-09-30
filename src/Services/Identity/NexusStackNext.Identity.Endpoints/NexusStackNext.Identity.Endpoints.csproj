@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Identity.Endpoints</RootNamespace>
+    <AssemblyName>NexusStackNext.Identity.Endpoints</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 换成普通库 SDK 之后，Web SDK 的隐式 using 不再自动带上，这里显式补回：
+         模块需要它们，但**不需要** Web SDK 的入口点、静态资源与配置加载。 -->
+    <Using Include="Microsoft.AspNetCore.Builder" />
+    <Using Include="Microsoft.AspNetCore.Http" />
+    <Using Include="Microsoft.AspNetCore.Routing" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusStackNext.Identity.Domain\NexusStackNext.Identity.Domain.csproj" />
+    <ProjectReference Include="..\NexusStackNext.Identity.Application\NexusStackNext.Identity.Application.csproj" />
+    <ProjectReference Include="..\NexusStackNext.Identity.Infrastructure\NexusStackNext.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

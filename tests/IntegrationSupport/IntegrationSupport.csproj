@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.IntegrationSupport</RootNamespace>
+
+    <!--
+      **必须显式关掉。** 这个工程引用了 xunit（为了 PostgresFactAttribute），
+      于是 VSTest 会把它当成一个测试工程去起测试宿主——
+      而它没有测试宿主，于是 `dotnet test <解决方案>` 会报
+      "Testhost 进程已退出，但出现错误"，并以**退出码 1** 结束，
+      即使所有真正的测试都通过了。
+
+      这个失败方式很坏：**跑单个工程时完全正常**（退出码 0），
+      只有整解决方案一起跑才出现——而 CI 跑的正是整解决方案。
+    -->
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      xunit 是**公开依赖**，不是 PrivateAssets：PostgresFactAttribute 继承 FactAttribute，
+      消费方必须看得见 xunit 的类型。这个工程本来就是测试装置，不是产品代码。
+    -->
+    <PackageReference Include="xunit" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+
+</Project>

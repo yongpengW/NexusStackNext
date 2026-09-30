@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Platform.Application.Tests</RootNamespace>
+    <AssemblyName>NexusStackNext.Platform.Application.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Application\NexusStackNext.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Domain\NexusStackNext.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Infrastructure\NexusStackNext.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TestSupport\TestSupport.csproj" />
+  </ItemGroup>
+
+</Project>

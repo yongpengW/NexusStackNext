@@ -1,0 +1,31 @@
+{
+  "ConnectionStrings": {
+    "PostgreSQL": "Host=;Port=5432;Database=nexusstack_platform;Username=;Password=;Pooling=true;Minimum Pool Size=0;Maximum Pool Size=100"
+  },
+
+  "WorkerId": "101",
+
+  "Files": {
+    "StorageRoot": ""
+  },
+
+  "Serilog": {
+    "Using": [ "Serilog.Sinks.Console", "Serilog.Sinks.File" ],
+    "WriteTo": [
+      {
+        "Name": "Console",
+        "Args": { "OutputTemplate": "[{Timestamp:HH:mm:ss} {Level:u3}] [{TraceId}] {Message:lj}{NewLine}{Exception}" }
+      },
+      {
+        "Name": "File",
+        "Args": {
+          "path": "Logs/platform-host/log.txt",
+          "rollingInterval": "Day",
+          "rollOnFileSizeLimit": "True",
+          "fileSizeLimitBytes": "104857600",
+          "retainedFileCountLimit": "14"
+        }
+      }
+    ]
+  }
+}

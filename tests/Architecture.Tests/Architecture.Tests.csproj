@@ -1,0 +1,62 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Architecture.Tests</RootNamespace>
+    <AssemblyName>NexusStackNext.Architecture.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <PackageReference Include="coverlet.collector" PrivateAssets="all" />
+    <PackageReference Include="NetArchTest.Rules" />
+  </ItemGroup>
+
+  <!--
+    这里必须引用**全部** src 项目：架构测试要反射加载这些程序集做类型级检查，
+    依赖不全时 GetTypes() 会抛 ReflectionTypeLoadException。
+    新增 src 项目后如果忘了加引用，`AllSourceProjectsAreReferenced` 会失败——
+    这是有意设计的哨兵，不许它悄悄漏测。
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Identity\NexusStackNext.Identity.Domain\NexusStackNext.Identity.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Identity\NexusStackNext.Identity.Application\NexusStackNext.Identity.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Identity\NexusStackNext.Identity.Infrastructure\NexusStackNext.Identity.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Identity\NexusStackNext.Identity.Endpoints\NexusStackNext.Identity.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Domain\NexusStackNext.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Application\NexusStackNext.Platform.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Infrastructure\NexusStackNext.Platform.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Platform\NexusStackNext.Platform.Endpoints\NexusStackNext.Platform.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\Services\Scheduling\NexusStackNext.Scheduling.Domain\NexusStackNext.Scheduling.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Scheduling\NexusStackNext.Scheduling.Application\NexusStackNext.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Scheduling\NexusStackNext.Scheduling.Infrastructure\NexusStackNext.Scheduling.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Scheduling\NexusStackNext.Scheduling.Endpoints\NexusStackNext.Scheduling.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\Services\Auditing\NexusStackNext.Auditing.Domain\NexusStackNext.Auditing.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Auditing\NexusStackNext.Auditing.Application\NexusStackNext.Auditing.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Auditing\NexusStackNext.Auditing.Infrastructure\NexusStackNext.Auditing.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Auditing\NexusStackNext.Auditing.Endpoints\NexusStackNext.Auditing.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\Services\Files\NexusStackNext.Files.Domain\NexusStackNext.Files.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\Files\NexusStackNext.Files.Application\NexusStackNext.Files.Application.csproj" />
+    <ProjectReference Include="..\..\src\Services\Files\NexusStackNext.Files.Infrastructure\NexusStackNext.Files.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Services\Files\NexusStackNext.Files.Endpoints\NexusStackNext.Files.Endpoints.csproj" />
+    <ProjectReference Include="..\..\src\Gateway\NexusStackNext.Gateway.Routing\NexusStackNext.Gateway.Routing.csproj" />
+    <ProjectReference Include="..\..\src\Gateway\NexusStackNext.Gateway\NexusStackNext.Gateway.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Composition\NexusStackNext.Composition\NexusStackNext.Composition.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Hosts\NexusStackNext.PlatformHost\NexusStackNext.PlatformHost.csproj" />
+  </ItemGroup>
+
+</Project>

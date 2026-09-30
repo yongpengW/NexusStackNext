@@ -1,0 +1,97 @@
+<Solution>
+
+  <!-- 分组镜像磁盘布局。扁平列表在 VS 里是 37 个项目排成一行，没法看。 -->
+
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Domain/BuildingBlocks.Domain.csproj" />
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
+    <Project Path="src/BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Identity/">
+    <Project Path="src/Services/Identity/NexusStackNext.Identity.Domain/NexusStackNext.Identity.Domain.csproj" />
+    <Project Path="src/Services/Identity/NexusStackNext.Identity.Application/NexusStackNext.Identity.Application.csproj" />
+    <Project Path="src/Services/Identity/NexusStackNext.Identity.Infrastructure/NexusStackNext.Identity.Infrastructure.csproj" />
+    <Project Path="src/Services/Identity/NexusStackNext.Identity.Endpoints/NexusStackNext.Identity.Endpoints.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Platform/">
+    <Project Path="src/Services/Platform/NexusStackNext.Platform.Domain/NexusStackNext.Platform.Domain.csproj" />
+    <Project Path="src/Services/Platform/NexusStackNext.Platform.Application/NexusStackNext.Platform.Application.csproj" />
+    <Project Path="src/Services/Platform/NexusStackNext.Platform.Infrastructure/NexusStackNext.Platform.Infrastructure.csproj" />
+    <Project Path="src/Services/Platform/NexusStackNext.Platform.Endpoints/NexusStackNext.Platform.Endpoints.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Scheduling/">
+    <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Domain/NexusStackNext.Scheduling.Domain.csproj" />
+    <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Application/NexusStackNext.Scheduling.Application.csproj" />
+    <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Infrastructure/NexusStackNext.Scheduling.Infrastructure.csproj" />
+    <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Endpoints/NexusStackNext.Scheduling.Endpoints.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Auditing/">
+    <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Domain/NexusStackNext.Auditing.Domain.csproj" />
+    <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Application/NexusStackNext.Auditing.Application.csproj" />
+    <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Infrastructure/NexusStackNext.Auditing.Infrastructure.csproj" />
+    <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Endpoints/NexusStackNext.Auditing.Endpoints.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Services/Files/">
+    <Project Path="src/Services/Files/NexusStackNext.Files.Domain/NexusStackNext.Files.Domain.csproj" />
+    <Project Path="src/Services/Files/NexusStackNext.Files.Application/NexusStackNext.Files.Application.csproj" />
+    <Project Path="src/Services/Files/NexusStackNext.Files.Infrastructure/NexusStackNext.Files.Infrastructure.csproj" />
+    <Project Path="src/Services/Files/NexusStackNext.Files.Endpoints/NexusStackNext.Files.Endpoints.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Hosts/">
+    <Project Path="src/Hosts/NexusStackNext.PlatformHost/NexusStackNext.PlatformHost.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Composition/">
+    <Project Path="src/Composition/NexusStackNext.Composition/NexusStackNext.Composition.csproj" />
+  </Folder>
+
+  <Folder Name="/src/Gateway/">
+    <Project Path="src/Gateway/NexusStackNext.Gateway.Routing/NexusStackNext.Gateway.Routing.csproj" />
+    <Project Path="aspire/NexusStackNext.AppHost/NexusStackNext.AppHost.csproj" />
+  <Project Path="aspire/NexusStackNext.ServiceDefaults/NexusStackNext.ServiceDefaults.csproj" />
+  <Project Path="src/Gateway/NexusStackNext.Gateway/NexusStackNext.Gateway.csproj" />
+  </Folder>
+
+  <Folder Name="/tests/">
+    <Project Path="tests/Architecture.Tests/Architecture.Tests.csproj" />
+    <Project Path="tests/BuildingBlocks.Domain.Tests/BuildingBlocks.Domain.Tests.csproj" />
+    <Project Path="tests/BuildingBlocks.Application.Tests/BuildingBlocks.Application.Tests.csproj" />
+    <Project Path="tests/BuildingBlocks.Infrastructure.Tests/BuildingBlocks.Infrastructure.Tests.csproj" />
+    <Project Path="tests/Identity.Domain.Tests/Identity.Domain.Tests.csproj" />
+    <Project Path="tests/Identity.Application.Tests/Identity.Application.Tests.csproj" />
+    <Project Path="tests/Platform.Application.Tests/Platform.Application.Tests.csproj" />
+    <Project Path="tests/Auditing.Application.Tests/Auditing.Application.Tests.csproj" />
+    <Project Path="tests/Files.Application.Tests/Files.Application.Tests.csproj" />
+    <Project Path="tests/Scheduling.Application.Tests/Scheduling.Application.Tests.csproj" />
+    <Project Path="tests/RabbitMq.IntegrationTests/RabbitMq.IntegrationTests.csproj" />
+  <Project Path="tests/TestSupport/TestSupport.csproj" />
+    <Project Path="tests/Platform.Domain.Tests/Platform.Domain.Tests.csproj" />
+    <Project Path="tests/Auditing.Domain.Tests/Auditing.Domain.Tests.csproj" />
+    <Project Path="tests/Files.Domain.Tests/Files.Domain.Tests.csproj" />
+    <Project Path="tests/Scheduling.Domain.Tests/Scheduling.Domain.Tests.csproj" />
+    <Project Path="tests/Gateway.Routing.Tests/Gateway.Routing.Tests.csproj" />
+    <Project Path="tests/BuildingBlocks.Infrastructure.IntegrationTests/BuildingBlocks.Infrastructure.IntegrationTests.csproj" />
+  <Project Path="tests/Identity.IntegrationTests/Identity.IntegrationTests.csproj" />
+  <Project Path="tests/IntegrationSupport/IntegrationSupport.csproj" />
+  <Project Path="tests/IntegrationSupport.Tests/IntegrationSupport.Tests.csproj" />
+  <Project Path="tests/HostIntegration.Tests/HostIntegration.Tests.csproj" />
+  <Project Path="tests/Composition.Tests/Composition.Tests.csproj" />
+  </Folder>
+
+  <Folder Name="/Solution Items/">
+    <File Path="README.md" />
+    <File Path="AGENTS.md" />
+    <File Path="CONTEXT-MAP.md" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path=".editorconfig" />
+  </Folder>
+
+</Solution>

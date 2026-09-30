@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Identity.Domain</RootNamespace>
+    <AssemblyName>NexusStackNext.Identity.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+
+  <!--
+    不变量 3：本程序集不得引用任何基础设施包。
+    架构测试 ArchitectureInvariantTests.DomainAssemblies_MustNotReferenceAnythingOutsideTheAllowList
+    会检查这里必须一个 PackageReference 都没有。
+  -->
+
+</Project>

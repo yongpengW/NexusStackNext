@@ -1,0 +1,24 @@
+{
+  "Cors": "",
+  "Gateway": { "RouteTablePath": "routes.json" },
+
+  "Serilog": {
+    "Using": [ "Serilog.Sinks.Console", "Serilog.Sinks.File" ],
+    "WriteTo": [
+      {
+        "Name": "Console",
+        "Args": { "OutputTemplate": "[{Timestamp:HH:mm:ss} {Level:u3}] [{TraceId}] {Message:lj}{NewLine}{Exception}" }
+      },
+      {
+        "Name": "File",
+        "Args": {
+          "path": "Logs/nexusstack_gateway/log.txt",
+          "rollingInterval": "Day",
+          "rollOnFileSizeLimit": "True",
+          "fileSizeLimitBytes": "104857600",
+          "retainedFileCountLimit": "14"
+        }
+      }
+    ]
+  }
+}

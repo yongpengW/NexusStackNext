@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Platform.Infrastructure</RootNamespace>
+    <AssemblyName>NexusStackNext.Platform.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusStackNext.Platform.Application\NexusStackNext.Platform.Application.csproj" />
+    <ProjectReference Include="..\NexusStackNext.Platform.Domain\NexusStackNext.Platform.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+
+</Project>

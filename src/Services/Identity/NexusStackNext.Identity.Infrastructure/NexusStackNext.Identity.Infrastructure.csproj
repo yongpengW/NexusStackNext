@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Identity.Infrastructure</RootNamespace>
+    <AssemblyName>NexusStackNext.Identity.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusStackNext.Identity.Application\NexusStackNext.Identity.Application.csproj" />
+    <ProjectReference Include="..\NexusStackNext.Identity.Domain\NexusStackNext.Identity.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+
+    <!--
+      EF Core 基座（票据 19）：DbContext 基类、schema、主键与软删约定、Outbox/Inbox 表、
+      审计与领域事件拦截器都在那里。Identity 只提供自己的映射。
+    -->
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- provider 由基座传递进来；显式写出来是为了在升级时看见它的版本变化。 -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!--
+    内存适配器（InMemoryIdentityStores）仍然留在这里，且**不是占位符**：
+    端口存在的意义就是让持久化可替换，而内存版让整个上下文能在没有数据库的情况下
+    端到端跑起来。EF 版是**新增**，不是替换。
+  -->
+
+</Project>

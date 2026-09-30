@@ -1,0 +1,77 @@
+<Project>
+
+  <!--
+    中央包版本管理。所有 PackageReference 只写 Include、不写 Version，版本在此统一。
+    依赖在引入时逐个登记，每次登记都要写明"为什么需要它"。
+  -->
+
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Label="应用层">
+    <!-- 只依赖"裸抽象"：IServiceCollection 与 GetRequiredService 扩展方法。
+         Application 不引用 EF Core / ASP.NET / 任何具体容器实现。 -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.12" />
+  <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup Label="宿主">
+    <!-- OpenAPI：.NET 10 内置，不引入第三方（参照仓库用的是 Swashbuckle）。 -->
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
+  <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <!-- API 参考界面（只要 UI，文档仍由内置 OpenApi 生成）。MIT 许可，满足 ADR-0008。 -->
+    <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
+    <!-- 集成测试：真的起一个宿主、真的连一次 hub。二者都 MIT。 -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
+    <!-- EF Core 与 PostgreSQL 提供程序。二者均 MIT。 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- 只给 `dotnet ef` 用：设计时工厂与迁移脚手架。 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <!-- 集成测试直连真实 PostgreSQL。PostgreSQL 许可证。 -->
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+  <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
+  <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.0" />
+  <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+  <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />
+  <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.19.0" />
+  <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.19.0" />
+  <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+  <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="10.10.0" />
+    <!-- 日志与配置中心。许可证：Apache-2.0 / MIT，符合 ADR-0008。 -->
+    <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Settings.Configuration" Version="10.0.1" />
+    <PackageVersion Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+    <PackageVersion Include="Serilog.Enrichers.Span" Version="3.1.0" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageVersion Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Seq" Version="9.1.0" />
+    <PackageVersion Include="AgileConfig.Client" Version="1.9.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="测试">
+  </ItemGroup>
+
+  <ItemGroup Label="网关">
+    <!-- YARP：边缘反向代理。只用到配置模型与中间件管线，不引入其托管抽象。 -->
+    <PackageVersion Include="Yarp.ReverseProxy" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="测试">
+    <!-- 版本取自本机 SDK 10.0.401 内置的 xunit 模板，避免手写猜版本 -->
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <!-- 架构测试：把 AGENTS.md 的架构不变量变成会失败的测试（票据 05） -->
+    <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
+    <!-- 测试里用真实容器验证注册扩展，而不是手搓一个 IServiceProvider -->
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.12" />
+  </ItemGroup>
+
+</Project>

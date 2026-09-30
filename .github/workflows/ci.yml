@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: 构建与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: 还原
+        run: dotnet restore NexusStackNext.slnx
+
+      - name: 构建
+        # TreatWarningsAsErrors 已打开，因此这一步同时是"没有坏味道"的检查。
+        run: dotnet build NexusStackNext.slnx --no-restore --configuration Release
+
+      - name: 测试
+        # 含 Architecture.Tests —— 把 AGENTS.md 的八条不变量变成会失败的断言。
+        run: dotnet test NexusStackNext.slnx --no-build --configuration Release
+
+      - name: 断言模板生成物不含凭据
+        # 见票据 16：参照仓库把生产凭据随模板分发了出去。
+        shell: pwsh
+        run: ./scripts/assert-no-credentials.ps1
+
+      - name: 断言跟踪器与规范一致
+        # 见票据 28/29：一句关于"我们做了什么"的声明，如果不受检查，就会变成谎话。
+        # 这条检查第一次运行就抓到了一张自相矛盾的票据（状态 resolved、依赖未解决）。
+        shell: pwsh
+        run: ./scripts/check-tracker.ps1
+
+      - name: 断言模板能生成可构建的工程
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $hive = Join-Path ([System.IO.Path]::GetTempPath()) 'nsn-ci-hive'
+          $out  = Join-Path ([System.IO.Path]::GetTempPath()) 'nsn-ci-gen'
+          Remove-Item $hive, $out -Recurse -Force -ErrorAction SilentlyContinue
+          dotnet new install . --debug:custom-hive $hive
+          dotnet new nexusstack-next -n CiProbe -o $out --debug:custom-hive $hive
+          dotnet build "$out/CiProbe.slnx" --configuration Release

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Composition</RootNamespace>
+    <AssemblyName>NexusStackNext.Composition</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    宿主组装专用：日志与配置中心的接线。
+
+    **只允许宿主（*.Api / Gateway）引用本工程。**
+    Domain / Application / Infrastructure 一律不得引用它——那三层与"进程怎么起"无关，
+    而这里全是进程级的东西（Serilog、AgileConfig 客户端、配置源顺序）。
+
+    它也不是"隐藏的组装"（不变量 8 禁止的那种）：宿主仍然逐行声明自己由什么组成，
+    这里只是把**六个宿主完全相同**的那几行收在一处。任何随宿主不同的东西
+    （健康检查、路由、存储根目录）都留在各宿主自己的 Program.cs 里。
+  -->
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Settings.Configuration" />
+    <!-- 让配置里的 Enrich: [WithSpan, WithThreadId, WithThreadName] 能解析——
+         少了这两个包，ReadFrom.Configuration 会在**启动时**抛"找不到 enricher"。 -->
+    <PackageReference Include="Serilog.Enrichers.Span" />
+    <PackageReference Include="Serilog.Enrichers.Thread" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Serilog.Sinks.Seq" />
+    <PackageReference Include="AgileConfig.Client" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,309 @@
+using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Infrastructure;
+
+namespace NexusStackNext.Identity.Endpoints;
+
+/// <summary>
+/// Identity 模块：本上下文对宿主暴露的全部内容——DI 注册与 HTTP 端点。
+///
+/// <para>它在边缘之后提供"谁是谁、谁能做什么"：
+/// 用户 → 角色 → 菜单 → 端点 → 权限键 → 判定。</para>
+///
+/// <para><b>端点只做三件事</b>：从 HTTP 里解出请求、交给分发器、把结果映射成状态码。
+/// 业务逻辑在 <c>NexusStackNext.Identity.Application</c> 的处理器里——
+/// 它此前是内联在这里的，代价见下。</para>
+///
+/// <para><b>为什么必须走分发器，而不只是"更整齐"。</b>内联版本**不调用 <c>SaveChanges</c>**：
+/// 内存存储下看不出问题（内存版保存的是聚合实例本身），但换成 EF 之后，
+/// 角色分配、菜单授权会**静默地不落库**，而接口照返回 204。
+/// 分发器在处理器成功之后自动开事务 + 保存（见 <c>Sender</c>），
+/// 于是"每个命令一个事务"（不变量 4）由**一处**保证，而不是每个端点各自记得。</para>
+///
+/// <para>模块边界见 <c>NexusStackNext.Auditing.Endpoints.AuditingModule</c> 的说明（ADR-0013）。</para>
+/// </summary>
+public static class IdentityModule
+{
+    /// <summary>注册本模块需要的服务。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <param name="configuration">配置——JWT 签名密钥从它读，**不进仓库**（ADR-0014）。</param>
+    /// <returns>同一个服务集合，便于串联。</returns>
+    public static IServiceCollection AddIdentityModule(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddIdentityInMemoryStorage();
+
+        // 签名密钥的取值顺序由 `AddNexusStackAgileConfig` 定：环境变量 > 配置中心 > appsettings。
+        // **它绝不该出现在仓库里**——那些文件是模板的一部分。
+        services.AddIdentityJwtIssuer(configuration);
+
+        // 用例处理器与"存储是哪种"无关，所以注册在存储之后、且不随之切换。
+        services.AddIdentityUseCases();
+
+        return services;
+    }
+
+    /// <summary>映射本模块的端点。</summary>
+    /// <param name="endpoints">端点路由构建器。</param>
+    /// <returns>同一个构建器，便于串联。</returns>
+    public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder endpoints)
+    {
+        ArgumentNullException.ThrowIfNull(endpoints);
+
+        var identity = endpoints.MapGroup("/api/identity");
+
+        // **授权过滤器挂在整个分组上**，于是"这个模块的端点默认都要过一遍授权"是结构性的，
+        // 而不是每个端点各自的记性。公开的端点由框架的 `AllowAnonymous()` 显式标注。
+        identity.AddEndpointFilter<NexusStackAuthorizationFilter>();
+
+        // 自述端点：说明这个服务是什么。**不返回任何假数据。**
+        identity.MapGet("/", (IClock clock) => Results.Ok(new
+        {
+            context = "identity",
+            responsibility = "谁可以登录、登录后能做什么",
+            capabilities = new { users = true, roles = true, permissions = true, authorization = true, tokens = false },
+            at = clock.UtcNow,
+        })).AllowAnonymous();
+        // 自述端点必须公开：它是"这个服务是什么"的说明书，而说明书不该要钥匙。
+
+        // ---------- 认证 ----------
+        //
+        // 登录与刷新放在最前面：它们是这个上下文**唯一一对不需要先有身份就能调用的端点**，
+        // 而其余所有端点都假定调用方已经是谁。
+        //
+        // **响应里带着刷新令牌的原文，而它只在这里出现一次。**
+        // 它不该进日志——所以这两个端点不要挂请求体记录类的东西。
+
+        identity.MapPost("/login", async (
+            LoginRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(
+                new LoginCommand(request.UserName, request.Password, request.Captcha),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Ok(new
+                {
+                    userId = result.Value.UserId,
+                    userName = result.Value.UserName,
+                    accessToken = result.Value.Tokens.AccessToken,
+                    accessTokenExpiresAt = result.Value.Tokens.AccessTokenExpiresAt,
+                    refreshToken = result.Value.Tokens.RefreshToken,
+                    refreshTokenExpiresAt = result.Value.Tokens.RefreshTokenExpiresAt,
+                });
+        }).AllowAnonymous();   // 登录当然要公开——它是拿钥匙的地方。
+
+        identity.MapPost("/refresh", async (
+            RefreshRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(
+                new RefreshTokenCommand(request.RefreshToken),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Ok(new
+                {
+                    accessToken = result.Value.AccessToken,
+                    accessTokenExpiresAt = result.Value.AccessTokenExpiresAt,
+                    refreshToken = result.Value.RefreshToken,
+                    refreshTokenExpiresAt = result.Value.RefreshTokenExpiresAt,
+                });
+        }).AllowAnonymous();   // 刷新也一样：访问令牌过期时，客户端手里只有刷新令牌。
+
+        identity.MapPost("/logout", async (
+            ISender sender,
+            ICurrentUser currentUser,
+            CancellationToken cancellationToken) =>
+        {
+            // **用户标识从令牌来，不从请求体来。** 让请求体指定"注销谁"，
+            // 等于给了一个注销任何人的接口。
+            if (currentUser.UserId is null
+                || !long.TryParse(currentUser.UserId, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var userId))
+            {
+                return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "需要先认证。");
+            }
+
+            var result = await sender.SendAsync(new LogoutCommand(userId), cancellationToken);
+
+            return result.IsFailure ? Failure(result.Error) : Results.NoContent();
+        }).RequireAuthenticated();
+
+        // ---------- 用户 ----------
+
+        identity.MapPost("/users", async (
+            CreateUserRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(
+                new CreateUserCommand(request.UserName, request.Password),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Created($"/api/identity/users/{result.Value}", new { userId = result.Value });
+        })
+        // **自注册公开，是显式的。**
+        //
+        // 它必须是公开的，否则没有人能创建第一个用户——而"发一个令牌"需要先有用户。
+        // 这是**产品决定**而不是遗漏：模板默认允许自注册，生产环境若要关掉，
+        // 应当把它改成 `RequirePermission` 并配上种子管理员，而不是靠"忘了标注"来挡住。
+        .AllowAnonymous();
+
+        identity.MapPost("/users/{userId:long}/roles/{roleId:long}", async (
+            long userId,
+            long roleId,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(new AssignRoleCommand(userId, roleId), cancellationToken);
+
+            return result.IsFailure ? Failure(result.Error) : Results.NoContent();
+        }).RequirePermission("/api/identity/users/{userId}/roles/{roleId}", "POST");
+
+        identity.MapGet("/users/{userId:long}/permissions", async (
+            long userId,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.QueryAsync(new GetUserPermissionsQuery(userId), cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Ok(new { userId, keys = result.Value });
+        }).RequirePermission("/api/identity/users/{userId}/permissions", "GET");
+
+        // ---------- 角色 ----------
+
+        identity.MapPost("/roles", async (
+            CreateRoleRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(new CreateRoleCommand(request.Code, request.Name), cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Created($"/api/identity/roles/{result.Value}", new { roleId = result.Value });
+        }).RequirePermission("/api/identity/roles", "POST");
+
+        identity.MapPost("/roles/{roleId:long}/menus/{menuId:long}", async (
+            long roleId,
+            long menuId,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(new GrantMenuToRoleCommand(roleId, menuId), cancellationToken);
+
+            return result.IsFailure ? Failure(result.Error) : Results.NoContent();
+        }).RequirePermission("/api/identity/roles/{roleId}/menus/{menuId}", "POST");
+
+        // ---------- API 资源（权限键的来源） ----------
+
+        identity.MapPost("/api-resources", async (
+            CreateApiResourceRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.SendAsync(
+                new CreateApiResourceCommand(request.Path, request.Method, request.MenuId),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Created(
+                    $"/api/identity/api-resources/{result.Value.ApiResourceId}",
+                    new { apiResourceId = result.Value.ApiResourceId, permissionKey = result.Value.PermissionKey });
+        })
+        // **引导端点：只要求"已认证"，不要求权限键。**
+        //
+        // 这里有一个真实的循环：要授权得先有权限键，而权限键由这个端点登记。
+        // 要求"注册权限"本身需要权限，就没人能注册第一个——系统永远起不来。
+        // 所以它停在"已认证"这一档。**代价说清楚**：任何已认证用户都能登记 API 资源，
+        // 而那意味着他能给自己造权限。生产部署必须把这个端点限制住（网关侧加角色约束），
+        // 或者改成由种子数据登记。现在留在这一档，是因为替代方案是"系统起不来"。
+        .RequireAuthenticated();
+
+        // ---------- 授权判定 ----------
+
+        identity.MapPost("/authorize", async (
+            AuthorizeRequest request,
+            ISender sender,
+            CancellationToken cancellationToken) =>
+        {
+            var result = await sender.QueryAsync(
+                new AuthorizeQuery(request.UserId, request.Path, request.Method),
+                cancellationToken);
+
+            return result.IsFailure
+                ? Failure(result.Error)
+                : Results.Ok(new
+                {
+                    request.UserId,
+                    requiredKey = result.Value.RequiredKey,
+                    decision = result.Value.Decision,
+                    grantedCount = result.Value.GrantedCount,
+                });
+        }).RequirePermission("/api/identity/authorize", "POST");
+
+        return endpoints;
+    }
+
+    /// <summary>
+    /// 本模块自己的错误码 → 状态码映射。
+    /// <para>与 Platform（全 400）、Files（not_found 404）、Scheduling（not_found 404）**故意不同**：
+    /// 这里还区分 409 冲突——用户名/角色编码被占用不是"请求错了"，是"状态冲突"。</para>
+    /// </summary>
+    private static IResult Failure(Error error) => error.Code switch
+    {
+        "identity.user.not_found" or "identity.role.not_found" =>
+            Results.Problem(statusCode: StatusCodes.Status404NotFound, title: error.Message),
+        "identity.user_name.taken" or "identity.role_code.taken" =>
+            Results.Problem(statusCode: StatusCodes.Status409Conflict, title: error.Message),
+        _ => Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: error.Message),
+    };
+}
+
+/// <summary>登录。</summary>
+/// <param name="UserName">用户名。</param>
+/// <param name="Password">明文口令——**只在这一次调用里存在**。</param>
+/// <param name="Captcha">验证码答案；没有启用验证码时为 <c>null</c>。</param>
+internal sealed record LoginRequest(string UserName, string Password, string? Captcha);
+
+/// <summary>刷新令牌。</summary>
+/// <param name="RefreshToken">刷新令牌原文。</param>
+internal sealed record RefreshRequest(string RefreshToken);
+
+/// <summary>创建用户。</summary>
+/// <param name="UserName">用户名。</param>
+/// <param name="Password">明文口令——<b>只在这一次调用里存在</b>，进领域前已被换成哈希。</param>
+internal sealed record CreateUserRequest(string UserName, string Password);
+
+/// <summary>创建角色。</summary>
+/// <param name="Code">角色编码。</param>
+/// <param name="Name">角色名称。</param>
+internal sealed record CreateRoleRequest(string Code, string Name);
+
+/// <summary>注册一个 API 资源。</summary>
+/// <param name="MenuId">所属菜单；<c>null</c> 表示不对应菜单（不会被菜单授权覆盖）。</param>
+/// <param name="Path">路由模板。</param>
+/// <param name="Method">HTTP 方法。</param>
+internal sealed record CreateApiResourceRequest(string Path, string Method, long? MenuId);
+
+/// <summary>授权判定请求。</summary>
+/// <param name="UserId">用户标识。</param>
+/// <param name="Path">请求路径。</param>
+/// <param name="Method">HTTP 方法。</param>
+internal sealed record AuthorizeRequest(long UserId, string Path, string Method);

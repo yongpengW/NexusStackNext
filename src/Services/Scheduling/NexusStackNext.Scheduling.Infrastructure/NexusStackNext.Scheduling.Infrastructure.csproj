@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Scheduling.Infrastructure</RootNamespace>
+    <AssemblyName>NexusStackNext.Scheduling.Infrastructure</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NexusStackNext.Scheduling.Application\NexusStackNext.Scheduling.Application.csproj" />
+    <ProjectReference Include="..\NexusStackNext.Scheduling.Domain\NexusStackNext.Scheduling.Domain.csproj" />
+    <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+
+  <!--
+    本工程此前不存在：内存适配器直接住在 NexusStackNext.Scheduling.Endpoints 里。
+    那是分层走样——**适配器住在宿主里**，于是"换一个持久化实现"要动宿主，
+    而宿主本该只负责组装。挪到这里之后，五个上下文的结构一致了。
+  -->
+
+</Project>

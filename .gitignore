@@ -1,0 +1,46 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.idea/
+*.DotSettings.user
+
+## 构建产物
+[Dd]ebug/
+[Rr]elease/
+publish/
+artifacts/
+TestResults/
+*.trx
+*.coverage
+*.nupkg
+!*.Template.nupkg
+
+## 凭据与本地配置 —— 参照仓库在这里吃过亏，见 .scratch/nexusstack-next/issues/18
+## AgileConfig 客户端会把拉到的配置（含连接串、AK/SK）落到 agile/
+*.serviceidconfig/*.cache
+agile/
+*.serviceid
+*.cache
+
+## 本地覆盖与机密
+appsettings.*.local.json
+appsettings.Local.json
+*.pfx
+*.key
+secrets.json
+
+## 本地环境变量（含配置中心密钥）—— 见 env/README.md
+## 这里存的是真实密钥，整个模式都不提交
+env/*.dev
+.env
+.env.*
+
+## 工具
+.dotnet/
+.tools/
+*.received.*

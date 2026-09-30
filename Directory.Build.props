@@ -1,0 +1,58 @@
+<Project>
+
+  <!--
+    全仓构建基线。参照仓库 NexusStackBackend 的教训：
+    - 没有 GenerateDocumentationFile ⇒ XML 注释链路全为空字符串（review/02 发现 12）。
+    - 没有 TreatWarningsAsErrors ⇒ 边界违规与坏味道只能靠人看见。
+    这两条在新仓库里从第一天就锁死。
+  -->
+
+  <PropertyGroup>
+    <!-- 默认 TFM；单个项目可在自己的 csproj 里覆盖（Aspire / 测试项目可能需要不同值） -->
+    <TargetFramework Condition="'$(TargetFramework)' == ''">net10.0</TargetFramework>
+
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- 警告即错误：让边界违规、可空性问题、过时 API 直接构建失败 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!--
+      分析器噪音的处理纪律：**不允许**在这里成批 NoWarn。
+      要豁免某条规则，就在触发它的那个类型上用 [SuppressMessage] 并写明 Justification
+      （见 BuildingBlocks.Domain/Result.cs 的 CA1716）。规则关在源头、理由留在原处，
+      下一个人才知道这是有意的而不是漏掉的。
+    -->
+
+    <!-- 注释链路：没有它，Swagger/OpenAPI 的说明文字全是空字符串 -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!--
+    测试项目：不出文档、不打包，且不套用面向库的 API 设计规则。
+
+    **两类都算**：`*.Tests` 与 `*.IntegrationTests`。
+    后者不是前者的变体，而是**需要外部服务**的那一类（真实 PostgreSQL，
+    见 tests/IntegrationSupport）——按名字就能认出来，所以 CI 可以单独跑它们，
+    或者在环境不具备时明确地整类跳过，而不是让它们混在单元测试里时红时绿。
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('.Tests')) Or $(MSBuildProjectName.EndsWith('.IntegrationTests'))">
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <IsPackable>false</IsPackable>
+    <!--
+      测试项目豁免：
+      - CA1515 测试类必须 public 供 runner 发现；CA1707 测试方法名允许中文与下划线；
+        CA1861/CA2007/CA1034/CA1062 是面向库的 API 设计规则，不适用于测试。
+      - IDE0005 需要 GenerateDocumentationFile=true 才能在构建期运行；测试项目为免 CS1591 洪水而关掉了它，
+        因此这条规则在测试项目里无法生效，只能一并豁免（编译器会报 EnableGenerateDocumentationFile）。
+    -->
+    <NoWarn>$(NoWarn);CA1515;CA1707;CA1861;CA2007;CA1034;CA1062;IDE0005;EnableGenerateDocumentationFile</NoWarn>
+  </PropertyGroup>
+
+</Project>

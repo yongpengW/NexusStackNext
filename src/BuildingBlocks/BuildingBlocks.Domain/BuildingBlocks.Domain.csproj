@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    领域基元。不变量 3：本程序集不得引用任何基础设施包。
+    这里现在**故意保持空**——票据 01 只建立可构建的骨架，内容由票据 02 落地。
+    空项目也是断言的一部分：Directory.Build.props 的严格设置必须能通过。
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.BuildingBlocks.Domain</RootNamespace>
+    <AssemblyName>NexusStackNext.BuildingBlocks.Domain</AssemblyName>
+  </PropertyGroup>
+
+</Project>

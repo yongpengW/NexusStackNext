@@ -1,0 +1,45 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{cs,csproj,props,targets,slnx}]
+indent_size = 4
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+[*.cs]
+# using 指令排在命名空间之外，且 System.* 优先
+dotnet_sort_system_directives_first = true
+csharp_style_namespace_declarations = file_scoped:warning
+
+# 不要求显式 this.
+dotnet_diagnostic.IDE0003.severity = silent
+
+# 未使用的 using 视为错误（配合 TreatWarningsAsErrors）
+dotnet_diagnostic.IDE0005.severity = error
+
+# 可空性提示保持为警告
+dotnet_diagnostic.CS8618.severity = warning
+
+# ---------- EF Core 迁移 ----------
+#
+# 迁移文件是**生成代码**，不是人写的：它们由 `dotnet ef migrations add` 产出，
+# 格式（块级命名空间、常量数组实参、无用 using）由工具决定，不由我们决定。
+# 让它们去满足面向手写代码的分析器基线，只会得到两种结果：
+# 每次生成迁移后手工改一遍，或者把基线整体放宽——后者会连手写代码一起放过。
+#
+# 所以正解是**声明它们是生成代码**，让分析器按生成代码对待。
+# 这与"不允许成批 NoWarn"并不冲突：NoWarn 是按项目生效的，会掩盖手写代码的问题；
+# 这里限定在一个目录，且理由是代码的来源而不是"它报错了"。
+[**/Migrations/*.cs]
+generated_code = true
+dotnet_analyzer_diagnostic.severity = none
+dotnet_diagnostic.IDE0005.severity = none
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CA1861.severity = none

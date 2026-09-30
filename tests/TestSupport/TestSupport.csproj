@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      **这是一个库，不是测试工程。**
+      它被多个测试工程引用；没有这一行时 `dotnet test` 会把它也当成测试工程跑一遍
+      （立刻成功退出，因此无害），于是 `scripts/run-tests.ps1` 的逐工程输出里
+      会多出一行"通过"，让人以为自己在看测试结果。
+      与 `IntegrationSupport` 同一处理。
+    -->
+    <IsTestProject>false</IsTestProject>
+    <RootNamespace>NexusStackNext.TestSupport</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+
+  <!--
+    测试替身的共享工程。
+
+    架构不变量 7 说"共享代码要被第二个消费者证明需要才允许上移 BuildingBlocks"——
+    那条规则针对的是**产品代码**。测试替身走这里，**不进 BuildingBlocks**：
+    BuildingBlocks 里放的是运行时契约，而这里是测试装置，两者不该混在一起。
+
+    此前这三个替身散在 4–5 个测试工程里各一份（评审 07 第三节）。
+  -->
+
+</Project>

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Gateway.Routing</RootNamespace>
+    <AssemblyName>NexusStackNext.Gateway.Routing</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\BuildingBlocks.Domain\BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+
+  <!--
+    YARP 在这里，而不是在宿主里：本库的职责就是"把路由配置**忠实地**翻译成运行时配置"，
+    而 YARP 的配置模型就是目标形状。把映射挪进宿主，会让最容易出错的那一步（丢字段）
+    失去测试——参照仓库正是这么丢的。
+    映射是纯函数：给同一张路由表，永远得到同一份 YARP 配置，不需要边缘进程。
+  -->
+  <ItemGroup>
+    <PackageReference Include="Yarp.ReverseProxy" />
+  </ItemGroup>
+
+</Project>

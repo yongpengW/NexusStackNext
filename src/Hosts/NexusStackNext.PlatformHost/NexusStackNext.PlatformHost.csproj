@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.PlatformHost</RootNamespace>
+    <AssemblyName>NexusStackNext.PlatformHost</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    平台能力的**唯一宿主**。
+
+    Identity / Platform / Scheduling / Auditing / Files 是通用子域：它们服务于业务，
+    但本身不是业务差异化所在，而且一起演进、一起部署。因此由一个进程组装，共用一个数据库
+    （库内按 schema 分开）。见 ADR-0002 的修订与 ADR-0013。
+
+    **这不改变建模边界**：五个上下文的 Domain / Application / Infrastructure 程序集照旧独立，
+    跨上下文引用仍然为零，架构不变量测试一条没改。变的只是"跑在几个进程里"。
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Services\Identity\NexusStackNext.Identity.Endpoints\NexusStackNext.Identity.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Services\Platform\NexusStackNext.Platform.Endpoints\NexusStackNext.Platform.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Services\Scheduling\NexusStackNext.Scheduling.Endpoints\NexusStackNext.Scheduling.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Services\Auditing\NexusStackNext.Auditing.Endpoints\NexusStackNext.Auditing.Endpoints.csproj" />
+    <ProjectReference Include="..\..\Services\Files\NexusStackNext.Files.Endpoints\NexusStackNext.Files.Endpoints.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="..\..\..\aspire\NexusStackNext.ServiceDefaults\NexusStackNext.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\BuildingBlocks\BuildingBlocks.Infrastructure\BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Composition\NexusStackNext.Composition\NexusStackNext.Composition.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+  </ItemGroup>
+
+</Project>
