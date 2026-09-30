@@ -83,16 +83,17 @@ gh run view --log-failed     # 红了先读原文，别猜
 
 | 分支 | 直推 | 推送时跑 CI | 怎么进 |
 |---|---|---|---|
-| **`dev`** | ✓ 开发中的改动都落这里 | ✗ **不跑** | 直接 `git push` |
+| **`dev`** | ✓ 开发中的改动都落这里 | ✓ **也跑** | 直接 `git push` |
 | **`main`** | ✗ | ✓（PR 触发，全套） | 只能经 `dev → main` 的 PR，且必需检查 `构建与测试` 通过 |
 
-**为什么 `dev` 不跑 CI**：开发时每次推送等 2–3 分钟不值得 ✓。**代价也是真的** ✗ ——
-CI 是唯一的"平台差异"检查（Linux / 干净检出），这一轮它抓到过"路径正则只认 Windows 反斜杠、
-本机永远绿而 ubuntu 上冤枉五个上下文" ✓。所以三条约定必须守：
+**为什么 `dev` 也跑 CI**（2026-09-30 定）：公开仓库的 Actions **不计费** ✓，而 CI 是**唯一的"平台差异"检查**
+（Linux / 干净检出）—— 这一轮它抓到过"路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文" ✓。
+所以 `dev` 上的直推**也过 CI**：坏提交**立刻**看到红 ✓，不会攒到 `dev → main` 的 PR ✗。
 
-1. **推 `dev` 之前，本地三段必跑**（`dotnet build` → `scripts/run-tests.ps1` → `scripts/check-format.ps1`，约 100 秒 ✓）；
-2. **改动涉及脚本 / 路径 / 编码 / 换行**时，用 `gh workflow run ci` **手动在 `dev` 上跑一次全套**；
-3. **`dev` 不要活太久**：每完成一个完整小块就 `dev → main` 一次，把"未验证 Linux 的改动"限在一块之内。
+仍然推荐：**推之前先本地跑三段**（`dotnet build` → `scripts/run-tests.ps1` → `scripts/check-format.ps1`，约 100 秒 ✓）
+—— 它比 CI 快，能在推送前拦下问题 ✓（这是习惯，不是闸）。
+
+另：`dev` 不要活太久 ✓ —— 每完成一个完整小块就 `dev → main` 一次，PR 才好看、才不容易冲突 ✓。
 
 **`dev` 只受一条 ruleset 保护：禁删除** ✓ —— **刻意不要求状态检查** ✗：
 要求了就直推不了（`main` 上实测过 `GH013: Required status check … is expected` ✓）。
