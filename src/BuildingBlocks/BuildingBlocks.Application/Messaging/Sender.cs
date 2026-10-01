@@ -1,23 +1,11 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
-using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Application.Validation;
 using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.BuildingBlocks.Application.Messaging;
 
-/// <summary>
-/// 分发器。管线顺序是<b>固定且显式</b>的，不是可插拔的行为链：
-/// <list type="number">
-///   <item>校验——在事务外，失败即短路，处理器根本不会被调用；</item>
-///   <item>开事务——仅命令；查询不经过这一步；</item>
-///   <item>执行处理器；</item>
-///   <item>成功才 <c>SaveChanges</c>——失败时未刷新的改动随事务结束丢弃；</item>
-///   <item>提交；任何异常都会回滚。</item>
-/// </list>
-/// 之所以不做成"行为链框架"：那会引入一整套抽象，而这里只有三步，显式写出来读得更清楚，
-/// 也更容易证明"失败不落库"。
-/// </summary>
+/// <summary>校验并分发请求。事务由所属上下文的命令入口负责，查询不经过事务。</summary>
 /// <remarks>
 /// <b>反射只在两处，而且都收在包装器里：</b>
 /// <list type="bullet">
@@ -28,7 +16,7 @@ namespace NexusStackNext.BuildingBlocks.Application.Messaging;
 /// 且异常信息很难读。注册仍然是全显式的（见 <c>ApplicationServiceCollectionExtensions</c>），
 /// 没有任何程序集扫描。
 /// </remarks>
-/// <param name="serviceProvider">用于解析处理器、校验器与工作单元。</param>
+/// <param name="serviceProvider">用于解析处理器与校验器。</param>
 internal sealed class Sender(IServiceProvider serviceProvider) : ISender
 {
     /// <inheritdoc />
@@ -72,60 +60,15 @@ internal sealed class Sender(IServiceProvider serviceProvider) : ISender
         return wrapper.InvokeAsync(query, serviceProvider, cancellationToken);
     }
 
-    private async Task<Result> ExecuteVoidCommandAsync(ICommand command, CancellationToken cancellationToken)
-    {
-        var wrapper = VoidCommandWrapperCache.For(command.GetType());
-        var unitOfWork = serviceProvider.GetService<IUnitOfWork>();
+    private Task<Result> ExecuteVoidCommandAsync(ICommand command, CancellationToken cancellationToken) =>
+        VoidCommandWrapperCache.For(command.GetType()).InvokeAsync(command, serviceProvider, cancellationToken);
 
-        if (unitOfWork is null)
-        {
-            return await wrapper.InvokeAsync(command, serviceProvider, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await unitOfWork
-            .ExecuteInTransactionAsync(
-                async token =>
-                {
-                    var result = await wrapper.InvokeAsync(command, serviceProvider, token).ConfigureAwait(false);
-                    if (result.IsSuccess)
-                    {
-                        await unitOfWork.SaveChangesAsync(token).ConfigureAwait(false);
-                    }
-
-                    return result;
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    private async Task<Result<TResult>> ExecuteCommandAsync<TResult>(
+    private Task<Result<TResult>> ExecuteCommandAsync<TResult>(
         ICommand<TResult> command,
-        CancellationToken cancellationToken)
-    {
-        var wrapper = HandlerWrapperCache<VoidOrValueWrapper<TResult>>
-            .For(command.GetType(), typeof(TResult), typeof(CommandHandlerWrapper<,>));
-        var unitOfWork = serviceProvider.GetService<IUnitOfWork>();
-
-        if (unitOfWork is null)
-        {
-            return await wrapper.InvokeAsync(command, serviceProvider, cancellationToken).ConfigureAwait(false);
-        }
-
-        return await unitOfWork
-            .ExecuteInTransactionAsync(
-                async token =>
-                {
-                    var result = await wrapper.InvokeAsync(command, serviceProvider, token).ConfigureAwait(false);
-                    if (result.IsSuccess)
-                    {
-                        await unitOfWork.SaveChangesAsync(token).ConfigureAwait(false);
-                    }
-
-                    return result;
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
-    }
+        CancellationToken cancellationToken) =>
+        HandlerWrapperCache<VoidOrValueWrapper<TResult>>
+            .For(command.GetType(), typeof(TResult), typeof(CommandHandlerWrapper<,>))
+            .InvokeAsync(command, serviceProvider, cancellationToken);
 
     /// <summary>解析并运行校验器；没有注册校验器就跳过。</summary>
     /// <param name="request">请求。</param>

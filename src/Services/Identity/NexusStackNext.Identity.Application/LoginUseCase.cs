@@ -1,6 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Time;
-using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -76,7 +75,7 @@ public sealed class NoCaptchaValidation : ICaptchaValidation
 /// </summary>
 /// <param name="users">用户仓储。</param>
 /// <param name="hasher">口令哈希与校验。</param>
-/// <param name="unitOfWork">工作单元——**失败也要保存**，见下。</param>
+/// <param name="transaction">命令提交边界，登记密码错误计数对应的安全拒绝。</param>
 /// <param name="tokens">令牌签发。</param>
 /// <param name="captcha">验证码校验。</param>
 /// <param name="clock">时钟。</param>
@@ -85,7 +84,7 @@ public sealed class LoginHandler(
     IPasswordHasher hasher,
     ICaptchaValidation captcha,
     IClock clock,
-    IUnitOfWork unitOfWork,
+    IdentityCommandTransaction transaction,
     TokenIssuer tokens) : ICommandHandler<LoginCommand, LoginOutcome>
 {
     /// <summary>口令错误与用户不存在共用的错误——**一个字都不能差**。</summary>
@@ -132,15 +131,7 @@ public sealed class LoginHandler(
             // 口令错：记一次失败（可能因此锁定），但仍然返回**统一**的错误。
             // 即使这一次刚好触发了锁定，也不说——那同样会泄露"这个账号存在"。
             user.RecordFailedLogin(clock.UtcNow, LockoutPolicy.Default);
-            // **失败也要保存。**
-            //
-            // 分发器只在处理器**成功**时保存（见 `Sender`），而"登录失败"本身就是一次状态变更：
-            // 失败计数加一，够阈值就锁定。不保存的话，锁定**永远不会生效**——
-            // 每一次失败都被安静地丢掉，而接口照常返回"用户名或密码错误"。
-            //
-            // 这里仍然在分发器开的事务里（`ExecuteInTransactionAsync` 包着整个处理器），
-            // 所以"一个命令一个事务"没有被破坏——只是"提交"这个动作由处理器自己发起。
-            await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            transaction.PreserveChangesOnRejection(InvalidCredentials);
 
             return Result.Failure<LoginOutcome>(InvalidCredentials);
         }
@@ -152,9 +143,6 @@ public sealed class LoginHandler(
             return Result.Failure<LoginOutcome>(allowed.Error);
         }
 
-        user.RecordSuccessfulLogin(clock.UtcNow);
-        await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-
         // 登录成功才签发令牌。放在最后是有意的：上面任何一条失败路径都不该产出令牌。
         var pair = await tokens.IssueAsync(user, cancellationToken).ConfigureAwait(false);
         if (pair.IsFailure)
@@ -162,6 +150,7 @@ public sealed class LoginHandler(
             return Result.Failure<LoginOutcome>(pair.Error);
         }
 
+        user.RecordSuccessfulLogin(clock.UtcNow);
         return Result.Success(new LoginOutcome(user.Id.Value, user.UserName.Value, pair.Value));
     }
 }

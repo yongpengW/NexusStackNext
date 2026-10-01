@@ -36,6 +36,7 @@ public sealed record TokenLifetimePolicy
 /// <param name="ids">标识生成。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="sessions">会话版本——撤销的落点（票据 11）。</param>
+/// <param name="transaction">命令提交边界。</param>
 /// <param name="policy">有效期策略；为 <c>null</c> 时用默认。</param>
 public sealed class TokenIssuer(
     IUserRepository users,
@@ -46,6 +47,7 @@ public sealed class TokenIssuer(
     IIdGenerator ids,
     IClock clock,
     ISessionVersionStore sessions,
+    IdentityCommandTransaction transaction,
     TokenLifetimePolicy? policy = null)
 {
     private readonly TokenLifetimePolicy _policy = policy ?? TokenLifetimePolicy.Default;
@@ -57,7 +59,18 @@ public sealed class TokenIssuer(
     public async Task<Result<TokenPair>> IssueAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
+        var prepared = Prepare(user);
+        if (prepared.IsFailure)
+        {
+            return Result.Failure<TokenPair>(prepared.Error);
+        }
 
+        await refreshTokens.AddAsync(prepared.Value.Refresh, cancellationToken).ConfigureAwait(false);
+        return Result.Success(prepared.Value.Pair);
+    }
+
+    private Result<PreparedTokens> Prepare(User user)
+    {
         var now = clock.UtcNow;
 
         // **把当前的会话版本烤进令牌。** 之后任何一次撤销都会让它对不上号，
@@ -73,7 +86,7 @@ public sealed class TokenIssuer(
             now);
         if (access.IsFailure)
         {
-            return Result.Failure<TokenPair>(access.Error);
+            return Result.Failure<PreparedTokens>(access.Error);
         }
 
         // **原文只在这里存在一次。** 进聚合之前先换哈希——聚合里根本没有"原文"这个字段。
@@ -81,7 +94,7 @@ public sealed class TokenIssuer(
         var hash = TokenHash.Create(hasher.Hash(raw));
         if (hash.IsFailure)
         {
-            return Result.Failure<TokenPair>(hash.Error);
+            return Result.Failure<PreparedTokens>(hash.Error);
         }
 
         var refresh = RefreshToken.Issue(
@@ -93,16 +106,14 @@ public sealed class TokenIssuer(
 
         if (refresh.IsFailure)
         {
-            return Result.Failure<TokenPair>(refresh.Error);
+            return Result.Failure<PreparedTokens>(refresh.Error);
         }
 
-        await refreshTokens.AddAsync(refresh.Value, cancellationToken).ConfigureAwait(false);
-
-        return Result.Success(new TokenPair(
+        return Result.Success(new PreparedTokens(new TokenPair(
             access.Value.Token,
             access.Value.ExpiresAt,
             raw,
-            refresh.Value.ExpiresAt));
+            refresh.Value.ExpiresAt), refresh.Value));
     }
 
     /// <summary>
@@ -155,15 +166,17 @@ public sealed class TokenIssuer(
             // **刷新链断了还不够——已经发出去的访问令牌也必须立刻失效。**
             // 只撤刷新令牌的话，攻击者手上那个访问令牌还能一直用到过期，
             // 而"疑似泄露"要的正是立刻切断。
-            sessions.Bump(stored.UserId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            transaction.RevokeSessionAfterCommit(stored.UserId.Value);
 
-            return Result.Failure<TokenPair>(IdentityErrors.RefreshTokenUnusable("已被使用过"));
+            var error = IdentityErrors.RefreshTokenUnusable("已被使用过");
+            transaction.PreserveChangesOnRejection(error);
+            return Result.Failure<TokenPair>(error);
         }
 
-        var consumed = stored.Consume(now);
-        if (consumed.IsFailure)
+        if (!stored.IsUsable(now))
         {
-            return Result.Failure<TokenPair>(consumed.Error);
+            // 已不可用时 Consume 只返回领域错误，不修改状态。
+            return Result.Failure<TokenPair>(stored.Consume(now).Error);
         }
 
         var user = await users.FindAsync(stored.UserId, cancellationToken).ConfigureAwait(false);
@@ -178,14 +191,29 @@ public sealed class TokenIssuer(
             return Result.Failure<TokenPair>(IdentityErrors.UserDisabled());
         }
 
-        var issued = await IssueAsync(user, cancellationToken).ConfigureAwait(false);
+        // 签名配置、哈希和有效期先验证完；内存适配器也不能在签发失败时消耗旧令牌。
+        var prepared = Prepare(user);
+        if (prepared.IsFailure)
+        {
+            return Result.Failure<TokenPair>(prepared.Error);
+        }
+
+        var consumed = stored.Consume(now);
+        if (consumed.IsFailure)
+        {
+            return Result.Failure<TokenPair>(consumed.Error);
+        }
+
+        await refreshTokens.AddAsync(prepared.Value.Refresh, cancellationToken).ConfigureAwait(false);
 
         // **必须保存旧令牌的消费状态。** 不保存的话，它永远"未被使用过"，
         // 于是同一个刷新令牌可以无限次换新——正是参照仓库"可重放"那个缺陷。
         await refreshTokens.AddAsync(stored, cancellationToken).ConfigureAwait(false);
 
-        return issued;
+        return Result.Success(prepared.Value.Pair);
     }
+
+    private sealed record PreparedTokens(TokenPair Pair, RefreshToken Refresh);
 }
 
 /// <summary>用刷新令牌换一对新令牌。</summary>

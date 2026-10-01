@@ -20,8 +20,8 @@ namespace NexusStackNext.Identity.Endpoints;
 /// <para><b>为什么必须走分发器，而不只是"更整齐"。</b>内联版本**不调用 <c>SaveChanges</c>**：
 /// 内存存储下看不出问题（内存版保存的是聚合实例本身），但换成 EF 之后，
 /// 角色分配、菜单授权会**静默地不落库**，而接口照返回 204。
-/// 分发器在处理器成功之后自动开事务 + 保存（见 <c>Sender</c>），
-/// 于是"每个命令一个事务"（不变量 4）由**一处**保证，而不是每个端点各自记得。</para>
+/// 分发器交给已经装饰的 Identity 命令入口，后者负责开启事务、执行处理器及保存提交
+/// （见 <c>IdentityCommandTransaction</c>），端点不自行管理事务。</para>
 ///
 /// <para>模块边界见 <c>NexusStackNext.Auditing.Endpoints.AuditingModule</c> 的说明（ADR-0013）。</para>
 /// </summary>

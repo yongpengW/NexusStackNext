@@ -24,7 +24,7 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 /// </summary>
 /// <typeparam name="TContext">上下文类型。</typeparam>
 /// <param name="context">上下文。</param>
-public sealed class EfUnitOfWork<TContext>(TContext context) : IUnitOfWork
+public class EfUnitOfWork<TContext>(TContext context) : IUnitOfWork
     where TContext : DbContext
 {
     /// <summary>上下文——派生实现与测试会用到。</summary>
@@ -37,6 +37,7 @@ public sealed class EfUnitOfWork<TContext>(TContext context) : IUnitOfWork
     /// <inheritdoc />
     public Task<TResult> ExecuteInTransactionAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
+        Func<TResult, bool>? shouldCommit = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
@@ -50,11 +51,27 @@ public sealed class EfUnitOfWork<TContext>(TContext context) : IUnitOfWork
             await using var transaction = await Context.Database.BeginTransactionAsync(cancellationToken)
                 .ConfigureAwait(false);
 
-            var result = await operation(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var result = await operation(cancellationToken).ConfigureAwait(false);
+                if (shouldCommit?.Invoke(result) ?? true)
+                {
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                    Context.ChangeTracker.Clear();
+                }
 
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-
-            return result;
+                return result;
+            }
+            catch
+            {
+                // 重试从数据库重新读取；也防止下一条命令保存本次失败留下的实体。
+                Context.ChangeTracker.Clear();
+                throw;
+            }
         });
     }
 }

@@ -4,7 +4,7 @@ using NexusStackNext.BuildingBlocks.Domain;
 namespace NexusStackNext.BuildingBlocks.Application.Tests;
 
 /// <summary>
-/// 分发器的管线行为。<b>本票最重要的是"失败不落库"与"异常必回滚"。</b>
+/// 分发器的校验与分发行为。事务的持久化保证由各上下文的集成测试验证。
 /// <para>
 /// 注意所有调用点都只写 <c>SendAsync(command)</c> / <c>QueryAsync(query)</c>——
 /// 没有显式类型参数、没有 <c>dynamic</c>。类型推断能工作，是因为参数声明成了请求的<b>接口</b>。
@@ -13,7 +13,7 @@ namespace NexusStackNext.BuildingBlocks.Application.Tests;
 public sealed class SenderTests
 {
     [Fact]
-    public async Task SendAsync_Command_RunsInsideTransaction_AndSavesOnSuccess()
+    public async Task SendAsync_Command_DoesNotUseAnUnownedUnitOfWork()
     {
         using var host = new TestHost();
 
@@ -21,7 +21,7 @@ public sealed class SenderTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(
-            ["validate", "begin", "handler:RegisterUser", "save", "commit"],
+            ["validate", "handler:RegisterUser"],
             host.Log.Entries);
     }
 
@@ -40,14 +40,14 @@ public sealed class SenderTests
     }
 
     [Fact]
-    public async Task SendAsync_HandlerThrows_RollsBackAndPropagates()
+    public async Task SendAsync_HandlerThrows_Propagates()
     {
         using var host = new TestHost();
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => host.Sender.SendAsync(new ExplodingCommand()));
 
-        Assert.Equal(["begin", "handler:Exploding", "rollback"], host.Log.Entries);
+        Assert.Equal(["handler:Exploding"], host.Log.Entries);
         Assert.DoesNotContain("commit", host.Log.Entries);
         Assert.DoesNotContain("save", host.Log.Entries);
     }
@@ -55,20 +55,19 @@ public sealed class SenderTests
     [Fact]
     public async Task SendAsync_FailureResult_DoesNotSaveChanges()
     {
-        // 业务失败不是异常：事务正常提交，但**不刷库**，
-        // 因此处理器在失败前做的未提交改动会随事务结束丢弃。
+        // 共享分发器不选择工作单元：事务在所属上下文的命令入口执行。
         using var host = new TestHost();
 
         var result = await host.Sender.SendAsync(new RegisterUserCommand("taken"));
 
         Assert.True(result.IsFailure);
         Assert.Equal("identity.user_name.taken", result.Error.Code);
-        Assert.Equal(["validate", "begin", "handler:RegisterUser", "commit"], host.Log.Entries);
+        Assert.Equal(["validate", "handler:RegisterUser"], host.Log.Entries);
         Assert.DoesNotContain("save", host.Log.Entries);
     }
 
     [Fact]
-    public async Task SendAsync_ValueCommand_InfersResultType_AndSaves()
+    public async Task SendAsync_ValueCommand_InfersResultType_WithoutUsingAnUnownedUnitOfWork()
     {
         using var host = new TestHost();
 
@@ -77,7 +76,7 @@ public sealed class SenderTests
 
         Assert.True(result.IsSuccess);
         Assert.Equal(7, result.Value);
-        Assert.Contains("save", host.Log.Entries);
+        Assert.DoesNotContain("save", host.Log.Entries);
     }
 
     [Fact]

@@ -17,10 +17,7 @@ namespace NexusStackNext.Identity.IntegrationTests;
 /// <summary>
 /// 登录：**锁定、计数落库、以及不泄露用户名存在性**。
 ///
-/// <para><b>为什么这组测试刻意用 EF 存储。</b>本次实现时发现一处真实的设计碰撞：
-/// 分发器只在处理器**成功**时保存（见 <c>Sender</c>），而"登录失败"本身就是一次状态变更
-/// ——失败计数加一，够阈值就锁定。处理器若不自已保存，**锁定永远不会生效**：
-/// 每次失败都被安静地丢掉，而接口照常返回"用户名或密码错误"。</para>
+/// <para>密码错误虽然返回拒绝，安全状态仍须保存。Identity 命令事务只在处理器显式登记这个拒绝后提交。</para>
 ///
 /// <para>用内存存储跑这组测试会**全部通过**，因为它保存的是聚合实例本身、改动立刻可见——
 /// 那个缺陷在它下面根本不存在，因而也验不出来。</para>
@@ -56,9 +53,7 @@ public sealed class LoginTests(IdentityDatabaseFixture fixture)
     /// <summary>
     /// **失败计数真的落库了**，并在达到阈值时锁定。
     ///
-    /// <para>这条测试盯的是那个设计碰撞：分发器"只在成功时保存"。
-    /// 如果没有处理器里的显式保存，下面每一次断言都会看到计数停在 0，
-    /// 而接口每次都返回同样的"用户名或密码错误"——一个**看起来在防护、实际没有**的实现。</para>
+    /// <para>每次拒绝都从新连接验证计数，避免把跟踪器中的变化误当作已提交。</para>
     /// </summary>
     [PostgresFact]
     public async Task FailedLogins_AreCounted_AndEventuallyLockTheAccount()

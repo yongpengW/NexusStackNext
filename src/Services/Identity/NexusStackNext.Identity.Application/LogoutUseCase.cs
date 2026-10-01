@@ -1,5 +1,4 @@
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.Identity.Application;
@@ -28,11 +27,11 @@ public sealed record LogoutCommand(long UserId) : ICommand, IIdentifiedRequest
 /// <para>两条路径互不替代。**要真的赶走一个人，两个都要做。**</para>
 /// </summary>
 /// <param name="tokens">刷新令牌仓储。</param>
-/// <param name="sessions">会话版本。</param>
+/// <param name="transaction">提交边界，在持久化成功后撤销会话。</param>
 /// <param name="clock">时钟。</param>
 public sealed class LogoutHandler(
     IRefreshTokenRepository tokens,
-    ISessionVersionStore sessions,
+    IdentityCommandTransaction transaction,
     BuildingBlocks.Application.Time.IClock clock) : ICommandHandler<LogoutCommand>
 {
     /// <inheritdoc />
@@ -48,7 +47,7 @@ public sealed class LogoutHandler(
             .RevokeAllAsync(userId, clock.UtcNow, "用户登出", cancellationToken)
             .ConfigureAwait(false);
 
-        sessions.Bump(command.UserId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        transaction.RevokeSessionAfterCommit(command.UserId);
 
         // 幂等：重复登出算成功。登出不是"改变什么"，而是"确保不再有效"——
         // 已经无效时它的目的已经达到了，返回失败只会让客户端困惑。

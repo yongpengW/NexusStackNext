@@ -61,6 +61,7 @@ public sealed class IdentityUseCasePersistenceTests(IdentityDatabaseFixture fixt
             Assert.True(added.IsSuccess, "AddRoot 失败，后面的断言没有对象。");
 
             await trees.AddAsync(tree);
+            await scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync();
 
             treeId = tree.Id.Value;
             nodeId = added.Value.Id.Value;

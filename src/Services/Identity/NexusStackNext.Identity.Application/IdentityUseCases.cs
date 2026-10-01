@@ -124,13 +124,8 @@ public sealed record AuthorizationOutcome(string RequiredKey, string Decision, i
 // ---------------------------------------------------------------------------
 // 处理器
 //
-// **它们只改聚合，不保存。** 分发器（`Sender`）在处理器成功之后
-// 自动 `ExecuteInTransactionAsync` + `SaveChangesAsync`（见 `Sender.cs`）——
-// 于是"每个命令一个事务"（不变量 4）由一处保证，而不是每个处理器各自记得。
-//
-// 端点此前是内联的，而且**不调用 SaveChanges**：内存存储下看不出问题
-// （内存版保存的是聚合实例本身），换成 EF 就会让角色分配、菜单授权**静默不落库**
-// 而接口照返回 204。走分发器之后这条路径不再依赖任何人记得。
+// 处理器只改聚合。IdentityCommandTransaction 使用本上下文的工作单元统一保存、提交，
+// 并在提交后让权限缓存失效。Sender 只做校验与分发，不选择某个上下文的事务。
 // ---------------------------------------------------------------------------
 
 /// <summary>创建用户。</summary>
@@ -181,11 +176,11 @@ public sealed class CreateUserHandler(
 /// <summary>给用户分配角色。</summary>
 /// <param name="users">用户仓储。</param>
 /// <param name="clock">时钟。</param>
-/// <param name="permissions">权限缓存——<b>角色变了，缓存必须失效</b>。</param>
+/// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class AssignRoleHandler(
     IUserRepository users,
     IClock clock,
-    IPermissionCache permissions) : ICommandHandler<AssignRoleCommand>
+    IdentityCommandTransaction transaction) : ICommandHandler<AssignRoleCommand>
 {
     /// <inheritdoc />
     public async Task<Result> HandleAsync(
@@ -213,7 +208,7 @@ public sealed class AssignRoleHandler(
             //
             // 它是"每个上下文各自记得失效"这种模式的第二个样本；这一处的修法不是"记得更牢"，
             // 而是把失效钉在**唯一一条改角色的路径**上（本处理器）。
-            permissions.Invalidate();
+            transaction.InvalidatePermissionsAfterCommit();
         }
 
         return result;
@@ -283,11 +278,11 @@ public sealed class CreateRoleHandler(
 /// <summary>给角色授予一个菜单。</summary>
 /// <param name="roles">角色仓储。</param>
 /// <param name="clock">时钟。</param>
-/// <param name="permissions">权限缓存——授权变了，缓存必须失效。</param>
+/// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class GrantMenuToRoleHandler(
     IRoleRepository roles,
     IClock clock,
-    IPermissionCache permissions) : ICommandHandler<GrantMenuToRoleCommand>
+    IdentityCommandTransaction transaction) : ICommandHandler<GrantMenuToRoleCommand>
 {
     /// <inheritdoc />
     public async Task<Result> HandleAsync(
@@ -309,7 +304,7 @@ public sealed class GrantMenuToRoleHandler(
         {
             // **授权变了，缓存必须失效。** 而且要在命令成功之后、且在同一个用例里——
             // 把它留给调用方，就会出现"某条路径忘了失效"，而那正是参照仓库 10 小时窗口的成因。
-            permissions.Invalidate();
+            transaction.InvalidatePermissionsAfterCommit();
         }
 
         return result;
@@ -319,11 +314,11 @@ public sealed class GrantMenuToRoleHandler(
 /// <summary>注册 API 资源。</summary>
 /// <param name="resources">资源仓储。</param>
 /// <param name="ids">标识生成。</param>
-/// <param name="permissions">权限缓存——新增资源会改变所有拥有该菜单的人的有效权限。</param>
+/// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class CreateApiResourceHandler(
     IApiResourceRepository resources,
     IIdGenerator ids,
-    IPermissionCache permissions) : ICommandHandler<CreateApiResourceCommand, ApiResourceCreated>
+    IdentityCommandTransaction transaction) : ICommandHandler<CreateApiResourceCommand, ApiResourceCreated>
 {
     /// <inheritdoc />
     public async Task<Result<ApiResourceCreated>> HandleAsync(
@@ -351,7 +346,7 @@ public sealed class CreateApiResourceHandler(
 
         await resources.AddAsync(resource.Value, cancellationToken).ConfigureAwait(false);
 
-        permissions.Invalidate();
+        transaction.InvalidatePermissionsAfterCommit();
 
         return Result.Success(new ApiResourceCreated(
             resource.Value.Id.Value,
@@ -420,10 +415,10 @@ public sealed class CreateMenuHandler(
         // **树不存在就建一棵。** 刻意不要求"播种时记得先建树"：那样第一个建菜单的人
         // 会撞上一个只有他知道的错误——票据 67 的现象正是"`AddRoot` 从来没有被调用过"。
         var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+        var isNew = tree is null;
         if (tree is null)
         {
             tree = MenuTree.Create(new MenuTreeId(ids.NextId()));
-            await trees.AddAsync(tree, cancellationToken).ConfigureAwait(false);
         }
 
         var nodeId = new MenuId(ids.NextId());
@@ -431,6 +426,11 @@ public sealed class CreateMenuHandler(
         var added = command.ParentMenuId is { } parentId
             ? tree.AddChild(new MenuId(parentId), nodeId, title.Value, command.SortOrder)
             : tree.AddRoot(nodeId, title.Value, command.SortOrder);
+
+        if (isNew && added.IsSuccess)
+        {
+            await trees.AddAsync(tree, cancellationToken).ConfigureAwait(false);
+        }
 
         return added.IsFailure
             ? Result.Failure<MenuCreated>(added.Error)
@@ -532,6 +532,24 @@ public sealed class SeedRootAccountHandler(
 /// <summary>注册 Identity 的用例处理器。<b>显式注册，不做程序集扫描</b>（不变量 8）。</summary>
 public static class IdentityUseCaseServiceCollectionExtensions
 {
+    private static void AddCommand<TCommand, THandler>(IServiceCollection services)
+        where TCommand : ICommand
+        where THandler : class, ICommandHandler<TCommand>
+    {
+        services.AddScoped<THandler>();
+        services.AddScoped<ICommandHandler<TCommand>>(provider => new IdentityCommandHandler<TCommand>(
+            provider.GetRequiredService<THandler>(), provider.GetRequiredService<IdentityCommandTransaction>()));
+    }
+
+    private static void AddCommand<TCommand, TResult, THandler>(IServiceCollection services)
+        where TCommand : ICommand<TResult>
+        where THandler : class, ICommandHandler<TCommand, TResult>
+    {
+        services.AddScoped<THandler>();
+        services.AddScoped<ICommandHandler<TCommand, TResult>>(provider => new IdentityCommandHandler<TCommand, TResult>(
+            provider.GetRequiredService<THandler>(), provider.GetRequiredService<IdentityCommandTransaction>()));
+    }
+
     /// <summary>注册命令与查询处理器。</summary>
     /// <param name="services">服务集合。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
@@ -539,10 +557,12 @@ public static class IdentityUseCaseServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddScoped<ICommandHandler<CreateUserCommand, long>, CreateUserHandler>();
-        services.AddScoped<ICommandHandler<LoginCommand, LoginOutcome>, LoginHandler>();
-        services.AddScoped<ICommandHandler<RefreshTokenCommand, TokenPair>, RefreshTokenHandler>();
-        services.AddScoped<ICommandHandler<LogoutCommand>, LogoutHandler>();
+        AddCommand<CreateUserCommand, long, CreateUserHandler>(services);
+        AddCommand<LoginCommand, LoginOutcome, LoginHandler>(services);
+        AddCommand<RefreshTokenCommand, TokenPair, RefreshTokenHandler>(services);
+        AddCommand<LogoutCommand, LogoutHandler>(services);
+
+        services.AddScoped<IdentityCommandTransaction>();
 
         // 令牌签发与轮换。它不是"基础设施"——里面全是策略（轮换、重放检测、撤销整条链）。
         services.AddScoped<TokenIssuer>();
@@ -550,19 +570,19 @@ public static class IdentityUseCaseServiceCollectionExtensions
         // 会话版本：签发时读、过滤器比对。**Singleton**——它必须在整个进程里是同一份，
         // 否则"撤销"只对某个作用域生效。
         services.AddSingleton<ISessionVersionStore, InMemorySessionVersionStore>();
-        services.AddScoped<ICommandHandler<AssignRoleCommand>, AssignRoleHandler>();
-        services.AddScoped<ICommandHandler<CreateRoleCommand, long>, CreateRoleHandler>();
-        services.AddScoped<ICommandHandler<GrantMenuToRoleCommand>, GrantMenuToRoleHandler>();
-        services.AddScoped<ICommandHandler<CreateApiResourceCommand, ApiResourceCreated>, CreateApiResourceHandler>();
+        AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
+        AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
+        AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
+        AddCommand<CreateApiResourceCommand, ApiResourceCreated, CreateApiResourceHandler>(services);
 
         // 菜单这一环（票据 67）：建节点、读整棵树。
-        services.AddScoped<ICommandHandler<CreateMenuCommand, MenuCreated>, CreateMenuHandler>();
+        AddCommand<CreateMenuCommand, MenuCreated, CreateMenuHandler>(services);
         services.AddScoped<IQueryHandler<GetMenusQuery, IReadOnlyList<MenuView>>, GetMenusHandler>();
 
         // 根账号播种。它是**命令**而不是"启动时的一段内联代码"：
         // 于是它的幂等性、口令哈希、`isBuiltIn` 三件事都能被单独测到，
         // 而宿主那边只剩"读配置 + 发这条命令"。
-        services.AddScoped<ICommandHandler<SeedRootAccountCommand, bool>, SeedRootAccountHandler>();
+        AddCommand<SeedRootAccountCommand, bool, SeedRootAccountHandler>(services);
 
         services.AddScoped<IQueryHandler<GetUserPermissionsQuery, IReadOnlyList<string>>, GetUserPermissionsHandler>();
         services.AddScoped<IQueryHandler<AuthorizeQuery, AuthorizationOutcome>, AuthorizeHandler>();
