@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text.Json;
 using NexusStackNext.Gateway.Routing;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -142,8 +143,9 @@ public sealed class GatewayConfigurationTests
             using var failed = await client.PutAsJsonAsync(new Uri("/gateway/routes/probe", UriKind.Relative), update);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, failed.StatusCode);
             Assert.Equal("backend", await client.GetStringAsync(new Uri("/probe", UriKind.Relative)));
-            var unchanged = await client.GetFromJsonAsync<RouteDefinition>(new Uri("/gateway/routes/probe", UriKind.Relative));
-            Assert.Equal("/probe", unchanged?.Path);
+            using var fetched = await client.GetAsync(new Uri("/gateway/routes/probe", UriKind.Relative));
+            var unchanged = await fetched.Content.ReadApiDataAsync();
+            Assert.Equal("/probe", unchanged.GetProperty("path").GetString());
         }
         finally
         {
@@ -205,7 +207,7 @@ public sealed class GatewayConfigurationTests
         using var rejected = await client.PutAsJsonAsync(new Uri("/gateway/routes/probe", UriKind.Relative), candidate);
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
         using var accepted = await client.GetAsync(new Uri("/gateway/routes/probe", UriKind.Relative));
-        var route = await accepted.Content.ReadFromJsonAsync<RouteDefinition>();
+        var route = (await accepted.Content.ReadApiDataAsync()).Deserialize<RouteDefinition>(JsonSerializerOptions.Web);
         Assert.NotNull(route);
         Assert.Equal("/probe", route.Path);
         Assert.Null(route.RateLimitPolicy);

@@ -1,6 +1,7 @@
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Web;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
@@ -53,7 +54,7 @@ public static class AuditingModule
         // 都能注入审计记录）。所以这两个端点的可达面只有"内部 / 运维通道"。
         // 显式写 `AllowAnonymous()` 而不是留空：留空的端点在默认拒绝的模块里是 403，
         // 在别的模块里是放行——**两种默认都不该靠"没写"来表达**。
-        endpoints.MapGet("/api/auditing", (IClock clock) => Results.Ok(new
+        endpoints.MapGet("/api/auditing", (ApiResponses responses, IClock clock) => responses.Ok(new
         {
             context = "auditing",
             responsibility = "谁在什么时候改了什么",
@@ -68,7 +69,7 @@ public static class AuditingModule
         // **生产里事件从消息总线来，不是从这个端点来。** 它存在是因为消息基座需要一个
         // 无需 broker 就能被端到端跑起来的入口——而"消费端幂等"这条保证只有在真的收到
         // 第二条消息时才验证得了。总线接入之后，这个端点的定位应当重新评估。
-        endpoints.MapPost("/api/auditing/entries", async (
+        endpoints.MapPost("/api/auditing/entries", async (ApiResponses responses,
             IngestAuditRequest request,
             AuditIngestion ingestion,
             CancellationToken cancellationToken) =>
@@ -89,15 +90,15 @@ public static class AuditingModule
                 return Results.Problem(
                     title: result.Error.Message,
                     statusCode: StatusCodes.Status400BadRequest,
-                    extensions: new Dictionary<string, object?> { ["code"] = result.Error.Code });
+                    extensions: new Dictionary<string, object?> { ["errorCode"] = result.Error.Code });
             }
 
             // 202 = 记下了；200 + Duplicate = 这条我收过，**没有**再记一次。
             // 两者的区别就是这个端点存在的意义：它让"消费端幂等"成为可观察的事实。
             return result.Value == IngestionOutcome.Accepted
-                ? Results.Json(new { outcome = "Accepted" }, statusCode: StatusCodes.Status202Accepted)
-                : Results.Ok(new { outcome = "Duplicate" });
-        }).AllowAnonymous();
+                ? responses.Accepted(new AuditIngestionResponse("Accepted"))
+                : responses.Ok(new AuditIngestionResponse("Duplicate"));
+        }).Produces<ApiResponse<AuditIngestionResponse>>(202).Produces<ApiResponse<AuditIngestionResponse>>().ProducesApiErrors(400, 500).AllowAnonymous();
 
         return endpoints;
     }
@@ -119,3 +120,5 @@ internal sealed record IngestAuditRequest(
     string SubjectId,
     string? ActorId,
     string? Detail);
+
+internal sealed record AuditIngestionResponse(string Outcome);

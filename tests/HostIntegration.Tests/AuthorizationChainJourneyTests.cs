@@ -50,13 +50,13 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
 
-        var menu = await created.Content.ReadFromJsonAsync<JsonElement>();
+        var menu = await created.Content.ReadApiDataAsync();
         var menuId = menu.GetProperty("menuId").GetInt64();
         Assert.True(menuId > 0, "建出来的菜单没有标识。");
 
         // 1b. **跨请求**读回来：内存适配器如果不是单例，这一步会看到一棵空树。
         var listed = await rootClient.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
-        Assert.Equal(1, listed.GetProperty("count").GetInt32());
+        Assert.Equal(1, listed.GetProperty("data").GetProperty("count").GetInt32());
 
         // ── 2. 建 api-resource 并挂到那个菜单上。这一步是"权限键从哪来"的答案。
         using var resourceResponse = await rootClient.PostAsJsonAsync(
@@ -65,7 +65,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.Created, resourceResponse.StatusCode);
 
-        var resource = await resourceResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var resource = await resourceResponse.Content.ReadApiDataAsync();
         var permissionKey = resource.GetProperty("permissionKey").GetString();
         Assert.False(string.IsNullOrWhiteSpace(permissionKey), "api-resource 没有产生权限键。");
 
@@ -76,7 +76,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.Created, roleResponse.StatusCode);
 
-        var role = await roleResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var role = await roleResponse.Content.ReadApiDataAsync();
         var roleId = role.GetProperty("roleId").GetInt64();
 
         using var grantResponse = await rootClient.PostAsync(
@@ -92,7 +92,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
 
-        var user = await registered.Content.ReadFromJsonAsync<JsonElement>();
+        var user = await registered.Content.ReadApiDataAsync();
         var userId = user.GetProperty("userId").GetInt64();
 
         var userToken = await LoginAsync(userClient, "operator", "operator-password-1234");
@@ -119,7 +119,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.OK, afterGrant.StatusCode);
 
-        var permissions = await afterGrant.Content.ReadFromJsonAsync<JsonElement>();
+        var permissions = await afterGrant.Content.ReadApiDataAsync();
         var keys = permissions.GetProperty("keys").EnumerateArray().Select(static key => key.GetString()).ToList();
 
         Assert.Contains(permissionKey, keys);
@@ -164,7 +164,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var payload = await response.Content.ReadApiDataAsync();
         var token = payload.GetProperty("accessToken").GetString();
 
         Assert.False(string.IsNullOrWhiteSpace(token), "登录没有返回访问令牌。");

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
 
 namespace NexusStackNext.Gateway;
@@ -17,12 +18,13 @@ public static class GatewayRouteAdmin
     public static WebApplication MapGatewayRouteAdmin(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var admin = app.MapGroup("/gateway/routes").RequireAuthorization(RootOnlyPolicy);
-        admin.MapGet("/{routeId}", (string routeId, GatewayRouteConfiguration configuration) =>
-            FindRoute(configuration.Current, routeId) is { } route ? Results.Ok(route) : Failure(MissingRoute(routeId)));
-        admin.MapPost("/", AddRouteAsync);
-        admin.MapPut("/{routeId}", UpdateRouteAsync);
-        admin.MapDelete("/{routeId}", DeleteRouteAsync);
+        var admin = app.MapGroup("/gateway/routes").RequireAuthorization(RootOnlyPolicy).ProducesApiErrors(400, 401, 403, 500);
+        admin.MapGet("/{routeId}", (string routeId, GatewayRouteConfiguration configuration, ApiResponses responses) =>
+            FindRoute(configuration.Current, routeId) is { } route ? responses.Ok(route) : Failure(MissingRoute(routeId)))
+            .Produces<ApiResponse<RouteDefinition>>().ProducesApiErrors(404);
+        admin.MapPost("/", AddRouteAsync).Produces(204).ProducesApiErrors(409, 503);
+        admin.MapPut("/{routeId}", UpdateRouteAsync).Produces(204).ProducesApiErrors(404, 503);
+        admin.MapDelete("/{routeId}", DeleteRouteAsync).Produces(204).ProducesApiErrors(404, 503);
         return app;
     }
 
@@ -73,7 +75,8 @@ public static class GatewayRouteAdmin
             "gateway.route.missing" => StatusCodes.Status404NotFound,
             "gateway.route_table.write_failed" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
-        });
+        },
+        extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 /// <summary>网关自己的授权策略。</summary>

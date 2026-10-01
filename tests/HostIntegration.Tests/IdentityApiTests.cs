@@ -122,7 +122,7 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
         using var login = await client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var tokens = await login.Content.ReadFromJsonAsync<JsonElement>();
+        var tokens = await login.Content.ReadApiDataAsync();
         var access = tokens.GetProperty("accessToken").GetString();
         var refresh = tokens.GetProperty("refreshToken").GetString();
 
@@ -139,7 +139,7 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 
         Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
 
-        var second = await refreshed.Content.ReadFromJsonAsync<JsonElement>();
+        var second = await refreshed.Content.ReadApiDataAsync();
         Assert.NotEqual(refresh, second.GetProperty("refreshToken").GetString());
 
         // **同一个刷新令牌用第二次必须失败**——这条在 HTTP 层也要成立。
@@ -274,7 +274,7 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
 
-        var body = await login.Content.ReadFromJsonAsync<JsonElement>();
+        var body = await login.Content.ReadApiDataAsync();
         return body.GetProperty("accessToken").GetString()!;
     }
 

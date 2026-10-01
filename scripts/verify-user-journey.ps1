@@ -54,7 +54,13 @@ function Call([string]$method, [string]$url, [string]$body, [string]$token) {
     $raw = & curl.exe @args 2>&1 | Out-String
     $status = if ($raw -match '__STATUS__(\d+)') { $Matches[1] } else { '???' }
     $payload = ($raw -replace "`n__STATUS__\d+\s*$", '').Trim()
-    return @{ Status = $status; Body = $payload }
+    $data = $null
+    if ($status -in @('200', '201', '202')) {
+        $envelope = $payload | ConvertFrom-Json
+        if ($envelope.success -ne $true) { throw '成功响应缺少统一信封。' }
+        $data = $envelope.data
+    }
+    return @{ Status = $status; Body = $payload; Data = $data }
 }
 
 try {
@@ -78,9 +84,8 @@ try {
     $results.Add("   直连后端登录        → $($direct.Status)（对照）")
 
     # ---------- 3. 带着令牌经网关访问受保护端点 ----------
-    $token = $null
-    if ($direct.Body -match '"accessToken"\s*:\s*"([^"]+)"') { $token = $Matches[1] }
-    elseif ($login.Body -match '"accessToken"\s*:\s*"([^"]+)"') { $token = $Matches[1] }
+    $token = $login.Data.accessToken
+    if (-not $token) { $token = $direct.Data.accessToken }
 
     if ($token) {
         $withToken = Call 'GET' 'http://127.0.0.1:5190/api/identity/users/1/permissions' $null $token
@@ -108,7 +113,8 @@ try {
         $uploadStatus = if ($uploadRaw -match '__STATUS__(\d+)') { $Matches[1] } else { '???' }
         $results.Add("5a. 经网关上传文件      → $uploadStatus")
 
-        $fileId = if ($uploadRaw -match '"fileId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+        $uploadedEnvelope = (($uploadRaw -replace "`n__STATUS__\d+\s*$", '').Trim()) | ConvertFrom-Json
+        $fileId = if ($uploadedEnvelope.success -eq $true) { $uploadedEnvelope.data.fileId } else { $null }
 
         if ($fileId) {
             $meta = Call 'GET' "http://127.0.0.1:5190/api/files/$fileId/metadata" $null $token
@@ -141,25 +147,25 @@ try {
         #
         # 顺序刻意是"先被拒、再授权、再调通"：少了中间那次被拒，
         # "角色变了、权限缓存失效了吗"就验不出来（票据 67 的第 4 处断链）。
-        $userId = if ($register.Body -match '"userId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+        $userId = $register.Data.userId
 
         $rootLogin = Call 'POST' 'http://127.0.0.1:5190/api/identity/login' `
             ("{""UserName"":""$($env:Identity__Root__UserName)"",""Password"":""$($env:Identity__Root__Password)""}") $null
         $results.Add("6a. 根账号经网关登录    → $($rootLogin.Status)（期望 200，靠启动播种）")
 
-        $rootToken = if ($rootLogin.Body -match '"accessToken"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+        $rootToken = $rootLogin.Data.accessToken
 
         $chainStatus = '跳过（拿不到根账号令牌或用户标识）'
 
         if ($rootToken -and $userId) {
             $menu = Call 'POST' 'http://127.0.0.1:5190/api/identity/menus' `
                 '{"Title":"后台导航","SortOrder":1,"ParentMenuId":null}' $rootToken
-            $menuId = if ($menu.Body -match '"menuId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+            $menuId = $menu.Data.menuId
             $results.Add("6b. 建菜单（根账号）    → $($menu.Status)（期望 201）menuId=$menuId")
 
             $role = Call 'POST' 'http://127.0.0.1:5190/api/identity/roles' `
                 '{"Code":"journey-back-office","Name":"旅程后台"}' $rootToken
-            $roleId = if ($role.Body -match '"roleId"\s*:\s*(\d+)') { $Matches[1] } else { $null }
+            $roleId = $role.Data.roleId
             $results.Add("6c. 建角色（根账号）    → $($role.Status)（期望 201）roleId=$roleId")
 
             if ($menuId -and $roleId) {

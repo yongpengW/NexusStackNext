@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Hosting;
@@ -116,7 +117,7 @@ public sealed class GatewayRouteAdminTests : IClassFixture<GatewayRouteAdminApp>
         {
             Assert.Equal(HttpStatusCode.OK, fetched.StatusCode);
 
-            var route = await fetched.Content.ReadFromJsonAsync<RouteDefinition>();
+            var route = (await fetched.Content.ReadApiDataAsync()).Deserialize<RouteDefinition>(JsonSerializerOptions.Web);
             Assert.NotNull(route);
             Assert.Equal(routeId, route.RouteId);
             Assert.Single(route.Transforms);
