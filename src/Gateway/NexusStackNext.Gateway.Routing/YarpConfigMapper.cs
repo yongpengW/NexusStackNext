@@ -1,5 +1,7 @@
+using System.Globalization;
 using Yarp.ReverseProxy.Configuration;
 using Yarp.ReverseProxy.Forwarder;
+using Yarp.ReverseProxy.Health;
 
 namespace NexusStackNext.Gateway.Routing;
 
@@ -51,6 +53,7 @@ public static class YarpConfigMapper
         nameof(ClusterDefinition.ClusterId),
         nameof(ClusterDefinition.Destinations),
         nameof(ClusterDefinition.RequestTimeout),
+        nameof(ClusterDefinition.HealthCheck),
     };
 
     /// <summary>刻意不映射的 <see cref="ClusterDefinition"/> 属性。</summary>
@@ -108,10 +111,28 @@ public static class YarpConfigMapper
         Destinations = cluster.Destinations.ToDictionary(
             static destination => destination.Name,
             static destination => new DestinationConfig { Address = destination.Address },
-            StringComparer.Ordinal),
+            StringComparer.OrdinalIgnoreCase),
 
         HttpRequest = cluster.RequestTimeout is { } timeout
             ? new ForwarderRequestConfig { ActivityTimeout = timeout }
             : null,
+
+        HealthCheck = cluster.HealthCheck is { } health ? new HealthCheckConfig
+        {
+            AvailableDestinationsPolicy = HealthCheckConstants.AvailableDestinations.HealthyAndUnknown,
+            Active = new ActiveHealthCheckConfig
+            {
+                Enabled = true,
+                Policy = HealthCheckConstants.ActivePolicy.ConsecutiveFailures,
+                Path = health.Path,
+                Interval = health.Interval,
+                Timeout = health.Timeout,
+            },
+        } : null,
+
+        Metadata = cluster.HealthCheck is { } settings ? new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [ConsecutiveFailuresHealthPolicyOptions.ThresholdMetadataName] = settings.FailureThreshold.ToString(CultureInfo.InvariantCulture),
+        } : null,
     };
 }

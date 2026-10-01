@@ -139,7 +139,7 @@ dotnet test  NexusStackNext.slnx     # 全部测试，含架构不变量
 | 端点 | 平台宿主（5191） | 网关（5190） |
 |---|---|---|
 | `/health`、`/health/live` | 进程还能应答（**不查依赖**） | 同左 |
-| `/health/ready` | 依赖可用（**查**） | 同左，并查 cluster 是否可达 |
+| `/health/ready` | 依赖可用（**查**） | 每个 cluster 至少一个目标就绪 |
 | `/openapi/v1.json` | 它自己的文档 | **聚合文档**：网关自己 + 每个后端 |
 | `/swagger` | API 参考界面（**仅 Development**） | API 参考界面（**总是开**） |
 
@@ -150,13 +150,18 @@ dotnet test  NexusStackNext.slnx     # 全部测试，含架构不变量
 后端挂掉时聚合文档**仍然可服务**（少了那个来源的接口），而 `complete` 会变成 `false`——
 **"文档少了几条"必须看得见**，否则它和"接口本来就不存在"分不开。
 
+网关会通过下游 `/health/ready` 摘除故障目标并自动恢复；所有目标已被摘除时返回 503。
+默认限流按调用方与路由隔离，429 附带 `Retry-After`。路由管理的并发写入在进程内串行处理，
+通过校验并保存后热更新；查询返回进程接受的配置，直接编辑文件需重启。
+配置参数、异步应用语义和单实例边界见 [网关决定](docs/adr/0003-yarp-edge.md#故障处理与配置发布2026-10-01)。
 
 ```powershell
 dotnet run --project src/Hosts/NexusStackNext.PlatformHost          --urls http://127.0.0.1:5191
 dotnet run --project src/Gateway/NexusStackNext.Gateway               --urls http://127.0.0.1:5190
+```
 
 **在 Visual Studio 里跑**：需要**两个进程**——平台宿主是后端，网关是边缘。
-只启动网关得到的是一个没有后端的边缘：`/health/ready` 会报 503、`/api/*` 会报 502。
+只启动网关时 `/health/ready` 会报 503；业务请求仍会先受认证保护，允许转发的请求在目标被摘除后返回 503，探测收敛前可能是 502。
 
 `launchSettings.json` 不能声明"哪些项目一起启动"（那是 VS 的解决方案级设置，存在 `.vs/` 里，不进仓库），
 所以需要手动设一次：
@@ -165,7 +170,6 @@ dotnet run --project src/Gateway/NexusStackNext.Gateway               --urls htt
 > `NexusStackNext.PlatformHost` 与 `NexusStackNext.Gateway` 都设为「启动」
 
 F5 之后浏览器会停在 `/swagger`——那是**网关上的聚合文档**，含两个宿主与五个上下文的全部接口。
-```
 
 边缘的路由表可以查询，不必去读配置文件：
 

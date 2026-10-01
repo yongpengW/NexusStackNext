@@ -1,7 +1,8 @@
+using System.Globalization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
 using NexusStackNext.BuildingBlocks.Application;
@@ -10,6 +11,8 @@ using NexusStackNext.Composition;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
 using Yarp.ReverseProxy.Configuration;
+using Yarp.ReverseProxy.Configuration.RouteValidators;
+using Yarp.ReverseProxy.Model;
 
 // 网关宿主。不变量 8：这个服务由什么组成，一眼看得出来。
 //
@@ -47,18 +50,11 @@ var (routes, clusters) = YarpConfigMapper.ToYarp(routeTable.Value);
 
 // 路由表引用的限流策略必须都注册过。引用一个不存在的策略名，后果是
 // "以为限流开了、其实没开"——那正是参照仓库式的静默失效。这里让它在**启动时**就失败。
-var unknownRateLimitPolicies = routeTable.Value.Routes
-    .Select(static route => route.RateLimitPolicy)
-    .Where(static policy => !string.IsNullOrWhiteSpace(policy))
-    .Distinct(StringComparer.Ordinal)
-    .Where(policy => !string.Equals(policy, YarpConfigMapper.DefaultRateLimitPolicy, StringComparison.Ordinal))
-    .ToList();
+var policies = GatewayRouteConfiguration.ValidatePolicies(routeTable.Value);
 
-if (unknownRateLimitPolicies.Count > 0)
+if (policies.IsFailure)
 {
-    throw new InvalidOperationException(
-        $"路由表引用了未注册的限流策略：{string.Join("、", unknownRateLimitPolicies)}。"
-        + $"当前已注册：{YarpConfigMapper.DefaultRateLimitPolicy}。");
+    throw new InvalidOperationException(policies.Error.Message);
 }
 
 var rateLimitPermitLimit = builder.Configuration.GetValue("Gateway:RateLimit:PermitLimit", 100);
@@ -147,26 +143,43 @@ builder.Services.AddAuthorization(options =>
         policy => policy.RequireAuthenticatedUser());
 });
 
-// **用 `InMemoryConfigProvider` 而不是 `LoadFromMemory`。**
-//
-// 后者在启动时把配置拷进去，之后改不了——于是路由管理 API 保存成功、流量照旧走老规则。
-// 前者可以被 `RouteTableReloader` 更新，管理 API 才是真的。
+// 显式注册同一份发布器，路由修改统一经 GatewayRouteConfiguration 校验、保存后通知 YARP。
 var proxyConfigProvider = new InMemoryConfigProvider(routes, clusters);
 builder.Services.AddSingleton(proxyConfigProvider);
 builder.Services.AddSingleton<IProxyConfigProvider>(proxyConfigProvider);
-builder.Services.AddSingleton<RouteTableReloader>();
+builder.Services.AddSingleton<GatewayRouteConfiguration>();
 builder.Services.AddReverseProxy();
+builder.Services.AddSingleton<IRouteValidator, RouteParameterPolicyValidator>();
 
 // 限流。参照仓库的网关是"裸转发"——没有限流、没有关联 ID、没有重试（review/03）。
 // 队列长度设为 0：超限直接 429，而不是把请求排起来拖长尾延迟。
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.AddFixedWindowLimiter(YarpConfigMapper.DefaultRateLimitPolicy, limiter =>
+    options.OnRejected = (context, _) =>
     {
-        limiter.PermitLimit = rateLimitPermitLimit;
-        limiter.Window = TimeSpan.FromSeconds(rateLimitWindowSeconds);
-        limiter.QueueLimit = 0;
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                Math.Ceiling(retryAfter.TotalSeconds).ToString(CultureInfo.InvariantCulture);
+        }
+
+        return ValueTask.CompletedTask;
+    };
+    options.AddPolicy(YarpConfigMapper.DefaultRateLimitPolicy, context =>
+    {
+        var routeId = context.GetEndpoint()?.Metadata.GetMetadata<RouteModel>()?.Config.RouteId;
+        var subject = context.User.FindFirst("sub")?.Value;
+        var authenticated = context.User.Identity?.IsAuthenticated == true && !string.IsNullOrWhiteSpace(subject);
+        // 只用验签后的身份；匿名者使用连接 IP，不读取用户可伪造的转发头。
+        var caller = authenticated ? subject : context.Connection.RemoteIpAddress?.MapToIPv6().ToString();
+        var issuer = authenticated ? context.User.FindFirst("iss")?.Value : null;
+        return RateLimitPartition.GetFixedWindowLimiter((routeId, authenticated, issuer, caller), _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = rateLimitPermitLimit,
+            Window = TimeSpan.FromSeconds(rateLimitWindowSeconds),
+            QueueLimit = 0,
+        });
     });
 });
 
@@ -179,9 +192,9 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseCorrelationId();
+app.UseAuthentication();
 app.UseRateLimiter();
 app.UseRequestTimeouts();
-app.UseAuthentication();
 app.UseAuthorization();
 
 // 网关自己的文档。**放在一个内部路径上**：对外提供的是聚合文档，见下。
@@ -240,25 +253,13 @@ app.MapHealthChecks("/health/ready");
 // 给它开一条边缘路由等于让任何人都能注入审计记录。
 // "是一个服务"与"在边缘上可达"是两件事——参照仓库从没把这条写下来过。
 //
-// **它每次读存储，不读启动时的快照。**
-// 第一版用的是构造时捕获的 `routeTable`——于是管理 API 改完路由之后，
-// 这个"自述"端点还在报旧表。那正是它要防的那种失效：接口说成功、事实没变，
-// 而且**看自述端点也看不出来**（它跟着一起说谎）。
-app.MapGet("/gateway/routes", async (IRouteTableStore store, CancellationToken cancellationToken) =>
+// 返回进程已接受的配置。直接编辑磁盘需要重启，不能把未加载的文件冒充运行配置。
+app.MapGet("/gateway/routes", (GatewayRouteConfiguration configuration) =>
 {
-    var loaded = await store.LoadAsync(cancellationToken).ConfigureAwait(false);
-
-    if (loaded.IsFailure)
-    {
-        return Results.Problem(
-            statusCode: StatusCodes.Status503ServiceUnavailable,
-            title: loaded.Error.Message);
-    }
-
     return Results.Ok(new
     {
         routeTablePath,
-        routes = loaded.Value.Routes.Select(static route => new
+        routes = configuration.Current.Routes.Select(static route => new
         {
             route.RouteId,
             route.ClusterId,
