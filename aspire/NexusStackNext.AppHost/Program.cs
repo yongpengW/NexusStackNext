@@ -80,7 +80,7 @@ if (missing.Count > 0)
 // "编排 5 个服务 + 网关"已经过时。
 var platform = builder
     .AddProject<Projects.NexusStackNext_PlatformHost>("platform")
-    .WithEnvironment("ConnectionStrings__PostgreSQL", postgres)
+    .WithEnvironment("ConnectionStrings__Identity", postgres)
     .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
     // 这里**不再**注入 `Redis__Configuration`：本仓没有任何东西读它（见上面的说明）。
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。

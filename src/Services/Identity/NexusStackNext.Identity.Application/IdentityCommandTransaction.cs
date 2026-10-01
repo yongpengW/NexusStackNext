@@ -1,5 +1,4 @@
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Domain;
 
@@ -11,25 +10,13 @@ public interface IIdentityUnitOfWork : IUnitOfWork;
 /// <summary>Identity 的命令提交边界。每个请求作用域内只有一份。</summary>
 /// <param name="unitOfWork">Identity 的存储事务。</param>
 /// <param name="permissions">提交后失效的权限缓存。</param>
-/// <param name="sessions">提交后更新的本进程会话版本。</param>
 public sealed class IdentityCommandTransaction(
     IIdentityUnitOfWork unitOfWork,
-    IPermissionCache permissions,
-    ISessionVersionStore sessions)
+    IPermissionCache permissions)
 {
     private Error? _persistedRejection;
     private bool _executing;
     private bool _invalidatePermissions;
-    private long? _revokedUser;
-
-    /// <summary>持久化撤销成功后再更新本进程会话版本。</summary>
-    /// <param name="userId">被撤销会话的用户。</param>
-    public void RevokeSessionAfterCommit(long userId)
-    {
-        EnsureExecuting();
-        _revokedUser = userId;
-    }
-
     /// <summary>登记权限变化；只有本次命令提交成功后才让缓存失效。</summary>
     public void InvalidatePermissionsAfterCommit()
     {
@@ -64,7 +51,6 @@ public sealed class IdentityCommandTransaction(
             {
                 _persistedRejection = null;
                 _invalidatePermissions = false;
-                _revokedUser = null;
                 var result = await operation(token).ConfigureAwait(false);
                 if (ShouldCommit(result))
                 {
@@ -79,18 +65,12 @@ public sealed class IdentityCommandTransaction(
                 permissions.Invalidate();
             }
 
-            if (ShouldCommit(committed) && _revokedUser is { } userId)
-            {
-                sessions.Bump(userId.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            }
-
             return committed;
         }
         finally
         {
             _persistedRejection = null;
             _invalidatePermissions = false;
-            _revokedUser = null;
             _executing = false;
         }
     }

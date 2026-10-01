@@ -30,13 +30,44 @@ public static class IdentityModule
     /// <summary>注册本模块需要的服务。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="configuration">配置——JWT 签名密钥从它读，**不进仓库**（ADR-0014）。</param>
+    /// <param name="environment">运行环境；内存存储只允许开发与测试。</param>
     /// <returns>同一个服务集合，便于串联。</returns>
-    public static IServiceCollection AddIdentityModule(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddIdentityModule(
+        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
 
-        services.AddIdentityInMemoryStorage();
+        ArgumentNullException.ThrowIfNull(environment);
+        var provider = configuration["Identity:Storage:Provider"];
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            provider = "Postgres";
+        }
+        if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing"))
+            {
+                throw new InvalidOperationException("Identity:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
+            }
+
+            services.AddIdentityInMemoryStorage();
+        }
+        else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var connection = configuration.GetConnectionString("Identity");
+            if (string.IsNullOrWhiteSpace(connection))
+            {
+                throw new InvalidOperationException("必须配置 ConnectionStrings:Identity；开发测试可显式选择 Identity:Storage:Provider=Memory。");
+            }
+
+            services.AddIdentityEntityFrameworkStorage(connection);
+            services.AddIdentityDatabaseChecks();
+        }
+        else
+        {
+            throw new InvalidOperationException("Identity:Storage:Provider 仅支持 Postgres / Memory。");
+        }
 
         // 签名密钥的取值顺序由 `AddNexusStackAgileConfig` 定：环境变量 > 配置中心 > appsettings。
         // **它绝不该出现在仓库里**——那些文件是模板的一部分。

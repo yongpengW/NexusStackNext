@@ -181,8 +181,12 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 - `/gateway/openapi/sources` —— 各来源是否取到、各多少条路径
 - `/swagger` —— API 参考界面（**总是开**：它就在边缘上，这正是要暴露的地方）
 
-`ready` 只在**真正有依赖**的地方有区别：网关查它的 cluster 是否可达，Files 模块查存储是否可写可删。
-其余四个模块的存储是内存适配器，所以对它们而言 `ready == live` 是事实，不是偷懒。
+`ready` 检查真实依赖：网关查 cluster，Identity 的 PostgreSQL 模式查数据库，Files 查存储可写可删。
+Platform / Scheduling / Auditing 当前使用内存适配器。
+
+Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/identity-persistence.md`。
+普通宿主启动不迁移，未迁移或数据库不可用会退出；无库演示须显式选择开发/测试 Memory 模式。
+Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，仍按脚本串行运行。
 
 **注意 Files 的两种存储故障走的是不同路径**：启动时路径不可创建 → **进程直接崩**（快速失败，就绪检查根本来不及报）；
 运行期存储掉线 → **就绪检查报 503**。两者互补，不是重复。

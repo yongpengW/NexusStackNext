@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Identity.Infrastructure.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(IdentityDbContext))]
-    partial class IdentityDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261001151112_PersistUserSessionVersion")]
+    partial class PersistUserSessionVersion
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -187,9 +190,6 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
                     b.Property<string>("RevokedReason")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
-
-                    b.Property<long>("SessionVersion")
-                        .HasColumnType("bigint");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()

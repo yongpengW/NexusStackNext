@@ -75,6 +75,16 @@ public sealed class User : AggregateRoot<UserId>
     /// <summary>是否内置账号（平台的根管理员）。</summary>
     public bool IsBuiltIn { get; }
 
+    /// <summary>会话撤销版本；旧版本的访问凭据不再有效。</summary>
+    public long SessionVersion { get; private set; }
+
+    /// <summary>撤销此前签发的会话，改变聚合的可观察安全状态。</summary>
+    public void RevokeSessions()
+    {
+        SessionVersion = checked(SessionVersion + 1);
+        BumpVersion();
+    }
+
     /// <summary>连续登录失败次数。</summary>
     public int FailedLoginCount { get; private set; }
 

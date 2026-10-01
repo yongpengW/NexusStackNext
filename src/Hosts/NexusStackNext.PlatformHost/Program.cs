@@ -15,6 +15,12 @@ using NexusStackNext.Platform.Endpoints;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
 
+if (args is ["migrate-identity"])
+{
+    Environment.ExitCode = await IdentityDatabaseCommand.RunAsync();
+    return;
+}
+
 // 平台能力的**唯一宿主**。不变量 8：这个进程由什么组成，一眼看得出来——
 // 下面五行就是它的全部内容，没有 InitApplication(moduleKey)，也没有"我是哪个服务"的运行时枚举。
 //
@@ -55,7 +61,7 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
 }
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。
-builder.Services.AddIdentityModule(builder.Configuration);
+builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddPlatformModule();
 builder.Services.AddSchedulingModule();
 builder.Services.AddAuditingModule();
@@ -133,8 +139,8 @@ if (app.Environment.IsDevelopment())
 }
 
 // 存活 = 进程还能应答 HTTP；就绪 = 依赖可用。
-// 目前只有 Files 登记了真实检查（存储可写可删）；其余四个没有外部依赖，
-// 所以对它们而言 ready == live 是事实，不是偷懒。
+// Identity 的 PostgreSQL 模式检查数据库，Files 检查存储可写可删。
+// 其余模块当前使用内存适配器，没有外部存储依赖。
 app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/ready");

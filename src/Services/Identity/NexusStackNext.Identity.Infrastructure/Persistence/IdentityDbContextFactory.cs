@@ -13,7 +13,8 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence;
 ///
 /// <para><b>连接串是占位的，这不是偷懒。</b><c>migrations add</c> 只读模型、
 /// <c>migrations script</c> 只读模型，两者都不碰数据库；<c>database update</c> 才需要真连接串，
-/// 而那时应当由部署流程显式传入（<c>--connection</c>），不该从一个环境变量里猜。</para>
+/// 本仓部署使用宿主的 <c>migrate-identity</c> 命令，从明确的环境变量读取连接配置，
+/// 不把凭据放入命令参数；本工厂仅用于生成迁移与 SQL。</para>
 /// </summary>
 internal sealed class IdentityDbContextFactory : IDesignTimeDbContextFactory<IdentityDbContext>
 {

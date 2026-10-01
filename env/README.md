@@ -79,6 +79,12 @@ OptionsValidationException: Jwt:SigningKey 至少需要 32 字节。请在配置
 | `Jwt__SigningKey` | `Jwt:SigningKey` |
 | `Identity__Root__UserName` | `Identity:Root:UserName` |
 | `Identity__Root__Password` | `Identity:Root:Password` |
+| `ConnectionStrings__Identity` | `ConnectionStrings:Identity`（默认必填） |
+| `Identity__Storage__Provider` | `Identity:Storage:Provider`（默认 Postgres；开发测试可显式用 Memory） |
+
+首次启动或升级 Identity：`pwsh -File scripts/migrate-identity.ps1`。
+命令从私有 `env/platform.dev` 读取连接配置；也接受部署环境注入，不输出连接串。
+迁移与运行权限、开发演示和重启验证见 [Identity 持久化运行](../docs/identity-persistence.md)。
 
 ### 根账号：`Identity__Root__*` 是**引导用的**，配了就会播种
 

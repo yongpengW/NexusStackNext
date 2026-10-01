@@ -1,0 +1,35 @@
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+
+namespace NexusStackNext.Identity.Infrastructure.Persistence;
+
+/// <summary>HTTP 开始服务前检查 Identity 数据库；普通启动不执行迁移。</summary>
+internal sealed class IdentityDatabaseStartupCheck(IServiceScopeFactory scopes) : IHostedService
+{
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var context = scope.ServiceProvider.GetRequiredService<IdentityDbContext>();
+            var pending = await context.Database.GetPendingMigrationsAsync(timeout.Token).ConfigureAwait(false);
+            if (pending.Any())
+            {
+                throw new InvalidOperationException("Identity 数据库需要迁移；先执行 migrate-identity 命令。");
+            }
+
+            _ = await context.Users.AnyAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (error is DbException or OperationCanceledException or ArgumentException)
+        {
+            // 保持启动日志不含连接串或数据库返回的敏感细节。
+            throw new InvalidOperationException("Identity 数据库不可用；检查 ConnectionStrings:Identity 与数据库权限。");
+        }
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+}
