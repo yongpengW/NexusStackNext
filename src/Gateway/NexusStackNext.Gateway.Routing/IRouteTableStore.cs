@@ -12,7 +12,7 @@ namespace NexusStackNext.Gateway.Routing;
 /// </para>
 /// <para>
 /// 端口把"存哪儿"留成可替换的决定（单机文件 / 配置中心 / 数据库），
-/// 而"不能写一半、不能各存各的"是契约的一部分。
+/// 文件适配器保证完整文档写入；共享存储并不自动提供多写者协调，后者需要另行定义版本契约。
 /// </para>
 /// </summary>
 public interface IRouteTableStore

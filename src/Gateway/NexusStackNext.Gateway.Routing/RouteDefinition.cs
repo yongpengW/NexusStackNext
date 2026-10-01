@@ -5,6 +5,22 @@ namespace NexusStackNext.Gateway.Routing;
 /// <param name="Address">绝对地址，形如 <c>http://identity:8080</c>。</param>
 public sealed record DestinationDefinition(string Name, string Address);
 
+/// <summary>目标就绪探测。失败达到阈值后摘除，首次成功后恢复。</summary>
+public sealed record DestinationHealthCheck
+{
+    /// <summary>目标的就绪端点路径。</summary>
+    public string Path { get; init; } = "/health/ready";
+
+    /// <summary>探测间隔。</summary>
+    public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>单次探测超时。</summary>
+    public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>连续失败多少次后摘除。</summary>
+    public int FailureThreshold { get; init; } = 2;
+}
+
 /// <summary>一组上游目标——通常对应一个后端服务。</summary>
 public sealed record ClusterDefinition
 {
@@ -16,6 +32,9 @@ public sealed record ClusterDefinition
 
     /// <summary>该集群的请求超时。</summary>
     public TimeSpan? RequestTimeout { get; init; }
+
+    /// <summary>默认探测就绪端点；显式设为 null 可关闭不支持探测的外部集群。</summary>
+    public DestinationHealthCheck? HealthCheck { get; init; } = new();
 }
 
 /// <summary>

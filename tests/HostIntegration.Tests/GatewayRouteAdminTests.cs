@@ -92,14 +92,14 @@ public sealed class GatewayRouteAdminTests : IClassFixture<GatewayRouteAdminApp>
     }
 
     /// <summary>
-    /// **根管理员可以 CRUD，而且改完立刻生效**（验收 1 + 2）。
+    /// **根管理员可以 CRUD，并保留转换配置**（验收 1 + 2）。
     ///
     /// <para>"立刻生效"这一半不是锦上添花：网关原先在启动时一次性把路由拷进 YARP，
     /// 于是管理 API 会返回 204 而流量照旧走老规则——<b>接口说成功，事实没变</b>，
     /// 正是本仓反复记录的那种失效。</para>
     /// </summary>
     [Fact]
-    public async Task RouteAdmin_AsRoot_CanCrud_AndChangesApplyImmediately()
+    public async Task RouteAdmin_AsRoot_CanCrud_AndPreservesTransforms()
     {
         using var client = _app.CreateDefaultClient();
         var root = Token(root: true);
@@ -123,7 +123,7 @@ public sealed class GatewayRouteAdminTests : IClassFixture<GatewayRouteAdminApp>
             Assert.Equal("/api/identity/{**catch-all}", route.Transforms[0]["PathPattern"]);
         }
 
-        // 三、**它已经在 YARP 里了**：路由表自述端点看得到。
+        // 三、自述端点能看到已接受的配置。实际转发由 GatewayConfigurationTests 的真实 HTTP 测试验证。
         using (var live = await client.GetAsync(new Uri("/gateway/routes", UriKind.Relative)))
         {
             // 那个端点不带鉴权（它是只读自述），所以这里不需要令牌。

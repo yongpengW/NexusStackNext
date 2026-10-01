@@ -27,8 +27,9 @@ public static class RouteTableValidator
         ArgumentNullException.ThrowIfNull(clusters);
 
         var problems = new List<Error>();
-        var clusterIds = new HashSet<string>(StringComparer.Ordinal);
-        var routeIds = new HashSet<string>(StringComparer.Ordinal);
+        // YARP 的标识匹配不区分大小写；这里必须使用相同的唯一性规则。
+        var clusterIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var routeIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var cluster in clusters)
         {
@@ -95,6 +96,14 @@ public static class RouteTableValidator
 
     private static void ValidateCluster(ClusterDefinition cluster, List<Error> problems)
     {
+        if (cluster.HealthCheck is { } health &&
+            (string.IsNullOrWhiteSpace(health.Path) || !health.Path.StartsWith('/') ||
+             health.Interval <= TimeSpan.Zero || health.Timeout <= TimeSpan.Zero || health.FailureThreshold <= 0))
+        {
+            problems.Add(new Error("gateway.cluster.health_invalid",
+                $"集群 {cluster.ClusterId} 的探测路径必须以 / 开头，间隔、超时和失败阈值必须为正。"));
+        }
+
         if (cluster.Destinations.Count == 0)
         {
             problems.Add(new Error(
@@ -102,7 +111,7 @@ public static class RouteTableValidator
                 $"集群 {cluster.ClusterId} 至少要有一个目标——没有目标的集群只会吞掉请求。"));
         }
 
-        var names = new HashSet<string>(StringComparer.Ordinal);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var destination in cluster.Destinations)
         {
             if (string.IsNullOrWhiteSpace(destination.Name))

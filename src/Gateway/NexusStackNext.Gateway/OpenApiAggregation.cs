@@ -36,12 +36,12 @@ public sealed record AggregatedOpenApi(string Json, IReadOnlyList<OpenApiSourceS
 /// "文档少了几个接口"必须是**看得见**的，否则它和"接口本来就不存在"分不开。</para>
 /// </summary>
 /// <param name="httpClientFactory">HTTP 客户端工厂。</param>
-/// <param name="routeTable">路由表——各后端的地址从它来。</param>
+/// <param name="configuration">进程接受的路由配置，各后端地址与缓存版本从它来。</param>
 /// <param name="server">用来发现网关自己监听的地址。</param>
 /// <param name="logger">日志。</param>
 public sealed partial class DownstreamOpenApiAggregator(
     IHttpClientFactory httpClientFactory,
-    GatewayRouteTable routeTable,
+    GatewayRouteConfiguration configuration,
     IServer server,
     ILogger<DownstreamOpenApiAggregator> logger) : IDisposable
 {
@@ -52,31 +52,31 @@ public sealed partial class DownstreamOpenApiAggregator(
     public static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(5);
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private AggregatedOpenApi? _cached;
-    private DateTimeOffset _cachedAt;
+    private CachedDocument? _cached;
 
     /// <summary>取得合并后的文档（带缓存）。</summary>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>合并结果与各来源状态。</returns>
     public async Task<AggregatedOpenApi> GetAsync(CancellationToken cancellationToken = default)
     {
-        if (_cached is { } cached && DateTimeOffset.UtcNow - _cachedAt < CacheDuration)
+        if (Volatile.Read(ref _cached) is { } cached && ReferenceEquals(cached.Table, configuration.Current) &&
+            DateTimeOffset.UtcNow - cached.CreatedAt < CacheDuration)
         {
-            return cached;
+            return cached.Document;
         }
 
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // 双重检查：等在锁上的那一个不该再取一遍。
-            if (_cached is { } fresh && DateTimeOffset.UtcNow - _cachedAt < CacheDuration)
+            var table = configuration.Current;
+            if (_cached is { } fresh && ReferenceEquals(fresh.Table, table) && DateTimeOffset.UtcNow - fresh.CreatedAt < CacheDuration)
             {
-                return fresh;
+                return fresh.Document;
             }
 
-            var result = await BuildAsync(cancellationToken).ConfigureAwait(false);
-            _cached = result;
-            _cachedAt = DateTimeOffset.UtcNow;
+            var result = await BuildAsync(table, cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _cached, new CachedDocument(table, result, DateTimeOffset.UtcNow));
             return result;
         }
         finally
@@ -85,7 +85,7 @@ public sealed partial class DownstreamOpenApiAggregator(
         }
     }
 
-    private async Task<AggregatedOpenApi> BuildAsync(CancellationToken cancellationToken)
+    private async Task<AggregatedOpenApi> BuildAsync(GatewayRouteTable table, CancellationToken cancellationToken)
     {
         var merged = new JsonObject
         {
@@ -104,7 +104,7 @@ public sealed partial class DownstreamOpenApiAggregator(
         var mergedSchemas = (JsonObject)merged["components"]!["schemas"]!;
         var statuses = new List<OpenApiSourceStatus>();
 
-        foreach (var (name, url) in Sources())
+        foreach (var (name, url) in Sources(table))
         {
             var (document, failure) = await FetchAsync(url, cancellationToken).ConfigureAwait(false);
 
@@ -124,7 +124,7 @@ public sealed partial class DownstreamOpenApiAggregator(
     }
 
     /// <summary>文档来源：网关自己 + 每个 cluster 的第一个目标。</summary>
-    private IEnumerable<(string Name, string Url)> Sources()
+    private IEnumerable<(string Name, string Url)> Sources(GatewayRouteTable routeTable)
     {
         if (SelfBaseUrl() is { } self)
         {
@@ -145,6 +145,8 @@ public sealed partial class DownstreamOpenApiAggregator(
             yield return (cluster.ClusterId, $"{cluster.Destinations[0].Address.TrimEnd('/')}/openapi/v1.json");
         }
     }
+
+    private sealed record CachedDocument(GatewayRouteTable Table, AggregatedOpenApi Document, DateTimeOffset CreatedAt);
 
     /// <summary>从 <see cref="IServerAddressesFeature"/> 取网关自己监听的 http 地址。</summary>
     private string? SelfBaseUrl()

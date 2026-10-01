@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using NexusStackNext.Gateway.Routing;
 
 namespace NexusStackNext.Gateway;
 
@@ -19,14 +18,14 @@ public sealed record ClusterReachability(int ClusterCount, IReadOnlyList<string>
 /// 一个消费者时它只是一段代码；两个之后，"探测"这件事才成为一道真的缝——
 /// 这也是把 SAME 逻辑抽出来的理由，而不是"看起来更整洁"。</para>
 ///
-/// <para>探的是目标的 <c>/health/live</c>（存活），不是 <c>/health/ready</c>——
-/// 后者会让两个就绪状态互相依赖。上游只想知道"这个目标还接不接得上"。</para>
+/// <para>使用与 YARP 相同的就绪路径；后端就绪检查不得反向依赖网关。
+/// 显式关闭主动探测的外部集群退回存活检查。</para>
 /// </summary>
 /// <param name="httpClientFactory">HTTP 客户端工厂。</param>
-/// <param name="routeTable">当前生效的路由表。</param>
+/// <param name="configuration">进程接受的路由配置。</param>
 public sealed class ClusterReachabilityProbe(
     IHttpClientFactory httpClientFactory,
-    GatewayRouteTable routeTable)
+    GatewayRouteConfiguration configuration)
 {
     /// <summary>单个目标的探测超时。</summary>
     public static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
@@ -37,6 +36,7 @@ public sealed class ClusterReachabilityProbe(
     public async Task<ClusterReachability> CheckAsync(CancellationToken cancellationToken = default)
     {
         var unreachable = new List<string>();
+        var routeTable = configuration.Current;
 
         foreach (var cluster in routeTable.Clusters)
         {
@@ -50,7 +50,8 @@ public sealed class ClusterReachabilityProbe(
             var reachable = false;
             foreach (var destination in cluster.Destinations)
             {
-                if (await IsReachableAsync(destination.Address, cancellationToken).ConfigureAwait(false))
+                if (await IsReachableAsync(destination.Address, cluster.HealthCheck?.Path ?? "/health/live",
+                    cluster.HealthCheck?.Timeout ?? ProbeTimeout, cancellationToken).ConfigureAwait(false))
                 {
                     reachable = true;
                     break;
@@ -66,15 +67,15 @@ public sealed class ClusterReachabilityProbe(
         return new ClusterReachability(routeTable.Clusters.Count, unreachable);
     }
 
-    private async Task<bool> IsReachableAsync(string address, CancellationToken cancellationToken)
+    private async Task<bool> IsReachableAsync(string address, string path, TimeSpan timeout, CancellationToken cancellationToken)
     {
         try
         {
             using var client = httpClientFactory.CreateClient(nameof(ClusterReachabilityProbe));
-            client.Timeout = ProbeTimeout;
+            client.Timeout = timeout;
 
             using var response = await client
-                .GetAsync($"{address.TrimEnd('/')}/health/live", cancellationToken)
+                .GetAsync($"{address.TrimEnd('/')}{path}", cancellationToken)
                 .ConfigureAwait(false);
 
             return response.IsSuccessStatusCode;

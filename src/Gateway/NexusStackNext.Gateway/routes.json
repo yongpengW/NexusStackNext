@@ -78,6 +78,7 @@
       "routeId": "files-api",
       "clusterId": "platform-host",
       "path": "/api/files/{**catch-all}",
+      "rateLimitPolicy": "gateway.default",
       "requireAuthentication": true
     }
   ],
