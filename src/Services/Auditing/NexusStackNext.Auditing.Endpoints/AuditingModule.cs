@@ -98,7 +98,7 @@ public static class AuditingModule
             return result.Value == IngestionOutcome.Accepted
                 ? responses.Accepted(new AuditIngestionResponse("Accepted"))
                 : responses.Ok(new AuditIngestionResponse("Duplicate"));
-        }).Produces<ApiResponse<AuditIngestionResponse>>(202).Produces<ApiResponse<AuditIngestionResponse>>().ProducesApiErrors(400, 500).AllowAnonymous();
+        }).ProducesApiErrors(415).Produces<ApiResponse<AuditIngestionResponse>>(202).Produces<ApiResponse<AuditIngestionResponse>>().ProducesApiErrors(400, 500).AllowAnonymous();
 
         return endpoints;
     }

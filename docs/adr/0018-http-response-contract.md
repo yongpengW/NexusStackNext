@@ -40,6 +40,8 @@ Platform 配置按 Key 的 ordinal 顺序分页，Scheduling 任务按 ID 升序
 
 混合成功与失败的端点显式声明 `Produces<ApiResponse<T>>` / `Produces<ApiPage<T>>`，错误用 `ProducesApiErrors(...)` 声明。只返回 typed result 的端点由框架推导元数据。OpenAPI HTTP 测试同时校验外层字段与 data 的具体 schema，不能只检查路径存在。
 
+接受 JSON 请求体的端点同时声明 415。网关聚合时为下游 operation 补充 `default` 错误响应，覆盖认证、限流、代理故障与超时；后端已声明的响应保留。错误 schema 使用 [.NET JSON Schema 导出器](https://learn.microsoft.com/en-us/dotnet/api/system.text.json.schema.jsonschemaexporter?view=net-10.0) 从实际 `ApiProblemDetails` 类型生成，避免另维护一套字段清单。
+
 ## 迁移与验证
 
 这是有意的响应契约变更：原先直接读 `accessToken` / `userId` 的消费者改读 `data.accessToken` / `data.userId`。错误消费者从字符串 `code` 改读 `errorCode`；`code` 与真实 HTTP 状态一致。分页消费者使用顶层分页字段与 `data` 数组。

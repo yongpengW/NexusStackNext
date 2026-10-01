@@ -35,6 +35,14 @@ public sealed class ApiTransportTests
         Assert.Equal("api-contract-probe", Assert.Single(login.Headers.GetValues("X-Correlation-Id")));
         var data = body.GetProperty("data");
         Assert.False(data.TryGetProperty("success", out _));
+        var document = await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
+        var loginResponses = document.GetProperty("paths").GetProperty("/api/identity/login").GetProperty("post").GetProperty("responses");
+        Assert.True(loginResponses.TryGetProperty("400", out _));
+        Assert.True(loginResponses.TryGetProperty("default", out var edgeError), "聚合文档必须声明网关产生的错误。");
+        var errorSchema = edgeError.GetProperty("content").GetProperty("application/problem+json").GetProperty("schema").GetProperty("$ref").GetString();
+        var properties = document.GetProperty("components").GetProperty("schemas").GetProperty(errorSchema!.Split('/')[^1]).GetProperty("properties");
+        Assert.True(properties.TryGetProperty("errorCode", out _));
+        Assert.True(properties.TryGetProperty("traceId", out _));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", data.GetProperty("accessToken").GetString());
 
         byte[] bytes = [0, 255, 128, 10, 13, 42];

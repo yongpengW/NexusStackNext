@@ -59,7 +59,7 @@ public static class SchedulingModule
         {
             if (!paging.IsValid)
             {
-                return Failure(new Error("http.pagination.invalid", "page 必须大于 0，limit 必须在 1 到 200 之间。"));
+                return Failure(new Error(ApiPageRequest.InvalidErrorCode, ApiPageRequest.InvalidErrorMessage));
             }
             var all = await registry.ListAsync(cancellationToken);
 
@@ -97,7 +97,7 @@ public static class SchedulingModule
             return defined.IsFailure
                 ? Failure(defined.Error)
                 : responses.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new TaskCreatedResponse(defined.Value.Id.Value, defined.Value.Code.Value));
-        }).Produces<ApiResponse<TaskCreatedResponse>>(201);
+        }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201);
 
         tasks.MapPost("/{id:long}/pause", async (
             long id,

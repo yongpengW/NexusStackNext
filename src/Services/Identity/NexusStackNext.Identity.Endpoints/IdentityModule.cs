@@ -129,7 +129,7 @@ public static class IdentityModule
                 : responses.Ok(new LoginResponse(result.Value.UserId, result.Value.UserName,
                     result.Value.Tokens.AccessToken, result.Value.Tokens.AccessTokenExpiresAt,
                     result.Value.Tokens.RefreshToken, result.Value.Tokens.RefreshTokenExpiresAt));
-        }).Produces<ApiResponse<LoginResponse>>().AllowAnonymous();   // 登录当然要公开——它是拿钥匙的地方。
+        }).ProducesApiErrors(415).Produces<ApiResponse<LoginResponse>>().AllowAnonymous();   // 登录当然要公开——它是拿钥匙的地方。
 
         identity.MapPost("/refresh", async (ApiResponses responses,
             RefreshRequest request,
@@ -144,7 +144,7 @@ public static class IdentityModule
                 ? Failure(result.Error)
                 : responses.Ok(new RefreshResponse(result.Value.AccessToken, result.Value.AccessTokenExpiresAt,
                     result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt));
-        }).Produces<ApiResponse<RefreshResponse>>().AllowAnonymous();   // 刷新也一样：访问令牌过期时，客户端手里只有刷新令牌。
+        }).ProducesApiErrors(415).Produces<ApiResponse<RefreshResponse>>().AllowAnonymous();   // 刷新也一样：访问令牌过期时，客户端手里只有刷新令牌。
 
         identity.MapPost("/logout", async (
             ISender sender,
@@ -179,7 +179,7 @@ public static class IdentityModule
             return result.IsFailure
                 ? Failure(result.Error)
                 : responses.Created($"/api/identity/users/{result.Value}", new UserCreatedResponse(result.Value));
-        }).Produces<ApiResponse<UserCreatedResponse>>(201).ProducesApiErrors(409)
+        }).ProducesApiErrors(415).Produces<ApiResponse<UserCreatedResponse>>(201).ProducesApiErrors(409)
         // **自注册公开，是显式的。**
         //
         // 它必须是公开的，否则没有人能创建第一个用户——而"发一个令牌"需要先有用户。
@@ -222,7 +222,7 @@ public static class IdentityModule
             return result.IsFailure
                 ? Failure(result.Error)
                 : responses.Created($"/api/identity/roles/{result.Value}", new RoleCreatedResponse(result.Value));
-        }).Produces<ApiResponse<RoleCreatedResponse>>(201).ProducesApiErrors(409).RequirePermission("/api/identity/roles", "POST");
+        }).ProducesApiErrors(415).Produces<ApiResponse<RoleCreatedResponse>>(201).ProducesApiErrors(409).RequirePermission("/api/identity/roles", "POST");
 
         identity.MapPost("/roles/{roleId:long}/menus/{menuId:long}", async (
             long roleId,
@@ -251,7 +251,7 @@ public static class IdentityModule
                 : responses.Created(
                     $"/api/identity/api-resources/{result.Value.ApiResourceId}",
                     result.Value);
-        }).Produces<ApiResponse<ApiResourceCreated>>(201)
+        }).ProducesApiErrors(415).Produces<ApiResponse<ApiResourceCreated>>(201)
         // **引导端点：只要求"已认证"，不要求权限键。**
         //
         // 这里有一个真实的循环：要授权得先有权限键，而权限键由这个端点登记。
@@ -276,7 +276,7 @@ public static class IdentityModule
                 ? Failure(result.Error)
                 : responses.Ok(new AuthorizationResponse(request.UserId, result.Value.RequiredKey,
                     result.Value.Decision, result.Value.GrantedCount));
-        }).Produces<ApiResponse<AuthorizationResponse>>().ProducesApiErrors(404).RequirePermission("/api/identity/authorize", "POST");
+        }).ProducesApiErrors(415).Produces<ApiResponse<AuthorizationResponse>>().ProducesApiErrors(404).RequirePermission("/api/identity/authorize", "POST");
 
         // ---------- 菜单 ----------
         //
@@ -313,7 +313,7 @@ public static class IdentityModule
             return result.IsFailure
                 ? Failure(result.Error)
                 : responses.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
-        }).Produces<ApiResponse<MenuCreated>>(201).RequirePermission("/api/identity/menus", "POST");
+        }).ProducesApiErrors(415).Produces<ApiResponse<MenuCreated>>(201).RequirePermission("/api/identity/menus", "POST");
 
         return endpoints;
     }

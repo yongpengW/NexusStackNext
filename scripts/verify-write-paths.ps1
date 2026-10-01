@@ -7,6 +7,7 @@
 # 用到就清理：两个进程、临时日志。
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'api-response.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $env:TEMP "nexusstack-writepaths"
 Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -42,13 +43,7 @@ function Call([string]$method, [string]$url, [string]$body, [string]$token) {
     $raw = & curl.exe @a 2>&1 | Out-String
     $status = if ($raw -match '__STATUS__(\d+)') { $Matches[1] } else { '???' }
     $payload = ($raw -replace "`n__STATUS__\d+\s*$", '').Trim()
-    $data = $null
-    if ($status -in @('200', '201', '202')) {
-        $envelope = $payload | ConvertFrom-Json
-        if ($envelope.success -ne $true) { throw '成功响应缺少统一信封。' }
-        $data = $envelope.data
-    }
-    return @{ Status = $status; Body = $payload; Data = $data }
+    return ConvertFrom-ApiResponse -Status $status -Body $payload
 }
 
 try {

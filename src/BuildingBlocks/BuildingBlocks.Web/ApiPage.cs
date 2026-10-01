@@ -20,6 +20,10 @@ public sealed record ApiPage<T>(IReadOnlyList<T> Data, long Total, int Page, int
 /// <param name="Limit">每页大小，默认 50、最大 200。</param>
 public sealed record ApiPageRequest(int Page = 1, int Limit = 50)
 {
+    /// <summary>分页参数不合法时的稳定错误码。</summary>
+    public const string InvalidErrorCode = "http.pagination.invalid";
+    /// <summary>与分页参数范围一起维护的错误说明。</summary>
+    public const string InvalidErrorMessage = "page 必须大于 0，limit 必须在 1 到 200 之间。";
     /// <summary>请求参数是否合法。</summary>
     public bool IsValid => Page > 0 && Limit is > 0 and <= 200;
     /// <summary>条目偏移；使用 long 防止大页码溢出。</summary>

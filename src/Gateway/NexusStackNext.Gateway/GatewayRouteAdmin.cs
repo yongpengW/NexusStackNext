@@ -22,8 +22,8 @@ public static class GatewayRouteAdmin
         admin.MapGet("/{routeId}", (string routeId, GatewayRouteConfiguration configuration, ApiResponses responses) =>
             FindRoute(configuration.Current, routeId) is { } route ? responses.Ok(route) : Failure(MissingRoute(routeId)))
             .Produces<ApiResponse<RouteDefinition>>().ProducesApiErrors(404);
-        admin.MapPost("/", AddRouteAsync).Produces(204).ProducesApiErrors(409, 503);
-        admin.MapPut("/{routeId}", UpdateRouteAsync).Produces(204).ProducesApiErrors(404, 503);
+        admin.MapPost("/", AddRouteAsync).ProducesApiErrors(415).Produces(204).ProducesApiErrors(409, 503);
+        admin.MapPut("/{routeId}", UpdateRouteAsync).ProducesApiErrors(415).Produces(204).ProducesApiErrors(404, 503);
         admin.MapDelete("/{routeId}", DeleteRouteAsync).Produces(204).ProducesApiErrors(404, 503);
         return app;
     }

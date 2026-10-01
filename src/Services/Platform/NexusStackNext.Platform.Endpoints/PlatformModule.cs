@@ -64,7 +64,7 @@ public static class PlatformModule
 
             if (!paging.IsValid)
             {
-                return Failure(new Error("http.pagination.invalid", "page 必须大于 0，limit 必须在 1 到 200 之间。"));
+                return Failure(new Error(ApiPageRequest.InvalidErrorCode, ApiPageRequest.InvalidErrorMessage));
             }
 
             var found = await store.ListByScopeAsync(scope);
@@ -89,7 +89,7 @@ public static class PlatformModule
             var written = await store.WriteAsync(parsed.Value, request.Value, request.Description);
 
             return written.IsFailure ? Failure(written.Error) : Results.NoContent();
-        }).Produces(204);
+        }).ProducesApiErrors(415).Produces(204);
 
         // 清空一个配置值。**不删除配置项本身**——"没有值"与"没注册过"是不同的状态。
         settings.MapDelete("/{key}", async (string key, SettingStore store) =>

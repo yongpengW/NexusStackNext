@@ -1,7 +1,10 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Schema;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
 
 namespace NexusStackNext.Gateway;
@@ -102,6 +105,8 @@ public sealed partial class DownstreamOpenApiAggregator(
 
         var mergedPaths = (JsonObject)merged["paths"]!;
         var mergedSchemas = (JsonObject)merged["components"]!["schemas"]!;
+        // 不带来源前缀的独立名字，不会与下面的 sourceName.schemaName 冲突。
+        mergedSchemas[EdgeProblemSchemaName] = JsonSerializerOptions.Web.GetJsonSchemaAsNode(typeof(ApiProblemDetails));
         var statuses = new List<OpenApiSourceStatus>();
 
         foreach (var (name, url) in Sources(table))
@@ -212,7 +217,12 @@ public sealed partial class DownstreamOpenApiAggregator(
                     continue;
                 }
 
-                mergedPaths[path] = item?.DeepClone();
+                var pathItem = item?.DeepClone();
+                if (sourceName != "gateway")
+                {
+                    AddGatewayErrorResponse(pathItem);
+                }
+                mergedPaths[path] = pathItem;
                 merged++;
             }
         }
@@ -226,6 +236,39 @@ public sealed partial class DownstreamOpenApiAggregator(
         }
 
         return merged;
+    }
+
+    private static void AddGatewayErrorResponse(JsonNode? pathItem)
+    {
+        if (pathItem is not JsonObject operations)
+        {
+            return;
+        }
+        foreach (var (method, node) in operations)
+        {
+            if (method is not ("get" or "post" or "put" or "delete" or "patch" or "head" or "options" or "trace")
+                || node is not JsonObject operation)
+            {
+                continue;
+            }
+            var responses = operation["responses"] as JsonObject ?? new JsonObject();
+            if (operation["responses"] is null)
+            {
+                operation["responses"] = responses;
+            }
+            // 保留后端声明；default 覆盖边缘可能产生的 401/403/429/502/503/504 等错误。
+            responses["default"] ??= new JsonObject
+            {
+                ["description"] = "网关产生的错误（认证、限流、上游不可达或超时），保留实际 HTTP 状态。",
+                ["content"] = new JsonObject
+                {
+                    ["application/problem+json"] = new JsonObject
+                    {
+                        ["schema"] = new JsonObject { ["$ref"] = SchemaReferencePrefix + EdgeProblemSchemaName },
+                    },
+                },
+            };
+        }
     }
 
     /// <summary>
@@ -274,6 +317,7 @@ public sealed partial class DownstreamOpenApiAggregator(
 
     /// <summary>schema 引用在文档里的固定前缀。</summary>
     private const string SchemaReferencePrefix = "#/components/schemas/";
+    private const string EdgeProblemSchemaName = "EdgeProblem";
 
     private static readonly System.Text.Json.JsonSerializerOptions JsonOptions = new()
     {

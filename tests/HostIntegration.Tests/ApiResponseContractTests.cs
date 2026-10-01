@@ -8,6 +8,43 @@ namespace NexusStackNext.HostIntegration.Tests;
 
 public sealed class ApiResponseContractTests
 {
+    [Fact]
+    public async Task UnsupportedMediaType_UsesProblemContract_AndAllJsonRequestsDocumentIt()
+    {
+        await using var platform = new PlatformApp();
+        using var client = platform.CreateClient();
+        using var content = new StringContent("plain input");
+        using var rejected = await client.PostAsync(new Uri("/api/identity/login", UriKind.Relative), content);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, rejected.StatusCode);
+        Assert.Equal("http.415", (await rejected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errorCode").GetString());
+
+        await using var backend = await GatewayBackend.StartAsync("schema-probe");
+        await using var gateway = new GatewayHttpApp(backend.Address);
+        using var gatewayClient = gateway.CreateClient();
+        var checkedRequests = 0;
+        foreach (var (source, path) in new[] { (client, "/openapi/v1.json"), (gatewayClient, "/openapi/gateway.json") })
+        {
+            var document = await source.GetFromJsonAsync<JsonElement>(new Uri(path, UriKind.Relative));
+            foreach (var endpoint in document.GetProperty("paths").EnumerateObject())
+            {
+                foreach (var operation in endpoint.Value.EnumerateObject())
+                {
+                    if (!operation.Value.TryGetProperty("requestBody", out var request)
+                        || !request.GetProperty("content").TryGetProperty("application/json", out _))
+                    {
+                        continue;
+                    }
+                    checkedRequests++;
+                    Assert.True(operation.Value.GetProperty("responses").TryGetProperty("415", out var unsupported),
+                        $"{operation.Name} {endpoint.Name} 缺少 415 响应声明。");
+                    var schema = Resolve(unsupported.GetProperty("content").GetProperty("application/problem+json").GetProperty("schema"), document);
+                    Assert.True(schema.GetProperty("properties").TryGetProperty("errorCode", out _));
+                }
+            }
+        }
+        Assert.True(checkedRequests > 0);
+    }
+
     [Theory]
     [InlineData("", 200)]
     [InlineData("&page=2147483647&limit=200", 200)]
