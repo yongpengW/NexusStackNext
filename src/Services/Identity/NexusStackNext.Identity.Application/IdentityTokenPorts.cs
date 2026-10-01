@@ -79,14 +79,14 @@ public interface IRefreshTokenRepository
     /// <returns>令牌；不存在时为 <c>null</c>。</returns>
     Task<RefreshToken?> FindByHashAsync(TokenHash tokenHash, CancellationToken cancellationToken = default);
 
-    /// <summary>保存新令牌。</summary>
+    /// <summary>登记新令牌或已跟踪令牌的改动；持久化由 Identity 工作单元完成。</summary>
     /// <param name="token">令牌聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
     Task AddAsync(RefreshToken token, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 撤销某个用户的**全部**未撤销令牌。
+    /// 登记某个用户的全部未撤销令牌的撤销改动；持久化由 Identity 工作单元完成。
     ///
     /// <para>改密码、禁用账号、以及"检测到重放"时调用。它不是锦上添花：
     /// 不撤销全部的话，"改完密码旧令牌还能用"就是一条没人会发现的洞。</para>

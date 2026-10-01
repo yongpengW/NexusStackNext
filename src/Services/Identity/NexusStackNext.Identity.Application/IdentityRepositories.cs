@@ -34,7 +34,7 @@ public interface IUserRepository
     /// <returns>已存在则 <c>true</c>。</returns>
     Task<bool> UserNameExistsAsync(UserName userName, CancellationToken cancellationToken = default);
 
-    /// <summary>保存新用户。</summary>
+    /// <summary>登记新用户；持久化由 Identity 工作单元完成。</summary>
     /// <param name="user">用户聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
@@ -58,7 +58,7 @@ public interface IRoleRepository
     /// <returns>找到时返回聚合，否则 <c>null</c>。</returns>
     Task<Role?> FindByCodeAsync(RoleCode code, CancellationToken cancellationToken = default);
 
-    /// <summary>保存新角色。</summary>
+    /// <summary>登记新角色；持久化由 Identity 工作单元完成。</summary>
     /// <param name="role">角色聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
@@ -76,7 +76,7 @@ public interface IApiResourceRepository
         IReadOnlySet<MenuId> menuIds,
         CancellationToken cancellationToken = default);
 
-    /// <summary>保存新资源。</summary>
+    /// <summary>登记新资源；持久化由 Identity 工作单元完成。</summary>
     /// <param name="resource">API 资源聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
@@ -103,7 +103,7 @@ public interface IMenuTreeRepository
     /// <returns>菜单树，或 <c>null</c>。</returns>
     Task<MenuTree?> FindAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>保存新树。</summary>
+    /// <summary>登记新树；持久化由 Identity 工作单元完成。</summary>
     /// <param name="tree">菜单树聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>

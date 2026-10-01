@@ -48,7 +48,8 @@ internal static class InvariantCoverage
             4,
             "一个聚合 = 一个事务",
             [],
-            "不是结构规则，编译器与程序集引用都管不了。行为由 BuildingBlocks.Application.Tests 的事务管线测试守着。"),
+            "不是结构规则。Identity.IntegrationTests.CommandTransactionTests 验证提交、回滚与上下文归属，"
+                + "不证明单聚合边界；现有令牌流程的多聚合事务仍需审查（ADR-0017）。"),
         new(
             5,
             "禁止服务定位器",

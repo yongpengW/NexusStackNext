@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
-using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
@@ -178,11 +177,8 @@ public static class IdentityInfrastructureServiceCollectionExtensions
         services.AddIdentityTokenSecrets();
         services.AddSingleton<UserPermissionReader>();
 
-        // 内存存储**立刻生效**，因此没有可回滚的东西——但 `IUnitOfWork` 仍然必须存在：
-        // 处理器依赖它，而"某个存储不提供它"会让同一段用例在不同存储下行为不同
-        // （更糟的是：宿主会在 ValidateOnBuild 下起不来）。空实现是有意的，
-        // 它的文档说清了"这里没有事务"这件事，而不是假装有。
-        services.AddSingleton<IUnitOfWork, InMemoryUnitOfWork>();
+        // 内存存储立刻生效，没有数据库事务；仍提供 Identity 命令入口需要的专属端口。
+        services.AddSingleton<IIdentityUnitOfWork, InMemoryUnitOfWork>();
 
         // 口令哈希不是"存储"，但它与存储实现同属基础设施，且换算法时只改这一行。
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
@@ -197,11 +193,10 @@ public static class IdentityInfrastructureServiceCollectionExtensions
 /// <para>内存适配器保存的是聚合实例本身，改动立刻可见——因此没有"提交"这个动作，
 /// 也没有可回滚的东西。它不是"还没实现的占位符"，而是**对这份存储的正确实现**。</para>
 ///
-/// <para>但它必须存在：处理器依赖 <see cref="NexusStackNext.BuildingBlocks.Application.Transactions.IUnitOfWork"/>，
-/// 而"某个存储不提供它"会让宿主在 <c>ValidateOnBuild</c> 下直接起不来——
-/// 那正是本仓票据 54 踩过的形状。</para>
+/// <para>Identity 命令入口依赖 <see cref="IIdentityUnitOfWork"/>。此适配器不提供隔离或回滚；
+/// 真正的持久化事务需使用 EF 适配器（ADR-0017）。</para>
 /// </summary>
-public sealed class InMemoryUnitOfWork : IUnitOfWork
+public sealed class InMemoryUnitOfWork : IIdentityUnitOfWork
 {
     /// <inheritdoc />
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
@@ -209,6 +204,7 @@ public sealed class InMemoryUnitOfWork : IUnitOfWork
     /// <inheritdoc />
     public Task<TResult> ExecuteInTransactionAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
+        Func<TResult, bool>? shouldCommit = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);

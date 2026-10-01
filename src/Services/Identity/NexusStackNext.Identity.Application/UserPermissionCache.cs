@@ -69,8 +69,7 @@ public interface IPermissionCache
 ///
 /// <para><b>它是内存的，这件事必须说清楚。</b>版本号与条目都在进程内，
 /// 因此多实例部署时"A 实例失效了、B 实例还拿着旧值"。要解决它需要一个共享的版本存储
-/// （Redis 之类）——那是一件**有第二个消费者（第二个实例）时才成立**的改动，
-/// 现在做它等于给一个还没出现的需求写适配器。</para>
+/// （Redis 之类）或可靠的失效通知。本实现只保证本进程内的失效。</para>
 /// </summary>
 public sealed class UserPermissionCache : IPermissionCache
 {
@@ -82,7 +81,7 @@ public sealed class UserPermissionCache : IPermissionCache
     private readonly TimeSpan _timeToLive;
 
     private readonly ConcurrentDictionary<long, Entry> _entries = new();
-    private readonly ConcurrentDictionary<long, Lazy<Task<Result<PermissionKeySet>>>> _inFlight = new();
+    private readonly ConcurrentDictionary<(long UserId, long Version), Lazy<Task<Result<PermissionKeySet>>>> _inFlight = new();
 
     private long _version;
 
@@ -126,10 +125,10 @@ public sealed class UserPermissionCache : IPermissionCache
             return cached;
         }
 
-        // **单飞。** 同一个用户的并发读取拿到的是**同一个** Lazy，
-        // 因此回源只跑一次；`ExecutionAndPublication` 保证工厂只被执行一次。
+        // 同一用户、同一版本共用回源；提交后的请求不能加入提交前尚未结束的读取。
+        var key = (userId.Value, version);
         var lazy = _inFlight.GetOrAdd(
-            userId.Value,
+            key,
             _ => new Lazy<Task<Result<PermissionKeySet>>>(
                 () => LoadAsync(userId, version, cancellationToken),
                 LazyThreadSafetyMode.ExecutionAndPublication));
@@ -142,7 +141,7 @@ public sealed class UserPermissionCache : IPermissionCache
         {
             // 回源结束后必须移出：否则这个用户**永远**复用第一次的结果，
             // 而失效就成了空操作。这一步是单飞与失效能共存的关键。
-            _inFlight.TryRemove(new KeyValuePair<long, Lazy<Task<Result<PermissionKeySet>>>>(userId.Value, lazy));
+            _inFlight.TryRemove(new KeyValuePair<(long, long), Lazy<Task<Result<PermissionKeySet>>>>(key, lazy));
         }
     }
 
@@ -162,7 +161,7 @@ public sealed class UserPermissionCache : IPermissionCache
         {
             if (entry.Version != current || entry.ExpiresAt <= now)
             {
-                _entries.TryRemove(key, out _);
+                _entries.TryRemove(new KeyValuePair<long, Entry>(key, entry));
             }
         }
     }
@@ -196,10 +195,12 @@ public sealed class UserPermissionCache : IPermissionCache
         // 会让一个本该立刻恢复的问题持续五分钟。
         if (result.IsSuccess)
         {
-            _entries[userId.Value] = new Entry(
+            var entry = new Entry(
                 version,
                 result.Value,
                 _timeProvider.GetUtcNow() + _timeToLive);
+            _entries.AddOrUpdate(userId.Value, entry,
+                (_, existing) => existing.Version > version ? existing : entry);
         }
 
         return result;

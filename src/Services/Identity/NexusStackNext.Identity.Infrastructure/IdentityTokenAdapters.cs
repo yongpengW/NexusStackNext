@@ -167,7 +167,6 @@ public sealed class EfRefreshTokenRepository(IdentityDbContext context) : IRefre
             }
         }
 
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -187,11 +186,6 @@ public sealed class EfRefreshTokenRepository(IdentityDbContext context) : IRefre
         foreach (var token in live)
         {
             token.Revoke(now, reason);
-        }
-
-        if (live.Count > 0)
-        {
-            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return live.Count;

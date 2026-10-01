@@ -32,7 +32,7 @@ internal static class IdentityTestHost
     /// <summary>用 EF 存储组装一个与宿主同构的容器。</summary>
     /// <param name="connectionString">数据库连接串。</param>
     /// <returns>容器。</returns>
-    public static ServiceProvider Build(string connectionString)
+    public static ServiceProvider Build(string connectionString, Action<IServiceCollection>? configure = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -46,6 +46,7 @@ internal static class IdentityTestHost
         services.AddIdentityEntityFrameworkStorage(connectionString);
         services.AddIdentityUseCases();
         services.AddIdentityJwtIssuer(new JwtOptions { SigningKey = SigningKey });
+        configure?.Invoke(services);
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

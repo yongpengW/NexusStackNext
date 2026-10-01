@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
@@ -13,20 +12,7 @@ using NexusStackNext.Identity.Infrastructure.Persistence;
 
 namespace NexusStackNext.Identity.Infrastructure;
 
-/// <summary>
-/// EF Core 用户仓储。
-///
-/// <para><b>与内存版有一处必须说清的语义差异。</b>内存版保存的是**聚合实例本身**
-/// （它的文档里已写明这一点），因此外部改动会直接反映到"存储"里；
-/// EF 版不是——改动要经 <c>SaveChanges</c> 才落库。
-/// 也就是说：<b>读取 → 改 → 保存</b>这条路径需要调用方经 <c>IUnitOfWork.SaveChangesAsync</c>，
-/// 而 <c>AddAsync</c> 自己会保存（见下）。</para>
-///
-/// <para><b>为什么 <c>AddAsync</c> 里直接保存。</b>端口说的是"保存新用户"，而内存版就是立刻生效的。
-/// 让 EF 版只 <c>Add</c> 不保存，会让同一段用例在两个实现下行为不同——
-/// 而"换个适配器行为就变了"正是端口最该避免的事。多一次 <c>SaveChanges</c> 在
-/// <c>IUnitOfWork.ExecuteInTransactionAsync</c> 里也只占同一个事务，不会多开。</para>
-/// </summary>
+/// <summary>EF Core 用户仓储。只跟踪改动，由 Identity 命令事务统一保存。</summary>
 /// <param name="context">上下文。</param>
 public sealed class EfUserRepository(IdentityDbContext context) : IUserRepository
 {
@@ -61,12 +47,12 @@ public sealed class EfUserRepository(IdentityDbContext context) : IUserRepositor
     }
 
     /// <inheritdoc />
-    public async Task AddAsync(User user, CancellationToken cancellationToken = default)
+    public Task AddAsync(User user, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(user);
 
         context.Users.Add(user);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return Task.CompletedTask;
     }
 }
 
@@ -102,12 +88,12 @@ public sealed class EfRoleRepository(IdentityDbContext context) : IRoleRepositor
     }
 
     /// <inheritdoc />
-    public async Task AddAsync(Role role, CancellationToken cancellationToken = default)
+    public Task AddAsync(Role role, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(role);
 
         context.Roles.Add(role);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return Task.CompletedTask;
     }
 }
 
@@ -137,12 +123,12 @@ public sealed class EfApiResourceRepository(IdentityDbContext context) : IApiRes
     }
 
     /// <inheritdoc />
-    public async Task AddAsync(ApiResource resource, CancellationToken cancellationToken = default)
+    public Task AddAsync(ApiResource resource, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(resource);
 
         context.ApiResources.Add(resource);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return Task.CompletedTask;
     }
 }
 
@@ -153,8 +139,7 @@ public sealed class EfApiResourceRepository(IdentityDbContext context) : IApiRes
 /// 也不该有"只读一层节点"的方法：菜单树是一个聚合（ADR-0001），
 /// "移动一个节点必须同时改写它所有后代的物化路径"，半个树在内存里做不了这件事。</para>
 ///
-/// <para>语义与其它 EF 适配器一致：<c>AddAsync</c> 自己保存（理由见
-/// <see cref="EfUserRepository"/> 的文档），而改动路径要经 <c>IUnitOfWork.SaveChangesAsync</c>。</para>
+/// <para>只跟踪新树；提交由 Identity 命令事务负责。</para>
 /// </summary>
 /// <param name="context">上下文。</param>
 public sealed class EfMenuTreeRepository(IdentityDbContext context) : IMenuTreeRepository
@@ -166,12 +151,12 @@ public sealed class EfMenuTreeRepository(IdentityDbContext context) : IMenuTreeR
             .ConfigureAwait(false);
 
     /// <inheritdoc />
-    public async Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default)
+    public Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(tree);
 
-        await context.MenuTrees.AddAsync(tree, cancellationToken).ConfigureAwait(false);
-        await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        context.MenuTrees.Add(tree);
+        return Task.CompletedTask;
     }
 }
 
@@ -213,7 +198,7 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
         services.AddScoped<IRefreshTokenRepository, EfRefreshTokenRepository>();
 
         // 工作单元与仓储同生命周期（都持有同一个上下文）。
-        services.AddScoped<IUnitOfWork, EfUnitOfWork<IdentityDbContext>>();
+        services.AddScoped<IIdentityUnitOfWork, EfIdentityUnitOfWork>();
 
         services.AddScoped<UserPermissionReader>();
 
@@ -225,3 +210,8 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
         return services;
     }
 }
+
+/// <summary>把通用 EF 事务实现绑定到 Identity 的工作单元端口。</summary>
+/// <param name="context">Identity 的上下文。</param>
+public sealed class EfIdentityUnitOfWork(IdentityDbContext context)
+    : EfUnitOfWork<IdentityDbContext>(context), IIdentityUnitOfWork;

@@ -51,6 +51,7 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
         var repository = new EfUserRepository(context);
 
         await repository.AddAsync(NewUser(1, "leo", "a"));
+        await context.SaveChangesAsync();
 
         await using var reader = fixture.NewContext();
         var loaded = await new EfUserRepository(reader).FindAsync(new UserId(1));
@@ -83,6 +84,7 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
         Assert.False(await repository.UserNameExistsAsync(UserName.Create("leo").Value));
 
         await repository.AddAsync(NewUser(1, "leo", "a"));
+        await context.SaveChangesAsync();
 
         Assert.True(await repository.UserNameExistsAsync(UserName.Create("leo").Value));
         Assert.False(await repository.UserNameExistsAsync(UserName.Create("someone-else").Value));
@@ -103,6 +105,7 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
         await using (var seed = fixture.NewContext())
         {
             await new EfUserRepository(seed).AddAsync(NewUser(1, "leo", "a"));
+            await seed.SaveChangesAsync();
         }
 
         await using (var context = fixture.NewContext())
@@ -142,6 +145,7 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
 
         await repository.AddAsync(Role.Create(new RoleId(2), RoleCode.Create("editor").Value, RoleName.Create("编辑").Value));
         await repository.AddAsync(Role.Create(new RoleId(1), RoleCode.Create("admin").Value, RoleName.Create("管理员").Value));
+        await context.SaveChangesAsync();
 
         var found = await repository.FindManyAsync([new RoleId(1), new RoleId(2), new RoleId(999)]);
 
@@ -172,6 +176,7 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
             new ApiResourceId(2), RoutePattern.Create("/api/identity/roles").Value, "GET", new MenuId(20)).Value);
         await repository.AddAsync(ApiResource.Create(
             new ApiResourceId(3), RoutePattern.Create("/api/identity").Value, "GET", null).Value);
+        await context.SaveChangesAsync();
 
         var found = await repository.FindByMenuIdsAsync(new HashSet<MenuId> { new(10) });
 
@@ -196,11 +201,13 @@ public sealed class IdentityRepositoryTests(IdentityDatabaseFixture fixture)
         await using (var first = fixture.NewContext())
         {
             await new EfUserRepository(first).AddAsync(NewUser(1, "leo", "a"));
+            await first.SaveChangesAsync();
         }
 
         await using var second = fixture.NewContext();
+        await new EfUserRepository(second).AddAsync(NewUser(2, "leo", "b"));
         var exception = await Assert.ThrowsAsync<DbUpdateException>(
-            () => new EfUserRepository(second).AddAsync(NewUser(2, "leo", "b")));
+            () => second.SaveChangesAsync());
 
         Assert.Equal("23505", Assert.IsType<Npgsql.PostgresException>(exception.InnerException).SqlState);
     }

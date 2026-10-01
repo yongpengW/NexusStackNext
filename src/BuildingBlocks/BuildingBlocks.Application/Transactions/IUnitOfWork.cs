@@ -20,19 +20,21 @@ namespace NexusStackNext.BuildingBlocks.Application.Transactions;
 /// </summary>
 public interface IUnitOfWork
 {
-    /// <summary>把当前跟踪到的改动刷进数据库。由分发器在处理器成功后调用。</summary>
+    /// <summary>把当前跟踪到的改动刷进数据库；命令路径由所属上下文的提交边界调用。</summary>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>受影响的行数。</returns>
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 在一个事务里执行操作。正常返回即提交；抛异常即回滚。
+    /// 在一个事务里执行操作。默认正常返回即提交；提交判据拒绝或抛异常则回滚并丢弃跟踪状态。
     /// </summary>
     /// <typeparam name="TResult">操作返回值类型。</typeparam>
     /// <param name="operation">要执行的操作。</param>
     /// <param name="cancellationToken">取消令牌。</param>
+    /// <param name="shouldCommit">返回值的提交判据；为空时正常返回即提交。</param>
     /// <returns>操作结果。</returns>
     Task<TResult> ExecuteInTransactionAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
+        Func<TResult, bool>? shouldCommit = null,
         CancellationToken cancellationToken = default);
 }

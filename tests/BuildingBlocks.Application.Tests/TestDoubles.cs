@@ -28,13 +28,14 @@ internal sealed class RecordingUnitOfWork(CallLog log) : IUnitOfWork
 
     public async Task<TResult> ExecuteInTransactionAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
+        Func<TResult, bool>? shouldCommit = null,
         CancellationToken cancellationToken = default)
     {
         log.Add("begin");
         try
         {
             var result = await operation(cancellationToken);
-            log.Add("commit");
+            log.Add((shouldCommit?.Invoke(result) ?? true) ? "commit" : "rollback");
             return result;
         }
         catch
