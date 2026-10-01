@@ -72,9 +72,7 @@ function Import-EnvFile {
 $count = Import-EnvFile -Path $envPath
 Write-Host "  已注入 $count 个变量（来自 env/$EnvFile）" -ForegroundColor DarkGray
 
-# **库连接串住在 test.dev 里**（`NEXUSSTACK_TEST_POSTGRES` 是集成测试用的那一条），
-# 而 AppHost 要的是"这个环境用哪套库"。只读主文件的话 `NEXUSSTACK_DB` 永远是空的——
-# 于是 AppHost 报"缺 NEXUSSTACK_DB"，而错的是读法，不是配置。
+# 测试环境文件可补充已有本地中间件配置；测试数据库不能作为实际宿主的隐式默认值。
 $auxPath = Join-Path $repoRoot 'env\test.dev'
 if ((Test-Path $auxPath) -and ($auxPath -ne $envPath)) {
     $aux = Import-EnvFile -Path $auxPath -OnlyIfUnset
@@ -85,14 +83,9 @@ if ((Test-Path $auxPath) -and ($auxPath -ne $envPath)) {
 #
 # AppHost 不直接读 AgileConfig（它是编排者，不是应用），所以这里把
 # "这个环境用哪套中间件"翻译成它认识的四个变量。
-$postgres = $env:NEXUSSTACK_TEST_POSTGRES
-if ([string]::IsNullOrWhiteSpace($postgres)) {
-    # 没有测试库连接串时，退回 master 凭据里的那一条（如果被注入过）。
-    $postgres = $env:ConnectionStrings__PostgreSQL
-}
-
-if (-not [string]::IsNullOrWhiteSpace($postgres)) {
-    [Environment]::SetEnvironmentVariable('NEXUSSTACK_DB', $postgres, 'Process')
+if ([string]::IsNullOrWhiteSpace($env:NEXUSSTACK_DB) -and
+    -not [string]::IsNullOrWhiteSpace($env:ConnectionStrings__Identity)) {
+    [Environment]::SetEnvironmentVariable('NEXUSSTACK_DB', $env:ConnectionStrings__Identity, 'Process')
 }
 
 # Redis / RabbitMQ / Seq 的地址同样从已注入的配置里推导。

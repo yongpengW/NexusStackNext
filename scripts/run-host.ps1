@@ -93,6 +93,15 @@ Jwt__SigningKey=
 # AgileConfig__Env=
 "@
     if ($Name -eq 'platform') {
+        $skeleton += @"
+
+# Identity 默认使用 PostgreSQL；连接串只保存在此文件或部署密钥中。
+ConnectionStrings__Identity=
+# 首次或升级：pwsh -File scripts/migrate-identity.ps1
+# 无库演示请显式使用以下两项（会丢失重启前数据）：
+# DOTNET_ENVIRONMENT=Development
+# Identity__Storage__Provider=Memory
+"@
         $skeleton += "`n# 文件存储根目录；留空则用 AppContext.BaseDirectory 下的 file-storage。`n# Files__StorageRoot=`n"
     }
     else {
@@ -146,8 +155,8 @@ Write-Host "  环境变量来源：env\$Name.dev（$loaded 项，只作用于本
 if ($empty.Count -gt 0) {
     # 空值**不阻止启动**（降级路径是设计的一部分），但要说清楚——
     # 否则"忘了填"会表现成"配置中心没生效"，而那是最难查的一类问题。
-    Write-Host "  以下变量是空的，会走降级路径：$($empty -join ', ')" -ForegroundColor Yellow
-    Write-Host '  应用仍会启动，只是不接配置中心。' -ForegroundColor Yellow
+    Write-Host "  以下变量是空的：$($empty -join ', ')" -ForegroundColor Yellow
+    Write-Host '  可选依赖可不配置；缺少 JWT 密钥或 Identity 数据库配置会阻止平台宿主启动。' -ForegroundColor Yellow
 }
 
 Write-Host "  地址：$($target.Urls)"

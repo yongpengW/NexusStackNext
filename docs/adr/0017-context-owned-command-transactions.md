@@ -2,6 +2,10 @@
 
 状态：accepted（2026-10-01）。票据：[Identity 命令事务归属与提交后权限缓存失效](https://github.com/yongpengW/NexusStackNext/issues/18)。
 
+后续修订：Identity 默认宿主已切换 PostgreSQL，会话版本随用户保存，不再提交后更新内存。
+见 [Identity ADR-0003](../../src/Services/Identity/docs/adr/0003-persist-user-session-version.md)。
+以下“默认内存”“本进程会话版本”描述保留该决定当时的范围。
+
 ## 问题
 
 平台宿主合并后，共享 Sender 从容器取得未区分上下文的 IUnitOfWork。

@@ -14,6 +14,7 @@ New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 $env:MSBUILDDISABLENODEREUSE = '1'
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
+$env:Identity__Storage__Provider = 'Memory'
 $env:Jwt__SigningKey = 'writepaths-check-signing-key-long-enough-hs256'
 $env:Jwt__Issuer = 'nexusstack'
 $env:Jwt__Audience = 'nexusstack'

@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Application.Validation;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -567,9 +566,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         // 令牌签发与轮换。它不是"基础设施"——里面全是策略（轮换、重放检测、撤销整条链）。
         services.AddScoped<TokenIssuer>();
 
-        // 会话版本：签发时读、过滤器比对。**Singleton**——它必须在整个进程里是同一份，
-        // 否则"撤销"只对某个作用域生效。
-        services.AddSingleton<ISessionVersionStore, InMemorySessionVersionStore>();
+        services.AddScoped<IQueryHandler<GetSessionVersionQuery, long>, GetSessionVersionHandler>();
         AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);

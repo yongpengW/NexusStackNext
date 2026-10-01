@@ -323,6 +323,16 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 /// </summary>
 public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
 {
+    protected override IHost CreateHost(IHostBuilder builder)
+    {
+        builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(
+            new Dictionary<string, string?>(StringComparer.Ordinal)
+            {
+                ["Identity:Storage:Provider"] = "Memory",
+            }));
+        return base.CreateHost(builder);
+    }
+
     /// <inheritdoc />
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {

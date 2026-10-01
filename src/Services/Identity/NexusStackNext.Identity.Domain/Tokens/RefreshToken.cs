@@ -23,17 +23,22 @@ public sealed class RefreshToken : AggregateRoot<RefreshTokenId>
         UserId userId,
         TokenHash tokenHash,
         DateTimeOffset issuedAt,
-        DateTimeOffset expiresAt)
+        DateTimeOffset expiresAt,
+        long sessionVersion)
         : base(id)
     {
         UserId = userId;
         TokenHash = tokenHash;
         IssuedAt = issuedAt;
         ExpiresAt = expiresAt;
+        SessionVersion = sessionVersion;
     }
 
     /// <summary>所属用户。</summary>
     public UserId UserId { get; }
+
+    /// <summary>签发时的用户会话版本；刷新时须与用户当前版本一致。</summary>
+    public long SessionVersion { get; }
 
     /// <summary>令牌哈希。<b>没有明文令牌属性，这是结构性的保证。</b></summary>
     public TokenHash TokenHash { get; }
@@ -59,16 +64,19 @@ public sealed class RefreshToken : AggregateRoot<RefreshTokenId>
     /// <param name="tokenHash">令牌哈希。</param>
     /// <param name="issuedAt">签发时刻。</param>
     /// <param name="lifetime">有效期。</param>
+    /// <param name="sessionVersion">签发时的会话版本。</param>
     /// <returns>成功时返回令牌；有效期不为正则失败。</returns>
     public static Result<RefreshToken> Issue(
         RefreshTokenId id,
         UserId userId,
         TokenHash tokenHash,
         DateTimeOffset issuedAt,
-        TimeSpan lifetime)
+        TimeSpan lifetime,
+        long sessionVersion = 0)
     {
         ArgumentNullException.ThrowIfNull(userId);
         ArgumentNullException.ThrowIfNull(tokenHash);
+        ArgumentOutOfRangeException.ThrowIfNegative(sessionVersion);
 
         if (lifetime <= TimeSpan.Zero)
         {
@@ -77,7 +85,7 @@ public sealed class RefreshToken : AggregateRoot<RefreshTokenId>
                 "刷新令牌有效期必须为正。"));
         }
 
-        var token = new RefreshToken(id, userId, tokenHash, issuedAt, issuedAt + lifetime);
+        var token = new RefreshToken(id, userId, tokenHash, issuedAt, issuedAt + lifetime, sessionVersion);
         token.Raise(new RefreshTokenIssued(id, userId, issuedAt));
         return Result.Success(token);
     }

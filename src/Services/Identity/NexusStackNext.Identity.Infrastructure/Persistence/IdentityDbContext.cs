@@ -251,6 +251,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     {
         modelBuilder.Entity<RefreshToken>(builder =>
         {
+            builder.Property(token => token.SessionVersion).IsRequired();
             builder.ToTable("refresh_tokens");
             builder.HasKey(token => token.Id);
 

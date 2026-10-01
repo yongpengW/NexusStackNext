@@ -163,6 +163,17 @@ public sealed class EfMenuTreeRepository(IdentityDbContext context) : IMenuTreeR
 /// <summary>把 Identity 的端口接到 EF Core 上。</summary>
 public static class IdentityEntityFrameworkServiceCollectionExtensions
 {
+    /// <summary>宿主的数据库启动检查与就绪探针；普通启动不执行迁移。</summary>
+    /// <param name="services">服务集合。</param>
+    /// <returns>同一个服务集合。</returns>
+    public static IServiceCollection AddIdentityDatabaseChecks(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddHostedService<IdentityDatabaseStartupCheck>();
+        services.AddHealthChecks().AddCheck<IdentityDatabaseHealthCheck>("identity-database");
+        return services;
+    }
+
     /// <summary>
     /// 注册 EF Core 适配器。
     ///

@@ -1,6 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Identity.Domain;
@@ -35,7 +34,6 @@ public sealed record TokenLifetimePolicy
 /// <param name="hasher">秘密串哈希。</param>
 /// <param name="ids">标识生成。</param>
 /// <param name="clock">时钟。</param>
-/// <param name="sessions">会话版本——撤销的落点（票据 11）。</param>
 /// <param name="transaction">命令提交边界。</param>
 /// <param name="policy">有效期策略；为 <c>null</c> 时用默认。</param>
 public sealed class TokenIssuer(
@@ -46,7 +44,6 @@ public sealed class TokenIssuer(
     ISecretHasher hasher,
     IIdGenerator ids,
     IClock clock,
-    ISessionVersionStore sessions,
     IdentityCommandTransaction transaction,
     TokenLifetimePolicy? policy = null)
 {
@@ -81,7 +78,7 @@ public sealed class TokenIssuer(
         var access = accessTokens.Issue(
             user.Id,
             user.UserName.Value,
-            sessions.Read(user.Id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+            user.SessionVersion,
             user.IsBuiltIn,
             now);
         if (access.IsFailure)
@@ -102,7 +99,8 @@ public sealed class TokenIssuer(
             user.Id,
             hash.Value,
             now,
-            _policy.RefreshToken);
+            _policy.RefreshToken,
+            user.SessionVersion);
 
         if (refresh.IsFailure)
         {
@@ -154,19 +152,25 @@ public sealed class TokenIssuer(
             return Result.Failure<TokenPair>(IdentityErrors.RefreshTokenUnusable("不存在"));
         }
 
+        var user = await users.FindAsync(stored.UserId, cancellationToken).ConfigureAwait(false);
+        if (user is null)
+        {
+            return Result.Failure<TokenPair>(IdentityErrors.UserNotFound());
+        }
+
+        // 先拒绝旧代凭据；反复重放旧令牌不能撤销后来重新登录取得的新会话。
+        if (stored.SessionVersion != user.SessionVersion)
+        {
+            return Result.Failure<TokenPair>(IdentityErrors.RefreshTokenUnusable("会话已撤销"));
+        }
+
         var now = clock.UtcNow;
 
         // 已经用过：**按被盗处理**，撤销整条链。
         if (stored.ConsumedAt is not null)
         {
-            await refreshTokens
-                .RevokeAllAsync(stored.UserId, now, "刷新令牌被重复使用（疑似泄露）", cancellationToken)
-                .ConfigureAwait(false);
-
-            // **刷新链断了还不够——已经发出去的访问令牌也必须立刻失效。**
-            // 只撤刷新令牌的话，攻击者手上那个访问令牌还能一直用到过期，
-            // 而"疑似泄露"要的正是立刻切断。
-            transaction.RevokeSessionAfterCommit(stored.UserId.Value);
+            // 只写用户聚合。两类令牌都携带版本，无须把全部刷新令牌载入同一事务。
+            user.RevokeSessions();
 
             var error = IdentityErrors.RefreshTokenUnusable("已被使用过");
             transaction.PreserveChangesOnRejection(error);
@@ -177,12 +181,6 @@ public sealed class TokenIssuer(
         {
             // 已不可用时 Consume 只返回领域错误，不修改状态。
             return Result.Failure<TokenPair>(stored.Consume(now).Error);
-        }
-
-        var user = await users.FindAsync(stored.UserId, cancellationToken).ConfigureAwait(false);
-        if (user is null)
-        {
-            return Result.Failure<TokenPair>(IdentityErrors.UserNotFound());
         }
 
         // 被禁用的账号不该靠刷新令牌续命——否则"禁用"只对下一次登录生效。

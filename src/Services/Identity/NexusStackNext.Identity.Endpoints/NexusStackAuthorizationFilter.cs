@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
+using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain.Authorization;
+using NexusStackNext.Identity.Application;
 
 namespace NexusStackNext.Identity.Endpoints;
 
@@ -33,7 +35,10 @@ public sealed record AuthorizationRequirement(AuthorizationMode Mode, Permission
 /// <para>这里**不配置化**：默认值就是最严的那一档，要放行必须有人写下那句话。
 /// 于是"新加了一个端点但忘了标注"的结果是 403（看得见），而不是对所有人开放（看不见）。</para>
 /// </summary>
-public sealed class NexusStackAuthorizationFilter : IEndpointFilter
+/// <param name="sender">Identity 查询入口。</param>
+/// <param name="currentUser">已认证身份。</param>
+/// <param name="checker">权限判定。</param>
+public sealed class NexusStackAuthorizationFilter(ISender sender, ICurrentUser currentUser, IPermissionChecker checker) : IEndpointFilter
 {
     /// <inheritdoc />
     public async ValueTask<object?> InvokeAsync(
@@ -60,20 +65,25 @@ public sealed class NexusStackAuthorizationFilter : IEndpointFilter
         var requirement = metadata?.GetMetadata<AuthorizationRequirement>()
             ?? new AuthorizationRequirement(AuthorizationMode.DenyAll);
 
-        var currentUser = http.RequestServices.GetService<ICurrentUser>();
-        var isAuthenticated = currentUser?.UserId is not null;
-        var isRoot = currentUser?.IsRoot ?? false;
+        var isAuthenticated = currentUser.UserId is not null;
+        var isRoot = currentUser.IsRoot;
 
         // **撤销检查排在权限之前。** 一个已被撤销的令牌不该继续走后面的判定——
         // 它连"这个身份现在还算不算数"都没过。
         if (isAuthenticated)
         {
-            var sessions = http.RequestServices.GetRequiredService<ISessionVersionStore>();
-            var current = sessions.Read(currentUser!.UserId!);
+            if (!long.TryParse(currentUser.UserId, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var userId) || userId <= 0)
+            {
+                return Unauthorized();
+            }
+
+            var current = await sender.QueryAsync(new GetSessionVersionQuery(userId), http.RequestAborted)
+                .ConfigureAwait(false);
 
             // 版本对不上就是"这个访问令牌已被撤销"——**包括令牌里根本没有版本声明**，
             // 那是 fail-closed：认不出来的身份不放行。
-            if (currentUser.SessionVersion != current)
+            if (current.IsFailure || currentUser.SessionVersion != current.Value)
             {
                 return Unauthorized();
             }
@@ -81,8 +91,6 @@ public sealed class NexusStackAuthorizationFilter : IEndpointFilter
 
         if (requirement.Mode == AuthorizationMode.PermissionKey && isAuthenticated && !isRoot)
         {
-            var checker = http.RequestServices.GetRequiredService<IPermissionChecker>();
-
             var checkedPermissions = await checker
                 .ReadAsync(currentUser!.UserId!, http.RequestAborted)
                 .ConfigureAwait(false);
