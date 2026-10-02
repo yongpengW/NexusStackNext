@@ -320,15 +320,7 @@ public sealed class CalendarSchedulingPersistenceTests
         }).ToArray();
         try
         {
-            await using var observer = new NpgsqlConnection(database.ConnectionString);
-            await observer.OpenAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (true)
-            {
-                await using var waiters = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'", observer);
-                if ((long)(await waiters.ExecuteScalarAsync(timeout.Token))! >= 2) { break; }
-                await Task.Delay(20, timeout.Token);
-            }
+            await WaitForBlockedWritersAsync(database.ConnectionString, 2);
         }
         finally { await transaction.RollbackAsync(); }
         var results = await Task.WhenAll(scans);

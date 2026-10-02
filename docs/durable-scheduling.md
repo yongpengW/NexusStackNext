@@ -66,7 +66,11 @@ Costing 设置 `Costing:Messaging:Enabled=true` 时同时发布成本结果并�
 
 先向 `POST /api/scheduling/tasks/preview` 提交 `{"rule":{...},"after":"2026-10-02T00:00:00Z","count":10}` 查看规范化规则及 UTC / 当地时刻。after 必须显式带 Z 或偏移；count 为 1 至 10。前瞻窗口五年，稀疏规则返回窗口内可用的项，零项返回 400；预览不会创建计划。创建、更新、恢复和扫描共用这个日历计算。
 
+五年窗口用于公共预览和新规则接受；已接受计划的扫描/恢复则在最多一个 Gregorian 400 年周期内直接求下一次，不枚举节拍。例如 `0 0 1 1 MON` 的 2029-01-01 发生，下一次在 2035-01-01；不能因为下一次超出预览窗口就丢弃当前发生。规则格式不含年份，搜索也不越过可表示日期上限。相同规范化规则的条件更新先识别空操作，仍在数据库裁决版本，当前五年预览为空不会使既有规则的空操作失败。
+
 时刻语义采用 Cronos 0.13.0：春季跳时缺口移到首个有效时刻；秋季固定当地时刻取较早的一次，周期表达式保留回拨两侧的发生。比如纽约 02:30 在春季跳时当天落在 03:00；秋季固定 01:30 只发生一次。不要把周期字段的范围改写成列表以追求文本统一，两者可能有不同 DST 语义。部署需要 OS/ICU/tzdata；升级时区数据前应预览未来时刻差异，已保存的下一 UTC 时刻和历史不会自动改写。
+
+Scheduling 启动和 `scheduling-calendar` readiness 检查固定探测 Etc/UTC、Asia/Shanghai、America/New_York、Australia/Lord_Howe 的解析与日历计算；环境缺失所需 IANA 能力时拒绝启动，健康检查报告不可用。此环境检查适用于 PostgreSQL 与开发 Memory 模式；个别既有计划失效仍按该计划退避处理，不因一个坏计划摘除整个宿主。Windows 不应开启禁用 IANA 转换的 NLS 模式；Unix 镜像应保留时区数据。故障测试在独立进程中使用 Windows NLS / Unix 空 TZDIR，避免污染其他测试进程。[.NET IANA 条件](https://learn.microsoft.com/en-us/dotnet/api/system.timezoneinfo.findsystemtimezonebyid)、[.NET Unix 时区目录实现](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Private.CoreLib/src/System/TimeZoneInfo.Unix.NonAndroid.cs)。
 
 `GET /api/scheduling/tasks?page=1&limit=50` 按稳定标识分页，最大页码 1000，每页最多 200；数据库内直接分页。返回 `version`、目标和下次时刻。暂停与恢复分别调用 `POST /api/scheduling/tasks/{id}/pause`、`/resume`，JSON 为 `{"expectedVersion":"1"}`；旧版本返回 409，重复暂停保持版本不变。
 

@@ -6,6 +6,11 @@ namespace NexusStackNext.Scheduling.Application;
 /// <summary>日历解析与时区计算的接口；创建、预览和运行期共用同一套计算规则。</summary>
 public interface IScheduleCalendar
 {
+    /// <summary>验证并规范化规则形状与时区，不要求预览窗口内有发生；用于识别已接受规则的空操作。</summary>
+    /// <param name="input">调用方规则。</param>
+    /// <returns>规范化规则，或校验错误。</returns>
+    Result<ScheduleRule> Normalize(ScheduleRuleInput input);
+
     /// <summary>验证并规范化规则，返回起点之后的有界预览，不写入计划。</summary>
     /// <param name="input">调用方规则。</param>
     /// <param name="after">排他的起点。</param>
@@ -13,7 +18,7 @@ public interface IScheduleCalendar
     /// <returns>规范化规则与发生时刻，或明确校验错误。</returns>
     Result<SchedulePreview> Preview(ScheduleRuleInput input, DateTimeOffset after, int count);
 
-    /// <summary>按持久规则计算严格晚于起点的下一时刻。</summary>
+    /// <summary>按持久规则计算严格晚于起点的下一时刻；有界搜索一个 Gregorian 400 年周期。</summary>
     /// <param name="rule">已保存的规则。</param>
     /// <param name="after">排他的 UTC 起点。</param>
     /// <returns>下一时刻，或规则当前不可计算。</returns>

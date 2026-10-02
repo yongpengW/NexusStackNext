@@ -87,7 +87,9 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
             await host.CrashAsync();
             var diagnostic = Path.Combine(Path.GetTempPath(), $"nsn-platform-startup-{Guid.NewGuid():N}.log");
             await File.WriteAllTextAsync(diagnostic, (await host._output) + Environment.NewLine + (await host._errors));
-            throw new InvalidOperationException($"平台子进程未就绪；exited={exited}; exitCode={exitCode}; lastStatus={lastStatus}。私有诊断：{diagnostic}；不回显日志内容。");
+            var failure = new InvalidOperationException($"平台子进程未就绪；exited={exited}; exitCode={exitCode}; lastStatus={lastStatus}。私有诊断：{diagnostic}；不回显日志内容。");
+            failure.Data["DiagnosticPath"] = diagnostic;
+            throw failure;
         }
         catch
         {

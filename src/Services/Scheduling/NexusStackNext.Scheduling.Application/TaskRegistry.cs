@@ -137,6 +137,13 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
         var task = await FindAsync(id, cancellationToken).ConfigureAwait(false);
         if (task is null) { return Result.Failure(new Error("scheduling.task.not_found", "计划不存在。")); }
         if (task.Version != expectedVersion) { return Result.Failure(Conflict); }
+        var normalized = calendar.Normalize(rule);
+        if (normalized.IsFailure) { return Result.Failure(normalized.Error); }
+        if (normalized.Value == task.Rule)
+        {
+            // 已接受的稀疏规则不因当前预览窗口为空而失去空操作语义；存储仍须裁决并发版本。
+            return await store.SaveAsync(task, expectedVersion, cancellationToken).ConfigureAwait(false);
+        }
         var now = clock.UtcNow;
         var preview = calendar.Preview(rule, now, 1);
         if (preview.IsFailure) { return Result.Failure(preview.Error); }

@@ -30,6 +30,8 @@ public static class SchedulingModule
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
         services.AddSingleton<IScheduleCalendar, CronScheduleCalendar>();
+        services.AddHostedService<SchedulingCalendarRuntimeCheck>();
+        services.AddHealthChecks().AddCheck<SchedulingCalendarRuntimeCheck>("scheduling-calendar");
         var provider = configuration["Scheduling:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))

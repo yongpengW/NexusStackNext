@@ -10,6 +10,44 @@ namespace NexusStackNext.Scheduling.Application.Tests;
 public sealed class SchedulingTests
 {
     [Theory]
+    [InlineData("0 0 1 1 MON", "2029-01-01", "2035-01-01", "FireOnce")]
+    [InlineData("0 0 1 1 MON", "2029-01-01", "2035-01-01", "Skip")]
+    [InlineData("0 0 29 2 MON", "2044-02-29", "2072-02-29", "FireOnce")]
+    [InlineData("0 0 29 2 MON", "2044-02-29", "2072-02-29", "Skip")]
+    public async Task AcceptedSparseRule_TriggersOnTime_AndSameRuleRemainsANoOp(string expression, string dueDate, string nextDate, string policy)
+    {
+        var due = DateTimeOffset.Parse(dueDate + "T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var next = DateTimeOffset.Parse(nextDate + "T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(due.AddYears(-1));
+        var calendar = new CronScheduleCalendar();
+        var registry = new TaskRegistry(store, new SequentialIdGenerator(), clock, calendar);
+        var input = new ScheduleRuleInput("Cron", expression, "UTC", MisfirePolicy: policy);
+        var created = await registry.DefineAsync(Code("sparse"), input, Target, "42");
+        Assert.True(created.IsSuccess);
+        Assert.Equal(due, created.Value.NextRunAt);
+        clock.UtcNow = due;
+        // 公共预览仍限五年；这个窗口不能吞掉已经接受的当前发生。
+        Assert.Equal("scheduling.next_run.unavailable", calendar.Preview(input, due, 1).Error.Code);
+        var runner = new ScheduleRunner(store, clock, calendar);
+        var result = await runner.RunOnceAsync();
+        Assert.Equal(1, result.Triggered);
+        Assert.Empty(result.FailedPlanIds);
+        Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+        var decision = Assert.Single((await store.ReadDecisionsAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.Equal("Triggered", decision.Kind);
+        Assert.Equal(due, decision.ScheduledAt);
+        Assert.Equal(next, decision.NextRunAt);
+        Assert.Single((await store.ReadOccurrencesAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.True((await registry.UpdateRuleAsync(created.Value.Id, 2, input with { Expression = "  " + expression + "  " })).IsSuccess);
+        var saved = Assert.IsType<ScheduledTask>(await store.FindAsync(created.Value.Id));
+        Assert.Equal(2, saved.Version);
+        Assert.Equal(1, saved.ScheduleRevision);
+        Assert.Equal(next, saved.NextRunAt);
+        Assert.Equal(TaskRegistry.Conflict, (await registry.UpdateRuleAsync(saved.Id, 1, input)).Error);
+    }
+
+    [Theory]
     [InlineData("FireOnce", 29999999, "Triggered", 1, 31)]
     [InlineData("Skip", 29999999, "Triggered", 1, 31)]
     [InlineData("FireOnce", 30000000, "Triggered", 1, 32)]
