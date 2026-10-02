@@ -18,7 +18,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
         try { cost = new SystemTextJsonIntegrationEventSerializer().Deserialize<CostCalculatedV1>(envelope.Payload); }
         catch (Exception error) when (error is System.Text.Json.JsonException or InvalidOperationException or ArgumentException) { return false; }
         if (cost.EventId != envelope.MessageId || cost.ItemId == Guid.Empty || cost.CostRevision <= 0
-            || !PriceQuote.IsValidInput(cost.UnitCost, 0)) { return false; }
+            || !PriceQuote.IsValidInput(cost.UnitCost, 0) || cost.ExecutionOrigin is { } origin && !origin.IsValid()) { return false; }
 
         database.ChangeTracker.Clear();
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -30,6 +30,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
             && x.MessageId == envelope.MessageId, cancellationToken).ConfigureAwait(false);
         var fingerprint = database.Entry(receipt).Property<string?>(PricingDbContext.CostPayloadHashProperty);
         var canonical = FormattableString.Invariant($"{cost.ItemId:D}|{cost.CostRevision}|{cost.UnitCost:G29}|{cost.OccurredAt.UtcTicks}");
+        if (cost.ExecutionOrigin is not null) { canonical += "|origin:" + System.Text.Json.JsonSerializer.Serialize(cost.ExecutionOrigin); }
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
         if (!first) { return fingerprint.CurrentValue == hash; }
         // 包括被忽略的旧版本：同一身份以后也不能换成另一项工作。
@@ -57,6 +58,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
                 TaskId = envelope.MessageId,
                 ItemId = id,
                 Origin = "costing",
+                ExecutionOrigin = cost.ExecutionOrigin,
                 Cost = quote.Cost,
                 FeeRate = quote.FeeRate,
                 InputRevision = quote.InputRevision,

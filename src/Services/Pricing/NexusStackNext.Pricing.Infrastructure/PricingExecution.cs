@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Pricing.Application;
@@ -7,7 +8,7 @@ using NexusStackNext.Pricing.Domain;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
-internal sealed class PricingExecution(PricingDbContext database, PricingTaskOptions options) : ICommandHandler<ClaimPricingWork, PricingWorkLease?>,
+internal sealed class PricingExecution(PricingDbContext database, PricingTaskOptions options, IBackgroundExecutionObservation observations) : ICommandHandler<ClaimPricingWork, PricingWorkLease?>,
     ICommandHandler<CompletePricingWork, bool>, ICommandHandler<FailPricingWork, bool>, ICommandHandler<RetryPricingWork, RecalculationStatus>
 {
     private readonly PostgresTaskExecution<RecalculationEntry> _execution = new(database, "pricing", options);
@@ -28,17 +29,29 @@ internal sealed class PricingExecution(PricingDbContext database, PricingTaskOpt
     }
     public async Task<Result<bool>> HandleAsync(CompletePricingWork command, CancellationToken cancellationToken = default)
     {
-        database.ChangeTracker.Clear();
-        var input = await database.Tasks.AsNoTracking().SingleOrDefaultAsync(x => x.TaskId == command.TaskId, cancellationToken).ConfigureAwait(false);
-        if (input is null) { return Result.Success(false); }
-        // 耗时计算的缝在短事务之外；首轮只有一个确定的演示公式。
-        var price = PriceQuote.Calculate(input.Cost, input.FeeRate);
-        return Result.Success(await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
+        var result = await observations.ObserveAsync(new TaskExecutionDescriptor("pricing.calculate", command.TaskId, command.Epoch), async () =>
         {
-            await database.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
-            var quote = await database.Quotes.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
-            return quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
-        }, cancellationToken).ConfigureAwait(false));
+            database.ChangeTracker.Clear();
+            var input = await database.Tasks.AsNoTracking().SingleOrDefaultAsync(x => x.TaskId == command.TaskId, cancellationToken).ConfigureAwait(false);
+            return new BackgroundExecutionInput<RecalculationEntry?>(input, input?.ExecutionOrigin);
+        }, async input =>
+        {
+            if (input is null) { return (Committed: false, Completion: TaskCompletion.Superseded); }
+            // 耗时计算的缝在短事务之外；首轮只有一个确定的演示公式。
+            var price = PriceQuote.Calculate(input.Cost, input.FeeRate);
+            var completion = TaskCompletion.Superseded;
+            var committed = await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
+            {
+                await database.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
+                var quote = await database.Quotes.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
+                completion = quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
+                return completion;
+            }, cancellationToken).ConfigureAwait(false);
+            return (Committed: committed, Completion: completion);
+        }, static result => !result.Committed ? BackgroundExecutionOutcome.LeaseLost
+            : result.Completion == TaskCompletion.Succeeded ? BackgroundExecutionOutcome.Completed : BackgroundExecutionOutcome.Superseded,
+            cancellationToken).ConfigureAwait(false);
+        return Result.Success(result.Committed);
     }
 }

@@ -42,9 +42,7 @@ public sealed class OperationObservation : Entity<OperationObservationId>
         ArgumentNullException.ThrowIfNull(data);
         if (messageId.Value == Guid.Empty || data.OperationId.Value == Guid.Empty || data.OccurredAt == default || data.OccurredAt.Offset != TimeSpan.Zero
             || recordedAt == default || recordedAt.Offset != TimeSpan.Zero || !Safe(data.Source, 64) || !Safe(data.TraceId, 128)
-            || (data.ActorId is not null && !Safe(data.ActorId, 200)) || data.Kind != "http"
-            || !Safe(data.HttpMethod, 16) || (data.HttpMethod != "M-SEARCH" && !data.HttpMethod!.All(char.IsAsciiLetter))
-            || (data.RouteTemplate is not null && (!Safe(data.RouteTemplate, 500) || !data.RouteTemplate.StartsWith('/')))
+            || (data.ActorId is not null && !Safe(data.ActorId, 200)) || !ValidKind(data)
             || (data.Metadata is not null && !data.Metadata.IsValid())
             || !ValidPhase(data))
         {
@@ -53,9 +51,29 @@ public sealed class OperationObservation : Entity<OperationObservationId>
         return Result.Success(new OperationObservation(messageId) { Data = data, RecordedAt = recordedAt });
     }
 
+    private static bool ValidKind(OperationObservationData data) => data.Kind switch
+    {
+        "http" => Safe(data.HttpMethod, 16) && (data.HttpMethod == "M-SEARCH" || data.HttpMethod!.All(char.IsAsciiLetter))
+            && (data.RouteTemplate is null || Safe(data.RouteTemplate, 500) && data.RouteTemplate.StartsWith('/'))
+            && (data.Metadata is null || data.Metadata.ExecutionRole is "endpoint" or "proxy"),
+        "command" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null
+            && data.Metadata is { ExecutionRole: "command" },
+        "task" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null
+            && data.Metadata is { ExecutionRole: "task", TaskId: not null, TaskEpoch: > 0, RootOperationId: not null },
+        "schedule" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null && data.ActorId is null
+            && data.Metadata is { ExecutionRole: "schedule", SchedulePlanId: > 0, ScheduleExpectedVersion: > 0, ScheduleDecisionId: not null, RootOperationId: not null },
+        _ => false,
+    };
+
     private static bool ValidPhase(OperationObservationData data) => data.Phase switch
     {
         "started" => data.Outcome is null && data.StatusCode is null && data.DurationMs is null,
+        "finished" when data.Kind == "command" => data.DurationMs is >= 0
+            && data.Outcome is "accepted" or "completed" or "rejected" or "failed" or "canceled",
+        "finished" when data.Kind == "task" => data.DurationMs is >= 0
+            && data.Outcome is "completed" or "superseded" or "lease_lost" or "failed" or "canceled",
+        "finished" when data.Kind == "schedule" => data.DurationMs is >= 0
+            && data.Outcome is "accepted" or "skipped" or "rejected" or "failed" or "canceled",
         "finished" => data.DurationMs is >= 0 && (data.Outcome switch
         {
             "accepted" => data.StatusCode == 202,

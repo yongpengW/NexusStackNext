@@ -203,6 +203,9 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("ExecutionOrigin")
+                        .HasColumnType("jsonb");
+
                     b.Property<long>("ExpectedVersion")
                         .HasColumnType("bigint");
 

@@ -20,7 +20,7 @@ public sealed record OperationQuery(int Page, int Limit, string? Source = null, 
     /// <returns>有效或过滤条件错误。</returns>
     public Result Validate() => Page is >= 1 and <= 1000 && Limit is >= 1 and <= 100
         && Optional(Source, 64) && Optional(ActorId, 200) && Optional(TraceId, 128) && OperationId != Guid.Empty
-        && (Outcome is null or "unconfirmed" or "completed" or "accepted" or "rejected" or "failed" or "canceled")
+        && (Outcome is null or "unconfirmed" or "completed" or "accepted" or "rejected" or "failed" or "canceled" or "superseded" or "lease_lost" or "skipped")
         && (From is null || To is null || From <= To)
         ? Result.Success() : Result.Failure(new Error("auditing.operations.query_invalid", "操作查询的分页、过滤条件或时间范围无效。"));
 

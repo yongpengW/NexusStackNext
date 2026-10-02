@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Infrastructure;
@@ -14,6 +15,50 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
 {
     public Task InitializeAsync() => database.ResetAsync();
     public Task DisposeAsync() => Task.CompletedTask;
+
+    [PostgresFact]
+    public async Task OccurrenceReplay_CannotChangeRemoveOrBackfillItsExecutionOrigin()
+    {
+        var id = Guid.NewGuid();
+        var origin = new ExecutionOrigin(id, "platform", id, "platform", "42", id.ToString("N"));
+        var triggered = Trigger(Guid.NewGuid()) with { ExecutionOrigin = origin };
+        var legacy = triggered with { EventId = Guid.NewGuid(), TriggerSequence = 2, ExecutionOrigin = null };
+        await using (var application = CreateApplication())
+        await using (var scope = application.CreateAsyncScope())
+        {
+            Assert.True((await scope.ServiceProvider.GetRequiredService<ISender>().SendAsync(new UpdateCostInputs(Guid.NewGuid(), triggered.TargetId, 0, 80m, 20m))).IsSuccess);
+            Assert.True(await Processor(scope).HandleAsync(Envelope(triggered)));
+            Assert.True(await Processor(scope).HandleAsync(Envelope(legacy)));
+        }
+        await using var reopened = CreateApplication();
+        await using var reopenedScope = reopened.CreateAsyncScope();
+        var processor = Processor(reopenedScope);
+        Assert.True(await processor.HandleAsync(Envelope(triggered)));
+        Assert.True(await processor.HandleAsync(Envelope(legacy)));
+        Assert.False(await processor.HandleAsync(Envelope(triggered with { ExecutionOrigin = origin with { InitiatorId = "changed" } })));
+        Assert.False(await processor.HandleAsync(Envelope(triggered with { ExecutionOrigin = null })));
+        Assert.False(await processor.HandleAsync(Envelope(legacy with { ExecutionOrigin = origin })));
+        var sender = reopenedScope.ServiceProvider.GetRequiredService<ISender>();
+        Assert.Equal(origin, (await sender.QueryAsync(new GetCostCalculation(triggered.EventId))).Value.ExecutionOrigin);
+        Assert.Null((await sender.QueryAsync(new GetCostCalculation(legacy.EventId))).Value.ExecutionOrigin);
+    }
+
+    [PostgresFact]
+    public async Task MalformedOccurrenceOrigin_IsRejectedBeforeReceipt_AndCorrectedDeliveryCanBeAccepted()
+    {
+        await using var app = CreateApplication();
+        await using var scope = app.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var id = Guid.NewGuid();
+        var origin = new ExecutionOrigin(id, "platform", id, "platform", "42", id.ToString("N"));
+        var triggered = Trigger(Guid.NewGuid()) with { ExecutionOrigin = origin };
+        Assert.True((await sender.SendAsync(new UpdateCostInputs(Guid.NewGuid(), triggered.TargetId, 0, 80m, 20m))).IsSuccess);
+        Assert.False(await Processor(scope).HandleAsync(Envelope(triggered with { ExecutionOrigin = origin with { Source = "unsafe\nsource" } })));
+        Assert.True((await sender.QueryAsync(new GetScheduledCostReceipt(triggered.EventId))).IsFailure);
+        Assert.True((await sender.QueryAsync(new GetCostCalculation(triggered.EventId))).IsFailure);
+        Assert.True(await Processor(scope).HandleAsync(Envelope(triggered)));
+        Assert.Equal(origin, (await sender.QueryAsync(new GetCostCalculation(triggered.EventId))).Value.ExecutionOrigin);
+    }
 
     [PostgresFact]
     public async Task OccurrenceIdAlreadyUsedByManualWork_IsStablyRejected_WithoutChangingTheManualRequest()

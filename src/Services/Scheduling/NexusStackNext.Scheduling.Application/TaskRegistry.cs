@@ -1,4 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Costing.Contracts;
@@ -22,7 +23,9 @@ namespace NexusStackNext.Scheduling.Application;
 /// <param name="ids">标识生成器。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="calendar">日历计算。</param>
-public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IClock clock, IScheduleCalendar calendar)
+/// <param name="execution">当前定义操作；未组合观察模块的独立应用可不提供。</param>
+public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IClock clock, IScheduleCalendar calendar,
+    IExecutionContext? execution = null)
 {
     /// <summary>管理查询的最大页码。</summary>
     public const int MaximumPage = 1000;
@@ -51,7 +54,7 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
         var created = ScheduledTask.Create(new ScheduledTaskId(ids.NextId()), code, preview.Value.Rule,
             preview.Value.Rule.Kind == "Interval" ? now : preview.Value.Times[0].Utc, target, createdBy);
         if (created.IsFailure) { return created; }
-        var saved = await store.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
+        var saved = await store.AddAsync(created.Value, execution?.Capture(), cancellationToken).ConfigureAwait(false);
         return saved.IsSuccess ? created : Result.Failure<ScheduledTask>(saved.Error);
     }
 
@@ -87,7 +90,7 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
             return created;
         }
 
-        var saved = await store.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
+        var saved = await store.AddAsync(created.Value, execution?.Capture(), cancellationToken).ConfigureAwait(false);
         return saved.IsSuccess ? created : Result.Failure<ScheduledTask>(saved.Error);
     }
 

@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.PlatformHost;
@@ -330,9 +331,11 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
                 services.RemoveAll<TaskRegistry>();
                 services.RemoveAll<ScheduleRunner>();
                 services.AddScoped(provider => new TaskRegistry(provider.GetRequiredService<IScheduledTaskStore>(),
-                    provider.GetRequiredService<IIdGenerator>(), clock, provider.GetRequiredService<IScheduleCalendar>()));
+                    provider.GetRequiredService<IIdGenerator>(), clock, provider.GetRequiredService<IScheduleCalendar>(),
+                    provider.GetRequiredService<IExecutionContext>()));
                 services.AddScoped(provider => new ScheduleRunner(provider.GetRequiredService<IScheduledTaskStore>(),
-                    clock, provider.GetRequiredService<IScheduleCalendar>()));
+                    clock, provider.GetRequiredService<IScheduleCalendar>(), provider.GetRequiredService<IBackgroundExecutionObservation>(),
+                    provider.GetRequiredService<IExecutionContext>()));
             });
         }
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(

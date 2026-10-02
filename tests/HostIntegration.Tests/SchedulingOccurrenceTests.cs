@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.Auditing.Infrastructure;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.TestSupport;
@@ -54,6 +56,25 @@ public sealed class SchedulingOccurrenceTests
         var page = await client.GetFromJsonAsync<JsonElement>(Relative("/api/scheduling/tasks/"));
         var plan = Assert.Single(page.GetProperty("data").EnumerateArray());
         Assert.Equal(2, plan.GetProperty("version").ReadHttpInt64());
+
+        await using var observationScope = app.Services.CreateAsyncScope();
+        var journal = observationScope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+        var phases = (await OperationEndpointInventoryTests.ReadAsync(journal)).Where(item => item.Kind == "schedule").ToArray();
+        Assert.Equal(4, phases.Length);
+        Assert.Equal(2, phases.Select(item => item.OperationId).Distinct().Count());
+        var accepted = Assert.Single(phases, item => item.Outcome == "accepted");
+        var rejected = Assert.Single(phases, item => item.Outcome == "rejected");
+        Assert.NotEqual(accepted.OperationId, rejected.OperationId);
+        Assert.NotEqual(accepted.Metadata!.ScheduleDecisionId, rejected.Metadata!.ScheduleDecisionId);
+        Assert.Equal(occurrence.GetProperty("occurrenceId").GetGuid(), accepted.Metadata.ScheduleDecisionId);
+        Assert.All(phases, phase =>
+        {
+            Assert.Null(phase.ActorId);
+            Assert.Equal(id, phase.Metadata!.SchedulePlanId);
+            Assert.Equal(1, phase.Metadata.ScheduleExpectedVersion);
+            Assert.NotNull(phase.Metadata.InitiatorId);
+            Assert.Equal(accepted.Metadata.RootOperationId, phase.Metadata.RootOperationId);
+        });
     }
 
     [PostgresFact]
@@ -100,6 +121,21 @@ public sealed class SchedulingOccurrenceTests
         var recovered = Assert.Single(await HistoryAsync(client, broken));
         Assert.Equal(1, recovered.GetProperty("triggerSequence").ReadHttpInt64());
         Assert.Equal("Pending", recovered.GetProperty("deliveryState").GetString());
+
+        var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+        var phases = (await OperationEndpointInventoryTests.ReadAsync(journal))
+            .Where(item => item.Kind == "schedule" && item.Metadata!.SchedulePlanId == broken).ToArray();
+        Assert.Equal(4, phases.Length);
+        var failed = Assert.Single(phases, item => item.Outcome == "failed");
+        var accepted = Assert.Single(phases, item => item.Outcome == "accepted");
+        Assert.NotEqual(failed.OperationId, accepted.OperationId);
+        Assert.Equal(1, failed.Metadata!.ScheduleExpectedVersion);
+        Assert.Equal(2, accepted.Metadata!.ScheduleExpectedVersion);
+        Assert.Equal(failed.Metadata.RootOperationId, accepted.Metadata.RootOperationId);
+        Assert.Equal(failed.Metadata.InitiatorId, accepted.Metadata.InitiatorId);
+        Assert.NotEqual(failed.Metadata.ScheduleDecisionId, recovered.GetProperty("occurrenceId").GetGuid());
+        Assert.Equal(accepted.Metadata.ScheduleDecisionId, recovered.GetProperty("occurrenceId").GetGuid());
+        Assert.DoesNotContain(phases, item => item.Outcome == "completed");
     }
 
     [PostgresFact]

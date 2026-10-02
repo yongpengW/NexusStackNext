@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -14,6 +15,7 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     private readonly Dictionary<Guid, ScheduleOccurrence> _occurrences = [];
     private readonly Dictionary<Guid, ScheduleDecision> _decisions = [];
     private readonly Dictionary<Guid, OutboxEntry> _outbox = [];
+    private readonly Dictionary<long, ExecutionOrigin?> _origins = [];
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default)
@@ -61,7 +63,7 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     }
 
     /// <inheritdoc />
-    public Task<Result> AddAsync(ScheduledTask task, CancellationToken cancellationToken = default)
+    public Task<Result> AddAsync(ScheduledTask task, ExecutionOrigin? origin = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
         cancellationToken.ThrowIfCancellationRequested();
@@ -72,8 +74,17 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
                 return Task.FromResult(Result.Failure(TaskRegistry.CodeTaken));
             }
             _tasks.Add(task.Id.Value, task.Snapshot());
+            _origins.Add(task.Id.Value, origin);
             return Task.FromResult(Result.Success());
         }
+    }
+
+    /// <inheritdoc />
+    public Task<ExecutionOrigin?> ReadExecutionOriginAsync(ScheduledTaskId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_writes) { return Task.FromResult(_origins.GetValueOrDefault(id.Value)); }
     }
 
     /// <inheritdoc />

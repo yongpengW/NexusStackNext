@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -39,9 +40,16 @@ public interface IScheduledTaskStore
 
     /// <summary>新增计划；编码竞争必须在存储内原子裁决。</summary>
     /// <param name="task">任务。</param>
+    /// <param name="origin">首次定义的操作来源；随计划保存，之后不改写。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>提交结果。</returns>
-    Task<Result> AddAsync(ScheduledTask task, CancellationToken cancellationToken = default);
+    Task<Result> AddAsync(ScheduledTask task, ExecutionOrigin? origin = null, CancellationToken cancellationToken = default);
+
+    /// <summary>读取计划首次定义时保存的来源；旧计划可能没有该信息。</summary>
+    /// <param name="id">计划标识。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>最初来源，或未保存来源。</returns>
+    Task<ExecutionOrigin?> ReadExecutionOriginAsync(ScheduledTaskId id, CancellationToken cancellationToken = default);
 
     /// <summary>原子比较原版本并保存；冲突不修改任何状态。</summary>
     /// <param name="task">修改后的独立快照。</param>
@@ -104,7 +112,10 @@ public sealed record ScheduleRunResult(int Examined, int Triggered, int Skipped)
 /// <param name="store">任务存储。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="calendar">与预览共用的时刻计算。</param>
-public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, IScheduleCalendar calendar)
+/// <param name="observations">后台执行观察；独立应用可不组合。</param>
+/// <param name="execution">当前执行关联。</param>
+public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, IScheduleCalendar calendar,
+    IBackgroundExecutionObservation? observations = null, IExecutionContext? execution = null)
 {
     /// <summary>单轮最多处理多少个任务。</summary>
     public const int DefaultBatchSize = 50;
@@ -134,30 +145,26 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
                     continue;
                 }
 
-                var expectedVersion = task.Version;
-                var scheduledAt = task.NextRunAt!.Value;
-                var next = calendar.NextOccurrence(task.Rule, now);
-                if (next.IsFailure)
-                {
-                    failed.Add(task.Id.Value);
-                    await DeferAsync(original, now, next.Error.Code, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-                var misfire = task.Rule.Kind != "Interval" && now - scheduledAt > TimeSpan.FromSeconds(task.Rule.GraceSeconds!.Value);
-                var trigger = !misfire || task.Rule.MisfirePolicy != "Skip";
-                if (task.Advance(now, next.Value, trigger).IsFailure)
-                {
-                    skipped++;
-                    continue;
-                }
-
                 var id = Guid.NewGuid();
-                var occurrence = trigger ? new ScheduleOccurrence(id, task.Id.Value, task.TriggerSequence, scheduledAt, now,
-                    task.Target.Kind, task.Target.SubjectId, task.DelegatedBy) : null;
-                var decision = new ScheduleDecision(id, task.Id.Value, task.Version, task.ScheduleRevision, task.Rule,
-                    !trigger ? "Skipped" : misfire ? "Coalesced" : "Triggered", scheduledAt, now, next.Value, occurrence?.OccurrenceId);
-                var saved = await store.RecordDecisionAsync(task, expectedVersion, decision, occurrence, cancellationToken).ConfigureAwait(false);
-                if (saved.IsSuccess && trigger) { triggered++; }
+                var attempt = observations is null
+                    ? await DecideAsync(task, original, id, now,
+                        await store.ReadExecutionOriginAsync(task.Id, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false)
+                    : await observations.ObserveAsync(new ScheduleExecutionDescriptor("scheduling.decide", task.Id.Value, task.Version, id, task.DelegatedBy),
+                        async () =>
+                        {
+                            var origin = await store.ReadExecutionOriginAsync(task.Id, cancellationToken).ConfigureAwait(false);
+                            return new BackgroundExecutionInput<ExecutionOrigin?>(origin, origin);
+                        },
+                        origin => DecideAsync(task, original, id, now, origin, cancellationToken),
+                        static result => result switch
+                        {
+                            DecisionResult.Triggered => BackgroundExecutionOutcome.Accepted,
+                            DecisionResult.Skipped => BackgroundExecutionOutcome.Skipped,
+                            DecisionResult.Rejected => BackgroundExecutionOutcome.Rejected,
+                            _ => BackgroundExecutionOutcome.Failed,
+                        }, cancellationToken).ConfigureAwait(false);
+                if (attempt == DecisionResult.Triggered) { triggered++; }
+                else if (attempt == DecisionResult.Failed) { failed.Add(task.Id.Value); }
                 else { skipped++; }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -171,6 +178,32 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
         var result = new ScheduleRunResult(due.Count, triggered, skipped);
         return failed.Count == 0 ? result : result with { FailedPlanIds = failed.ToArray() };
     }
+
+    private async Task<DecisionResult> DecideAsync(ScheduledTask task, ScheduledTask original, Guid id, DateTimeOffset now,
+        ExecutionOrigin? origin, CancellationToken cancellationToken)
+    {
+        var expectedVersion = task.Version;
+        var scheduledAt = task.NextRunAt!.Value;
+        var next = calendar.NextOccurrence(task.Rule, now);
+        if (next.IsFailure)
+        {
+            await DeferAsync(original, now, next.Error.Code, cancellationToken).ConfigureAwait(false);
+            return DecisionResult.Failed;
+        }
+        var misfire = task.Rule.Kind != "Interval" && now - scheduledAt > TimeSpan.FromSeconds(task.Rule.GraceSeconds!.Value);
+        var trigger = !misfire || task.Rule.MisfirePolicy != "Skip";
+        if (task.Advance(now, next.Value, trigger).IsFailure) { return DecisionResult.Rejected; }
+
+        var occurrence = trigger ? new ScheduleOccurrence(id, task.Id.Value, task.TriggerSequence, scheduledAt, now,
+            task.Target.Kind, task.Target.SubjectId, task.DelegatedBy)
+        { ExecutionOrigin = execution?.Capture() ?? origin } : null;
+        var decision = new ScheduleDecision(id, task.Id.Value, task.Version, task.ScheduleRevision, task.Rule,
+            !trigger ? "Skipped" : misfire ? "Coalesced" : "Triggered", scheduledAt, now, next.Value, occurrence?.OccurrenceId);
+        var saved = await store.RecordDecisionAsync(task, expectedVersion, decision, occurrence, cancellationToken).ConfigureAwait(false);
+        return saved.IsFailure ? DecisionResult.Rejected : trigger ? DecisionResult.Triggered : DecisionResult.Skipped;
+    }
+
+    private enum DecisionResult { Triggered, Skipped, Rejected, Failed }
 
     private async Task DeferAsync(ScheduledTask original, DateTimeOffset now, string errorCode, CancellationToken cancellationToken)
     {

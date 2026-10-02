@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.Costing.Contracts;
 
@@ -15,4 +17,7 @@ public sealed record CostCalculatedV1 : IntegrationEvent
     public required long CostRevision { get; init; }
     /// <summary>单位成本，最多四位小数；不包含 Pricing 的费率。</summary>
     public required decimal UnitCost { get; init; }
+    /// <summary>产出该结果的执行与原始操作；只用于调查关联。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExecutionOrigin? ExecutionOrigin { get; init; }
 }

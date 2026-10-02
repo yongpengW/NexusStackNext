@@ -1,3 +1,5 @@
+using NexusStackNext.BuildingBlocks.Application.Operations;
+
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 
 /// <summary>上下文数据库内的执行元数据；不是业务聚合或跨上下文任务仓库。</summary>
@@ -5,6 +7,8 @@ public abstract class DurableTaskRecord
 {
     /// <summary>由调用方提供的稳定工作标识。</summary>
     public Guid TaskId { get; set; }
+    /// <summary>受理时保存的来源；同一业务请求重放不覆盖，旧任务可能为空。</summary>
+    public ExecutionOrigin? ExecutionOrigin { get; set; }
     /// <summary>当前执行状态。</summary>
     public string State { get; set; } = "Pending";
     /// <summary>最早领取时刻。</summary>

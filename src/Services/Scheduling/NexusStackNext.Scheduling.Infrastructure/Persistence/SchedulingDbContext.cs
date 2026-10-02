@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -14,6 +15,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
 {
     /// <summary>所属 schema。</summary>
     public const string SchemaName = "scheduling";
+    internal const string ExecutionOriginProperty = "ExecutionOrigin";
     /// <summary>计划定义。</summary>
     public DbSet<ScheduledTask> Plans => Set<ScheduledTask>();
     /// <summary>本上下文已登记的触发事实。</summary>
@@ -42,6 +44,10 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
             .HasMaxLength(TaskCode.MaxLength).IsRequired();
         plan.HasIndex(task => task.Code).IsUnique().HasDatabaseName("ux_plans_code");
         plan.Property(task => task.DelegatedBy).HasMaxLength(128).IsRequired();
+        plan.Property<ExecutionOrigin?>(ExecutionOriginProperty).HasColumnType("jsonb").HasConversion(
+            origin => JsonSerializer.Serialize(origin, JsonSerializerOptions.Default),
+            json => JsonSerializer.Deserialize<ExecutionOrigin>(json, JsonSerializerOptions.Default))
+            .Metadata.SetAfterSaveBehavior(Microsoft.EntityFrameworkCore.Metadata.PropertySaveBehavior.Ignore);
         plan.Property(task => task.Version).IsConcurrencyToken().ValueGeneratedNever();
         plan.Property(task => task.LastSchedulingErrorCode).HasMaxLength(96);
         plan.Ignore(task => task.Interval);
@@ -74,6 +80,9 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         occurrence.HasIndex(item => new { item.PlanId, item.TriggerSequence }).IsUnique().HasDatabaseName("ux_occurrences_plan_sequence");
         occurrence.Property(item => item.TargetKind).HasMaxLength(TaskCode.MaxLength).IsRequired();
         occurrence.Property(item => item.CreatedBy).HasMaxLength(128).IsRequired();
+        occurrence.Property(item => item.ExecutionOrigin).HasColumnType("jsonb").HasConversion(
+            origin => JsonSerializer.Serialize(origin, JsonSerializerOptions.Default),
+            json => JsonSerializer.Deserialize<ExecutionOrigin>(json, JsonSerializerOptions.Default));
         var decision = modelBuilder.Entity<ScheduleDecision>();
         decision.ToTable("decisions");
         decision.HasKey(item => item.DecisionId);

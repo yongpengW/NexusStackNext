@@ -1,4 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Scheduling.Contracts;
 
@@ -16,6 +17,8 @@ namespace NexusStackNext.Scheduling.Application;
 public sealed record ScheduleOccurrence(Guid OccurrenceId, long PlanId, long TriggerSequence, DateTimeOffset ScheduledAt,
     DateTimeOffset TriggeredAt, string TargetKind, Guid TargetId, string CreatedBy)
 {
+    /// <summary>触发与原始定义操作的关联；只用于调查，不授予业务权限。</summary>
+    public ExecutionOrigin? ExecutionOrigin { get; init; }
     /// <summary>产生对外契约；使用既有发生身份，不在重试时创建消息身份。</summary>
     /// <returns>线路事件。</returns>
     public ScheduleTriggeredV1 ToEvent() => new()
@@ -28,6 +31,7 @@ public sealed record ScheduleOccurrence(Guid OccurrenceId, long PlanId, long Tri
         TargetKind = TargetKind,
         TargetId = TargetId,
         CreatedBy = CreatedBy,
+        ExecutionOrigin = ExecutionOrigin,
     };
 }
 

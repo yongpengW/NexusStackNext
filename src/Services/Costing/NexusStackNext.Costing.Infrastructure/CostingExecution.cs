@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
@@ -10,7 +11,8 @@ using NexusStackNext.Costing.Domain;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
-internal sealed class CostingExecution(CostingDbContext database, CostingTaskOptions options) : ICommandHandler<ClaimCostingWork, CostingWorkLease?>,
+internal sealed class CostingExecution(CostingDbContext database, CostingTaskOptions options, IBackgroundExecutionObservation observations,
+    IExecutionContext executionContext) : ICommandHandler<ClaimCostingWork, CostingWorkLease?>,
     ICommandHandler<CompleteCostingWork, bool>, ICommandHandler<FailCostingWork, bool>, ICommandHandler<RetryCostingWork, CostCalculationStatus>
 {
     private readonly PostgresTaskExecution<CostCalculationEntry> _execution = new(database, "costing", options);
@@ -31,30 +33,42 @@ internal sealed class CostingExecution(CostingDbContext database, CostingTaskOpt
     }
     public async Task<Result<bool>> HandleAsync(CompleteCostingWork command, CancellationToken cancellationToken = default)
     {
-        database.ChangeTracker.Clear();
-        var input = await database.Tasks.AsNoTracking().SingleOrDefaultAsync(x => x.TaskId == command.TaskId, cancellationToken).ConfigureAwait(false);
-        if (input is null) { return Result.Success(false); }
-        // 耗时计算的缝在短事务之外；首轮只有一个确定的演示公式。
-        var unitCost = CostSheet.Calculate(input.PurchaseCost, input.FreightCost);
-        return Result.Success(await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
+        var result = await observations.ObserveAsync(new TaskExecutionDescriptor("costing.calculate", command.TaskId, command.Epoch), async () =>
         {
-            var now = await database.DatabaseTimeAsync(token).ConfigureAwait(false);
-            await database.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
-            var sheet = await database.Sheets.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
-            var outcome = sheet.ApplyCalculation(task.InputRevision, unitCost).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
-            if (outcome == TaskCompletion.Succeeded)
+            database.ChangeTracker.Clear();
+            var input = await database.Tasks.AsNoTracking().SingleOrDefaultAsync(x => x.TaskId == command.TaskId, cancellationToken).ConfigureAwait(false);
+            return new BackgroundExecutionInput<CostCalculationEntry?>(input, input?.ExecutionOrigin);
+        }, async input =>
+        {
+            if (input is null) { return (Committed: false, Completion: TaskCompletion.Superseded); }
+            // 耗时计算的缝在短事务之外；首轮只有一个确定的演示公式。
+            var unitCost = CostSheet.Calculate(input.PurchaseCost, input.FreightCost);
+            var completion = TaskCompletion.Superseded;
+            var committed = await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
             {
-                database.Outbox.Add(OutboxEntry.From(new CostCalculatedV1
+                var now = await database.DatabaseTimeAsync(token).ConfigureAwait(false);
+                await database.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
+                var sheet = await database.Sheets.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
+                completion = sheet.ApplyCalculation(task.InputRevision, unitCost).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
+                if (completion == TaskCompletion.Succeeded)
                 {
-                    EventId = task.TaskId,
-                    OccurredAt = now,
-                    ItemId = task.ItemId.Value,
-                    CostRevision = task.InputRevision,
-                    UnitCost = unitCost,
-                }, new SystemTextJsonIntegrationEventSerializer()));
-            }
-            return outcome;
-        }, cancellationToken).ConfigureAwait(false));
+                    database.Outbox.Add(OutboxEntry.From(new CostCalculatedV1
+                    {
+                        EventId = task.TaskId,
+                        OccurredAt = now,
+                        ItemId = task.ItemId.Value,
+                        CostRevision = task.InputRevision,
+                        UnitCost = unitCost,
+                        ExecutionOrigin = executionContext.Capture(),
+                    }, new SystemTextJsonIntegrationEventSerializer()));
+                }
+                return completion;
+            }, cancellationToken).ConfigureAwait(false);
+            return (Committed: committed, Completion: completion);
+        }, static result => !result.Committed ? BackgroundExecutionOutcome.LeaseLost
+            : result.Completion == TaskCompletion.Succeeded ? BackgroundExecutionOutcome.Completed : BackgroundExecutionOutcome.Superseded,
+            cancellationToken).ConfigureAwait(false);
+        return Result.Success(result.Committed);
     }
 }

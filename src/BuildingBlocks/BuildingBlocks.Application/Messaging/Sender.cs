@@ -17,16 +17,17 @@ namespace NexusStackNext.BuildingBlocks.Application.Messaging;
 /// 没有任何程序集扫描。
 /// </remarks>
 /// <param name="serviceProvider">用于解析处理器与校验器。</param>
-internal sealed class Sender(IServiceProvider serviceProvider) : ISender
+/// <param name="execution">宿主组装的命令执行观察；不管理业务事务。</param>
+internal sealed class Sender(IServiceProvider serviceProvider, ICommandExecution execution) : ISender
 {
     /// <inheritdoc />
     public Task<Result> SendAsync(ICommand command, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        return Validate(command) is { } error
+        return execution.ExecuteAsync(command, () => Validate(command) is { } error
             ? Task.FromResult(Result.Failure(error))
-            : ExecuteVoidCommandAsync(command, cancellationToken);
+            : ExecuteVoidCommandAsync(command, cancellationToken), cancellationToken);
     }
 
     /// <inheritdoc />
@@ -36,9 +37,9 @@ internal sealed class Sender(IServiceProvider serviceProvider) : ISender
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        return Validate(command) is { } error
+        return execution.ExecuteAsync(command, () => Validate(command) is { } error
             ? Task.FromResult(Result.Failure<TResult>(error))
-            : ExecuteCommandAsync(command, cancellationToken);
+            : ExecuteCommandAsync(command, cancellationToken), cancellationToken);
     }
 
     /// <inheritdoc />

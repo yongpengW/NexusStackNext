@@ -80,6 +80,16 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
                 metadata.Property(item => item.SpanId).HasColumnName("SpanId").HasMaxLength(16);
                 metadata.Property(item => item.ParentSpanId).HasColumnName("ParentSpanId").HasMaxLength(16);
                 metadata.Property(item => item.CorrelationId).HasColumnName("CorrelationId").HasMaxLength(64);
+                metadata.Property(item => item.RootOperationId).HasColumnName("RootOperationId");
+                metadata.Property(item => item.RootSource).HasColumnName("RootSource").HasMaxLength(64);
+                metadata.Property(item => item.ParentOperationId).HasColumnName("ParentOperationId");
+                metadata.Property(item => item.ParentSource).HasColumnName("ParentSource").HasMaxLength(64);
+                metadata.Property(item => item.InitiatorId).HasColumnName("InitiatorId").HasMaxLength(200);
+                metadata.Property(item => item.TaskId).HasColumnName("TaskId");
+                metadata.Property(item => item.TaskEpoch).HasColumnName("TaskEpoch");
+                metadata.Property(item => item.SchedulePlanId).HasColumnName("SchedulePlanId");
+                metadata.Property(item => item.ScheduleExpectedVersion).HasColumnName("ScheduleExpectedVersion");
+                metadata.Property(item => item.ScheduleDecisionId).HasColumnName("ScheduleDecisionId");
             });
             data.HasIndex(item => new { item.Source, item.OperationId, item.Phase }).IsUnique().HasDatabaseName("ux_operation_observations_phase");
             data.HasIndex(item => new { item.OccurredAt, item.Source, item.OperationId }).HasDatabaseName("ix_operation_observations_time");

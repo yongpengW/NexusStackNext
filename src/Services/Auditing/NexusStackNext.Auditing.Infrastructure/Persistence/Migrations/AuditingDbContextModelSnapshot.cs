@@ -310,10 +310,45 @@ namespace NexusStackNext.Auditing.Infrastructure.Persistence.Migrations
                                         .HasColumnType("character varying(16)")
                                         .HasColumnName("ExecutionRole");
 
+                                    b2.Property<string>("InitiatorId")
+                                        .HasMaxLength(200)
+                                        .HasColumnType("character varying(200)")
+                                        .HasColumnName("InitiatorId");
+
+                                    b2.Property<Guid?>("ParentOperationId")
+                                        .HasColumnType("uuid")
+                                        .HasColumnName("ParentOperationId");
+
+                                    b2.Property<string>("ParentSource")
+                                        .HasMaxLength(64)
+                                        .HasColumnType("character varying(64)")
+                                        .HasColumnName("ParentSource");
+
                                     b2.Property<string>("ParentSpanId")
                                         .HasMaxLength(16)
                                         .HasColumnType("character varying(16)")
                                         .HasColumnName("ParentSpanId");
+
+                                    b2.Property<Guid?>("RootOperationId")
+                                        .HasColumnType("uuid")
+                                        .HasColumnName("RootOperationId");
+
+                                    b2.Property<string>("RootSource")
+                                        .HasMaxLength(64)
+                                        .HasColumnType("character varying(64)")
+                                        .HasColumnName("RootSource");
+
+                                    b2.Property<Guid?>("ScheduleDecisionId")
+                                        .HasColumnType("uuid")
+                                        .HasColumnName("ScheduleDecisionId");
+
+                                    b2.Property<long?>("ScheduleExpectedVersion")
+                                        .HasColumnType("bigint")
+                                        .HasColumnName("ScheduleExpectedVersion");
+
+                                    b2.Property<long?>("SchedulePlanId")
+                                        .HasColumnType("bigint")
+                                        .HasColumnName("SchedulePlanId");
 
                                     b2.Property<string>("SpanId")
                                         .HasMaxLength(16)
@@ -334,6 +369,14 @@ namespace NexusStackNext.Auditing.Infrastructure.Persistence.Migrations
                                         .HasMaxLength(100)
                                         .HasColumnType("character varying(100)")
                                         .HasColumnName("SubjectType");
+
+                                    b2.Property<long?>("TaskEpoch")
+                                        .HasColumnType("bigint")
+                                        .HasColumnName("TaskEpoch");
+
+                                    b2.Property<Guid?>("TaskId")
+                                        .HasColumnType("uuid")
+                                        .HasColumnName("TaskId");
 
                                     b2.HasKey("OperationObservationDataOperationObservationId");
 
