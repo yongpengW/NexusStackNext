@@ -149,9 +149,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         // 第二进程可能尚未建立 Redis 连接；共享命中验收为冷连接预留预算。
         settings["Pricing__Cache__RedisTimeout"] = "00:00:02";
         await using var first = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
-        await using var second = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
         first.Authenticate();
-        second.Authenticate();
         var itemId = Guid.NewGuid();
         using var accepted = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
             new { requestId = Guid.NewGuid(), itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m });
@@ -161,9 +159,14 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         await using var control = await ConnectionMultiplexer.ConnectAsync(settings["Pricing__Cache__ConnectionString"]);
         var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
         await WaitForCachedQuoteAsync(first, itemId, control.GetDatabase(), key, x => x.Cost == 80m);
+        // 预热后才启动读者，避免它持有已被另一实例确认、但尚未执行的重复失效。
+        await using var second = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
+        second.Authenticate();
         try
         {
             await database.SetAvailableAsync(false);
+            Assert.True(await control.GetDatabase().HashExistsAsync(key, "value"), "停库时必须仍有可供共享的缓存。");
+            Assert.Equal(80m, (await ReadQuoteAsync(first, itemId)).Cost);
             Assert.Equal(80m, (await ReadQuoteAsync(second, itemId)).Cost);
         }
         finally { await database.SetAvailableAsync(true); }
