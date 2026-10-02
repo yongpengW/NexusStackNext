@@ -1,5 +1,6 @@
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Platform.Contracts;
 
 namespace NexusStackNext.Platform.Application;
 
@@ -11,6 +12,18 @@ namespace NexusStackNext.Platform.Application;
 /// <param name="DeadLetteredAt">停止自动重试的时刻，也是人工重试条件。</param>
 public sealed record SettingAuditDelivery(Guid MessageId, string State, int Attempts, DateTimeOffset? NextAttemptAt, DateTimeOffset? DeadLetteredAt)
 {
+    /// <summary>重试所依赖的投递状态已改变。</summary>
+    public static readonly Error Conflict = new("platform.delivery_conflict", "投递状态已经改变，请重新读取。");
+
+    /// <summary>两个存储适配器共用的条件重试规则；保留消息身份，重新开放失败预算。</summary>
+    /// <param name="entry">已锁定的当前投递。</param>
+    /// <param name="expectedDeadLetteredAt">操作者观察到的停止时刻。</param>
+    /// <returns>恢复后的待投递项，或状态冲突。</returns>
+    public static Result<OutboxEntry> Retry(OutboxEntry? entry, DateTimeOffset expectedDeadLetteredAt) =>
+        entry is null || entry.EventName != SettingCommittedV1.Name || entry.IsDelivered || entry.DeadLetteredAt != expectedDeadLetteredAt
+            ? Result.Failure<OutboxEntry>(Conflict)
+            : Result.Success(entry with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null });
+
     /// <summary>从内部 Outbox 裁剪可公开的状态。</summary>
     /// <param name="entry">所属上下文消息。</param>
     /// <returns>最小状态。</returns>

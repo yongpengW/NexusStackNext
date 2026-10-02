@@ -31,14 +31,14 @@ internal sealed class EfSettingAuditDelivery(PlatformDbContext context) : ISetti
             await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
             var entry = (await context.Outbox.FromSqlInterpolated($"SELECT * FROM platform.outbox WHERE \"Id\" = {messageId} FOR UPDATE")
                 .ToListAsync(cancellationToken).ConfigureAwait(false)).SingleOrDefault();
-            if (entry is null || entry.EventName != SettingCommittedV1.Name || entry.IsDelivered || entry.DeadLetteredAt != expectedDeadLetteredAt)
+            var retry = SettingAuditDelivery.Retry(entry, expectedDeadLetteredAt);
+            if (retry.IsFailure)
             {
-                return Result.Failure<SettingAuditDelivery>(new Error("platform.delivery_conflict", "投递状态已经改变，请重新读取。"));
+                return Result.Failure<SettingAuditDelivery>(retry.Error);
             }
-            var retry = entry with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null };
-            context.Entry(entry).CurrentValues.SetValues(retry);
+            context.Entry(entry!).CurrentValues.SetValues(retry.Value);
             await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return Result.Success(SettingAuditDelivery.From(retry));
+            return Result.Success(SettingAuditDelivery.From(retry.Value));
         });
 }

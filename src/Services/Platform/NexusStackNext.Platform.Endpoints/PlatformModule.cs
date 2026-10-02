@@ -158,7 +158,7 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.Conflict.Code || error.Code == "platform.delivery_conflict" ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
+        statusCode: error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 

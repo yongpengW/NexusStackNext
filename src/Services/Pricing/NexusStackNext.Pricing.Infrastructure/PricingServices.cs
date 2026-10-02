@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
 
@@ -41,7 +42,7 @@ public static class PricingServices
         services.AddLogging();
         services.AddSingleton<PricingRedisCache>();
         services.AddScoped(_ => PricingDatabase.CreateContext(connectionString));
-        services.AddScoped<IIntegrationEventProcessor, PricingCostIngestion>();
+        services.AddKeyedScoped<IIntegrationEventProcessor, PricingCostIngestion>(CostCalculatedV1.Name);
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetRecalculation, RecalculationStatus>, PricingCommands>();

@@ -2,8 +2,10 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
+using NexusStackNext.Platform.Contracts;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
@@ -20,15 +22,14 @@ public static class AuditingModule
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
-        services.AddScoped<IIntegrationEventProcessor, PlatformAuditIngestion>();
+        services.AddKeyedScoped<IIntegrationEventProcessor, PlatformAuditIngestion>(SettingCommittedV1.Name);
         var broker = configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
         if (broker is not null && !string.IsNullOrWhiteSpace(broker.HostName) && configuration.GetValue("Auditing:Messaging:Enabled", true))
         {
             broker.Validate();
             var consumer = configuration.GetValue<string>("Auditing:Messaging:ConsumerName") ?? AuditIngestion.ConsumerName;
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
-            services.AddSingleton(new AuditingMessaging(broker, consumer));
-            services.AddHostedService<AuditingConsumer>();
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingCommittedV1.Name, ConsumerName = consumer });
             services.AddHealthChecks().AddAsyncCheck("auditing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("审计消息 broker 不可用。"));

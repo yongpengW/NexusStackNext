@@ -140,13 +140,14 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
         cancellationToken.ThrowIfCancellationRequested();
         lock (_writes)
         {
-            if (!_outbox.TryGetValue(messageId, out var entry) || entry.IsDelivered || entry.DeadLetteredAt != expectedDeadLetteredAt)
+            _outbox.TryGetValue(messageId, out var entry);
+            var retry = SettingAuditDelivery.Retry(entry, expectedDeadLetteredAt);
+            if (retry.IsFailure)
             {
-                return Task.FromResult(Result.Failure<SettingAuditDelivery>(new Error("platform.delivery_conflict", "投递状态已经改变，请重新读取。")));
+                return Task.FromResult(Result.Failure<SettingAuditDelivery>(retry.Error));
             }
-            var retry = entry with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null };
-            _outbox[messageId] = retry;
-            return Task.FromResult(Result.Success(SettingAuditDelivery.From(retry)));
+            _outbox[messageId] = retry.Value;
+            return Task.FromResult(Result.Success(SettingAuditDelivery.From(retry.Value)));
         }
     }
 }
