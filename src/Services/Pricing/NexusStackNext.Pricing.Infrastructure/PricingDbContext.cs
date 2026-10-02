@@ -9,6 +9,7 @@ namespace NexusStackNext.Pricing.Infrastructure;
 
 internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> options) : NexusStackDbContext(options, "pricing")
 {
+    internal const string CostPayloadHashProperty = "CostPayloadHash";
     public DbSet<PriceQuote> Quotes => Set<PriceQuote>();
     public DbSet<RecalculationEntry> Tasks => Set<RecalculationEntry>();
     public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
@@ -16,6 +17,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("pricing");
+        modelBuilder.Entity<InboxMessage>().Property<string?>(CostPayloadHashProperty).HasMaxLength(64);
         var quote = modelBuilder.Entity<PriceQuote>();
         quote.ToTable("quotes");
         quote.HasKey(x => x.Id);
@@ -26,24 +28,12 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         quote.Property(x => x.Version).IsConcurrencyToken();
         quote.Ignore(x => x.DomainEvents);
 
+        DurableTaskMapping.Configure<RecalculationEntry>(modelBuilder);
         var task = modelBuilder.Entity<RecalculationEntry>();
-        task.ToTable("tasks");
-        task.HasKey(x => x.TaskId);
-        task.Property(x => x.TaskId).ValueGeneratedNever();
         task.Property(x => x.Cost).HasPrecision(18, 4);
         task.Property(x => x.FeeRate).HasPrecision(5, 4);
-        task.Property(x => x.State).HasMaxLength(24);
-        task.Property(x => x.ErrorCode).HasMaxLength(64);
         task.Property(x => x.Origin).HasMaxLength(24).HasDefaultValue("manual");
-        task.Property(x => x.AvailableAt).HasDefaultValueSql("clock_timestamp()");
-        task.HasIndex(x => new { x.State, x.AvailableAt });
         task.HasOne<PriceQuote>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
-        var attempt = modelBuilder.Entity<DurableTaskAttempt>();
-        attempt.ToTable("attempts");
-        attempt.HasKey(x => new { x.TaskId, x.Epoch });
-        attempt.Property(x => x.Outcome).HasMaxLength(24);
-        attempt.Property(x => x.ErrorCode).HasMaxLength(64);
-        attempt.HasOne<RecalculationEntry>().WithMany(x => x.History).HasForeignKey(x => x.TaskId);
     }
 
     public Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken cancellationToken) =>

@@ -42,8 +42,8 @@ internal sealed class CostingExecution(CostingDbContext database, CostingTaskOpt
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
             var sheet = await database.Sheets.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
-            task.State = sheet.ApplyCalculation(task.InputRevision, unitCost).IsSuccess ? "Succeeded" : "Superseded";
-            if (task.State == "Succeeded")
+            var outcome = sheet.ApplyCalculation(task.InputRevision, unitCost).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
+            if (outcome == TaskCompletion.Succeeded)
             {
                 database.Outbox.Add(OutboxEntry.From(new CostCalculatedV1
                 {
@@ -54,7 +54,7 @@ internal sealed class CostingExecution(CostingDbContext database, CostingTaskOpt
                     UnitCost = unitCost,
                 }, new SystemTextJsonIntegrationEventSerializer()));
             }
-            return task.State;
+            return outcome;
         }, cancellationToken).ConfigureAwait(false));
     }
 }

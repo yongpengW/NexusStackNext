@@ -25,7 +25,15 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
         var now = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
         // 插入与业务更新、任务登记同事务；并发重复等待前一事务提交或回滚。
         var inbox = new EfInboxStore<PricingDbContext>(database);
-        if (!await inbox.TryBeginProcessingAsync("pricing-cost", EventName, envelope.MessageId, now, cancellationToken).ConfigureAwait(false)) { return true; }
+        var first = await inbox.TryBeginProcessingAsync("pricing-cost", EventName, envelope.MessageId, now, cancellationToken).ConfigureAwait(false);
+        var receipt = await database.Inbox.SingleAsync(x => x.ConsumerName == "pricing-cost" && x.EventName == EventName
+            && x.MessageId == envelope.MessageId, cancellationToken).ConfigureAwait(false);
+        var fingerprint = database.Entry(receipt).Property<string?>(PricingDbContext.CostPayloadHashProperty);
+        var canonical = FormattableString.Invariant($"{cost.ItemId:D}|{cost.CostRevision}|{cost.UnitCost:G29}|{cost.OccurredAt.UtcTicks}");
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
+        if (!first) { return fingerprint.CurrentValue == hash; }
+        // 包括被忽略的旧版本：同一身份以后也不能换成另一项工作。
+        fingerprint.CurrentValue = hash;
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-request/" + envelope.MessageId}, 0))", cancellationToken).ConfigureAwait(false);
         // 手工请求与上游事件不能共用一个任务标识。

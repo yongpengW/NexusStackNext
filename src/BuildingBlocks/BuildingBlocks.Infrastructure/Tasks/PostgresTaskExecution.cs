@@ -70,7 +70,7 @@ public sealed class PostgresTaskExecution<TTask> where TTask : DurableTaskRecord
     /// <param name="applyResult">只做本地数据库修改，返回 Succeeded 或 Superseded；不得调用外部服务。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>租约仍有效并已提交。</returns>
-    public async Task<bool> CompleteAsync(Guid taskId, long epoch, Func<TTask, CancellationToken, Task<string>> applyResult, CancellationToken cancellationToken = default)
+    public async Task<bool> CompleteAsync(Guid taskId, long epoch, Func<TTask, CancellationToken, Task<TaskCompletion>> applyResult, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(applyResult);
         _database.ChangeTracker.Clear();
@@ -78,8 +78,12 @@ public sealed class PostgresTaskExecution<TTask> where TTask : DurableTaskRecord
         var task = await LockAsync(taskId, cancellationToken).ConfigureAwait(false);
         var now = await NowAsync(cancellationToken).ConfigureAwait(false);
         if (!Owns(task, epoch, now)) { return false; }
-        task!.State = await applyResult(task, cancellationToken).ConfigureAwait(false);
-        if (task.State is not ("Succeeded" or "Superseded")) { throw new InvalidOperationException("结果应用必须给出明确的终态。"); }
+        task!.State = await applyResult(task, cancellationToken).ConfigureAwait(false) switch
+        {
+            TaskCompletion.Succeeded => "Succeeded",
+            TaskCompletion.Superseded => "Superseded",
+            _ => throw new InvalidOperationException("结果应用必须给出明确的终态。"),
+        };
         await FinishAttemptAsync(task, task.State, now, null, cancellationToken).ConfigureAwait(false);
         await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         if (task.LeaseUntil <= await NowAsync(cancellationToken).ConfigureAwait(false)) { return false; }

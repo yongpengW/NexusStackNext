@@ -62,6 +62,7 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 | 消费事务中进程被杀 | Inbox、业务与任务一起回滚 | 重启后 broker 重投 |
 | 提交成功后 ACK 丢失 | 重投被已提交 Inbox 吸收 | 无需人工操作 |
 | 旧版本晚到 | 不覆盖新成本，不登记多余计算 | 无需人工操作 |
+| 同一消息 ID 内容改变 | 载荷指纹不符，明确拒绝并隔离 | 修复生产者，使用正确的事件身份与内容 |
 | 非法事件 | 确认搬入消费端 `.dead` 队列 | 检查契约后经 broker 管理工具重投，不删除 Inbox |
 
 计算失败：`POST /api/costing/tasks/{id}/retry`，正文含查询到的 `expectedEpoch`。

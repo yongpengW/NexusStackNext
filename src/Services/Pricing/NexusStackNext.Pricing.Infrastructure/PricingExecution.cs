@@ -38,8 +38,7 @@ internal sealed class PricingExecution(PricingDbContext database, PricingTaskOpt
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
             var quote = await database.Quotes.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
-            task.State = quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? "Succeeded" : "Superseded";
-            return task.State;
+            return quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
         }, cancellationToken).ConfigureAwait(false));
     }
 }

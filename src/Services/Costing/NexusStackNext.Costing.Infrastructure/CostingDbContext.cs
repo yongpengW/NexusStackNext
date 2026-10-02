@@ -26,23 +26,11 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
         sheet.Property(x => x.Version).IsConcurrencyToken();
         sheet.Ignore(x => x.DomainEvents);
 
+        DurableTaskMapping.Configure<CostCalculationEntry>(modelBuilder);
         var task = modelBuilder.Entity<CostCalculationEntry>();
-        task.ToTable("tasks");
-        task.HasKey(x => x.TaskId);
-        task.Property(x => x.TaskId).ValueGeneratedNever();
         task.Property(x => x.PurchaseCost).HasPrecision(18, 4);
         task.Property(x => x.FreightCost).HasPrecision(18, 4);
-        task.Property(x => x.State).HasMaxLength(24);
-        task.Property(x => x.ErrorCode).HasMaxLength(64);
-        task.Property(x => x.AvailableAt).HasDefaultValueSql("clock_timestamp()");
-        task.HasIndex(x => new { x.State, x.AvailableAt });
         task.HasOne<CostSheet>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
-        var attempt = modelBuilder.Entity<DurableTaskAttempt>();
-        attempt.ToTable("attempts");
-        attempt.HasKey(x => new { x.TaskId, x.Epoch });
-        attempt.Property(x => x.Outcome).HasMaxLength(24);
-        attempt.Property(x => x.ErrorCode).HasMaxLength(64);
-        attempt.HasOne<CostCalculationEntry>().WithMany(x => x.History).HasForeignKey(x => x.TaskId);
     }
 
     public Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken cancellationToken) =>

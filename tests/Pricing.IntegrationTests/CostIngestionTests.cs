@@ -76,6 +76,34 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
     }
 
     [PostgresFact]
+    public async Task ReusedMessageIdentity_RejectsChangedContent_EvenWhenOriginalRevisionWasIgnored()
+    {
+        var item = Guid.NewGuid();
+        var latest = Cost(item, 3, 120m);
+        var ignored = Cost(item, 1, 80m);
+        await using (var app = CreateApplication())
+        await using (var scope = app.CreateAsyncScope())
+        {
+            var processor = scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+            Assert.True(await processor.HandleAsync(latest));
+            Assert.True(await processor.HandleAsync(ignored));
+        }
+        await using var reopened = CreateApplication();
+        await using var read = reopened.CreateAsyncScope();
+        var receiver = read.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+        Assert.True(await receiver.HandleAsync(latest));
+        Assert.True(await receiver.HandleAsync(ignored));
+        var serializer = new SystemTextJsonIntegrationEventSerializer();
+        var originalCost = serializer.Deserialize<CostCalculatedV1>(latest.Payload);
+        var ignoredCost = serializer.Deserialize<CostCalculatedV1>(ignored.Payload);
+        // 保持原时间和消息身份，只改变业务字段；数值表示不同但值相同仍是重复。
+        Assert.True(await receiver.HandleAsync(OutboxEntry.From(originalCost with { UnitCost = 120.0000m }, serializer).ToEnvelope()));
+        Assert.False(await receiver.HandleAsync(OutboxEntry.From(originalCost with { CostRevision = 4, UnitCost = 140m }, serializer).ToEnvelope()));
+        Assert.False(await receiver.HandleAsync(OutboxEntry.From(ignoredCost with { ItemId = Guid.NewGuid() }, serializer).ToEnvelope()));
+        Assert.Equal(120m, (await read.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPriceQuote(item))).Value.Cost);
+    }
+
+    [PostgresFact]
     public async Task TaskRegistrationFailure_RollsBackInboxAndCost_SameMessageCanBeRedelivered()
     {
         var item = Guid.NewGuid();
