@@ -33,14 +33,9 @@ public static class PlatformModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        // **写路径在进程内也要求认证，读路径显式声明公开。**
-        //
-        // 与边缘的 `platform-read`（公开、且只放 GET）一致：读是公开的，写要令牌。
-        // 此前这四条在进程内**没有任何授权判定**——"边缘是唯一入口"是**编排**的事实，
-        // 不是代码的事实；谁直连到这个进程谁就绕过了它。
-        // 用 `RequireAuthorization()` 而不是 Identity 那个过滤器：那个要算**权限键**，
-        // 是 RBAC 的落点；Platform 还没有登记权限键，它要的只是"令牌有效"。
+        // 设置可能包含受限元数据；读取与管理都必须显式授权并检查当前会话。
         var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization().ProducesApiErrors(400, 401, 403, 500);
+        settings.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         // 读一个配置值。**键不合法与键没配过是两件事**：前者 400，后者 200 + value=null。
         settings.MapGet("/{key}", async (string key, SettingStore store, IClock clock, ApiResponses responses) =>
@@ -52,7 +47,7 @@ public static class PlatformModule
             }
 
             return responses.Ok(new SettingResponse(parsed.Value.Value, parsed.Value.Scope, await store.ReadAsync(parsed.Value), clock.UtcNow));
-        }).Produces<ApiResponse<SettingResponse>>().AllowAnonymous();
+        }).Produces<ApiResponse<SettingResponse>>().RequirePermission("/api/platform/settings/{key}", "GET");
 
         // 分页列出一个分组下的配置。**按段比较，不做前缀匹配**。
         settings.MapGet("/", async (ApiResponses responses, string scope, SettingStore store, [AsParameters] ApiPageRequest paging) =>
@@ -72,7 +67,7 @@ public static class PlatformModule
             return responses.Page(found.OrderBy(static setting => setting.Key.Value, StringComparer.Ordinal)
                 .Skip((int)Math.Min(paging.Offset, found.Count)).Take(paging.Limit)
                 .Select(static setting => new SettingItem(setting.Key.Value, setting.Key.Name, setting.Value, setting.Description)).ToArray(), found.Count, paging);
-        }).Produces<ApiPage<SettingItem>>().AllowAnonymous();
+        }).Produces<ApiPage<SettingItem>>().RequirePermission("/api/platform/settings", "GET");
 
         // 写一个配置值。键不存在就创建——调用方不需要先问"注册过没有"（那之间有竞态）。
         settings.MapPut("/{key}", async (
@@ -89,7 +84,7 @@ public static class PlatformModule
             var written = await store.WriteAsync(parsed.Value, request.Value, request.Description);
 
             return written.IsFailure ? Failure(written.Error) : Results.NoContent();
-        }).ProducesApiErrors(415).Produces(204);
+        }).ProducesApiErrors(415).Produces(204).RequirePermission("/api/platform/settings/{key}", "PUT");
 
         // 清空一个配置值。**不删除配置项本身**——"没有值"与"没注册过"是不同的状态。
         settings.MapDelete("/{key}", async (string key, SettingStore store) =>
@@ -103,7 +98,7 @@ public static class PlatformModule
             var cleared = await store.WriteAsync(parsed.Value, value: null);
 
             return cleared.IsFailure ? Failure(cleared.Error) : Results.NoContent();
-        }).Produces(204);
+        }).Produces(204).RequirePermission("/api/platform/settings/{key}", "DELETE");
 
         return endpoints;
     }

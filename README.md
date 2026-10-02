@@ -77,6 +77,10 @@ Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟
 `pwsh -File scripts/migrate-identity.ps1`，再启动平台宿主。启动会检查数据库及迁移状态，不会自动建表。
 配置与升级步骤见 [Identity 持久化运行](docs/identity-persistence.md)。
 
+全局设置的读写都需要当前有效会话及对应操作权限；授权步骤与兼容性变化见
+[全局设置访问](docs/platform-settings.md)。NS / PoS 的能力对照与后续验收路线见
+[能力研究](docs/research/2026-10-02-ns-pos-capability-parity.md)，当前工作状态以 GitHub Issues 为准。
+
 无数据库的开发演示需显式设置 `DOTNET_ENVIRONMENT=Development` 和
 `Identity__Storage__Provider=Memory`；生产环境拒绝内存模式。
 其余平台模块、消息基座仍有内存状态，Files 的字节保存在本地磁盘。
@@ -204,7 +208,7 @@ pwsh ./scripts/assert-no-credentials.ps1   # 模板生成物不含凭据
 
 | 路由 | 路径 | 认证 |
 |---|---|---|
-| `platform-read` | `/api/platform/{**catch-all}` | 公开（**只放 GET**） |
+| `platform-read` | `/api/platform/{**catch-all}` | 需认证（只放 GET）；设置读取另由 Platform 校验会话与操作权限 |
 | `platform-write` | `/api/platform/{**catch-all}` | **要求认证**（只放 PUT/DELETE） |
 | `identity-info` | `/api/identity` | 公开 |
 | `identity-login` | `/api/identity/login` | **公开**（精确路径） |

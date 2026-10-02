@@ -95,9 +95,13 @@ public sealed class CostingWorkflowTests(CostingDatabaseFixture database) : ICla
         Assert.Null((await sender.SendAsync(new ClaimCostingWork())).Value);
         Assert.Equal("Failed", (await sender.QueryAsync(new GetCostCalculation(request.RequestId))).Value.State);
         Assert.True((await sender.SendAsync(new RetryCostingWork(request.RequestId, expired.Epoch))).IsSuccess);
-        var recovered = (await sender.SendAsync(new ClaimCostingWork())).Value!;
+        // 故障注入只缩短原执行者的租约；健康恢复使用正常预算，避免把网络延迟当成再次故障。
+        await using var recoveryApp = CreateApplication(new CostingTaskOptions { MaxAttempts = 1 });
+        await using var recoveryScope = recoveryApp.CreateAsyncScope();
+        var recoverySender = recoveryScope.ServiceProvider.GetRequiredService<ISender>();
+        var recovered = (await recoverySender.SendAsync(new ClaimCostingWork())).Value!;
         Assert.Equal(2, recovered.Epoch);
-        Assert.True((await sender.SendAsync(new CompleteCostingWork(recovered.TaskId, recovered.Epoch))).Value);
+        Assert.True((await recoverySender.SendAsync(new CompleteCostingWork(recovered.TaskId, recovered.Epoch))).Value);
         Assert.Equal(new[] { "Expired", "Succeeded" }, (await sender.QueryAsync(new GetCostCalculation(request.RequestId))).Value.History.Select(x => x.Outcome));
     }
 

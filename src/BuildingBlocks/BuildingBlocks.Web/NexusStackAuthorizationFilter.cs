@@ -1,20 +1,16 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
-using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain.Authorization;
-using NexusStackNext.Identity.Application;
 
-namespace NexusStackNext.Identity.Endpoints;
+namespace NexusStackNext.BuildingBlocks.Web;
 
 /// <remarks>
-/// <para><b>它为什么住在 Identity.Endpoints 而不是某个共享工程。</b>第一版我把它放进了
-/// <c>BuildingBlocks.AspNetCore</c>，理由是"五个上下文都会用到"——而当时只有**一个**在用。
-/// 架构不变量测试立刻拦下了它（不变量 7：被第二个消费者证明需要才允许上移）。</para>
-///
-/// <para><b>它拦得对。</b>那是一次**推测**的上移：部署约定确实要求所有上下文都授权，
-/// 但"要求"不等于"已经需要"。等第二个上下文真的要挂过滤器时再上移，
-/// 那时它的形状会被第二个使用者修正一次——而那正是共享内核该长出来的方式。</para>
+/// <para>Identity 与 Platform 都需要相同的权限与会话校验，因此共享 HTTP 实现。
+/// 身份数据仍由 Identity 拥有；共享过滤器只使用端口，不读取上下文的表或调用其内部查询。</para>
 /// </remarks>
 /// <summary>一个端点要求的授权方式。</summary>
 /// <param name="Mode">四档授权模式。</param>
@@ -35,10 +31,10 @@ public sealed record AuthorizationRequirement(AuthorizationMode Mode, Permission
 /// <para>这里**不配置化**：默认值就是最严的那一档，要放行必须有人写下那句话。
 /// 于是"新加了一个端点但忘了标注"的结果是 403（看得见），而不是对所有人开放（看不见）。</para>
 /// </summary>
-/// <param name="sender">Identity 查询入口。</param>
+/// <param name="sessions">当前会话的权威校验端口。</param>
 /// <param name="currentUser">已认证身份。</param>
 /// <param name="checker">权限判定。</param>
-public sealed class NexusStackAuthorizationFilter(ISender sender, ICurrentUser currentUser, IPermissionChecker checker) : IEndpointFilter
+public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, ICurrentUser currentUser, IPermissionChecker checker) : IEndpointFilter
 {
     /// <inheritdoc />
     public async ValueTask<object?> InvokeAsync(
@@ -72,18 +68,9 @@ public sealed class NexusStackAuthorizationFilter(ISender sender, ICurrentUser c
         // 它连"这个身份现在还算不算数"都没过。
         if (isAuthenticated)
         {
-            if (!long.TryParse(currentUser.UserId, System.Globalization.NumberStyles.None,
-                System.Globalization.CultureInfo.InvariantCulture, out var userId) || userId <= 0)
-            {
-                return Unauthorized();
-            }
-
-            var current = await sender.QueryAsync(new GetSessionVersionQuery(userId), http.RequestAborted)
-                .ConfigureAwait(false);
-
             // 版本对不上就是"这个访问令牌已被撤销"——**包括令牌里根本没有版本声明**，
             // 那是 fail-closed：认不出来的身份不放行。
-            if (current.IsFailure || currentUser.SessionVersion != current.Value)
+            if (!await sessions.IsCurrentAsync(currentUser.UserId!, currentUser.SessionVersion, http.RequestAborted).ConfigureAwait(false))
             {
                 return Unauthorized();
             }

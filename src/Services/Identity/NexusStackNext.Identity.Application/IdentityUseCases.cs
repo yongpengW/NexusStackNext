@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Application.Validation;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -567,6 +568,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddScoped<TokenIssuer>();
 
         services.AddScoped<IQueryHandler<GetSessionVersionQuery, long>, GetSessionVersionHandler>();
+        services.AddScoped<ISessionValidator, GetSessionVersionHandler>();
         AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
