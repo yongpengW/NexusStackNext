@@ -151,9 +151,9 @@ app.MapHealthChecks("/health/ready");
 // 所以它们并到一个进程里**不需要改任何路由**——网关的路由表也只改目标地址。
 //
 // **授权由模块自己声明**，宿主不必记得替每个模块挂一遍。两种机制，按需要选：
-//   · Identity 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
+//   · Identity / Platform 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
 //     并比对预计算集合，还要查会话版本（撤销），那是 RBAC 的落点；
-//   · 其余四个模块用框架的 `RequireAuthorization()` / `AllowAnonymous()`——它们还没有
+//   · 其余三个模块用框架的 `RequireAuthorization()` / `AllowAnonymous()`——它们还没有
 //     登记权限键，需要表达的只是"令牌有效"与"这个端点有意公开"。
 // 两者都是**进程内的**判定：直连后端也绕不过去。（"边缘是唯一入口"是编排的事实，
 // 不是代码的事实——见 AGENTS.md 的部署不变量。）

@@ -53,8 +53,9 @@ public sealed class ApiResponseContractTests
     [InlineData("&page=-1", 400)]
     public async Task EmptyPagination_HonorsDefaultsAndBounds(string query, int expectedStatus)
     {
-        await using var app = new PlatformApp();
+        await using var app = new PlatformAppWithRootAccount();
         using var client = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         using var response = await client.GetAsync(new Uri($"/api/platform/settings/?scope=empty{query}", UriKind.Relative));
         Assert.Equal(expectedStatus, (int)response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -212,8 +213,12 @@ public sealed class ApiResponseContractTests
     [InlineData("DELETE", "/api/files/1", 401)]
     public async Task FrameworkFailure_UsesCommonErrorContract(string method, string path, int status)
     {
-        await using var app = new PlatformApp();
+        await using var app = new PlatformAppWithRootAccount();
         using var client = app.CreateClient();
+        if (status == 400)
+        {
+            await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        }
         using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
         using var response = await client.SendAsync(request);
         Assert.Equal(status, (int)response.StatusCode);
@@ -250,8 +255,9 @@ public sealed class ApiResponseContractTests
     [Fact]
     public async Task PlatformRead_UsesTheSameEnvelope_AndPreservesNullBusinessValue()
     {
-        await using var app = new PlatformApp();
+        await using var app = new PlatformAppWithRootAccount();
         using var client = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         using var response = await client.GetAsync(new Uri("/api/platform/settings/site.title", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();

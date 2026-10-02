@@ -24,7 +24,7 @@ public sealed class ContextAuthorizationTests(PlatformApp app) : IClassFixture<P
     {
         using var client = app.CreateClient();
 
-        foreach (var path in new[] { "/api/platform/settings/?scope=demo", "/api/scheduling" })
+        foreach (var path in new[] { "/api/scheduling" })
         {
             using var response = await client.GetAsync(new Uri(path, UriKind.Relative));
 

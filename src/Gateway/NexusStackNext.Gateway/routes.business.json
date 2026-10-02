@@ -15,7 +15,7 @@
       ],
       "timeout": "00:00:05",
       "rateLimitPolicy": "gateway.default",
-      "requireAuthentication": false
+      "requireAuthentication": true
     },
     {
       "routeId": "platform-write",

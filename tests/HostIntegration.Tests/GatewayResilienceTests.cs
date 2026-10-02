@@ -229,6 +229,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
     }
 
     public string RouteTablePath => Path.Combine(_directory, "routes.json");
+    public string SigningKey { get; init; } = GatewayRouteAdminApp.SigningKey;
 
     public void UseRoutes(IEnumerable<RouteDefinition> routes)
     {
@@ -255,7 +256,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
         builder.UseSetting("Gateway:RouteTablePath", RouteTablePath);
         builder.UseSetting("Gateway:RateLimit:PermitLimit", "2");
         builder.UseSetting("Gateway:RateLimit:WindowSeconds", "60");
-        builder.UseSetting("Jwt:SigningKey", GatewayRouteAdminApp.SigningKey);
+        builder.UseSetting("Jwt:SigningKey", SigningKey);
         builder.UseSetting("Jwt:Issuer", "nexusstack");
         builder.UseSetting("Jwt:Audience", "nexusstack");
         builder.ConfigureLogging(logging => logging.ClearProviders());
