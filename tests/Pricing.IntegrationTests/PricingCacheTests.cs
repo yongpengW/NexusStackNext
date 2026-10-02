@@ -146,6 +146,8 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
     public async Task WarmQuote_IsSharedWithASecondProcess_WithoutDatabaseAccess()
     {
         var settings = RedisSettings();
+        // 第二进程尚未使用 Redis；共享命中验收要留出冷连接时间，不能把预算降级当成缓存丢失。
+        settings["Pricing__Cache__RedisTimeout"] = "00:00:02";
         await using var first = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
         await using var second = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
         first.Authenticate();
