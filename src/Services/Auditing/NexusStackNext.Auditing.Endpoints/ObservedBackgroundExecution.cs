@@ -1,13 +1,12 @@
 using System.Diagnostics;
-using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
-internal sealed partial class ObservedBackgroundExecution(IOperationJournal journal, OperationJournalStatus status,
-    OperationCaptureOptions options, IClock clock, OperationExecutionContext context, ILogger<ObservedBackgroundExecution> logger) : IBackgroundExecutionObservation
+internal sealed class ObservedBackgroundExecution(OperationObservationWriter writer,
+    OperationCaptureOptions options, IClock clock, OperationExecutionContext context) : IBackgroundExecutionObservation
 {
     public async Task<TResult> ObserveAsync<TInput, TResult>(BackgroundExecutionDescriptor descriptor, Func<Task<BackgroundExecutionInput<TInput>>> prepare, Func<TInput, Task<TResult>> execute,
         Func<TResult, BackgroundExecutionOutcome> classify, CancellationToken cancellationToken = default)
@@ -25,8 +24,8 @@ internal sealed partial class ObservedBackgroundExecution(IOperationJournal jour
         {
             // 输入尚未读到时不猜测来源；已在描述中提供的计划委托人仍是已知信息。
             var interrupted = Started(descriptor, operationId, startedAt, null);
-            await RecordAsync(interrupted).ConfigureAwait(false);
-            await RecordAsync(interrupted with
+            await writer.WriteAsync(interrupted).ConfigureAwait(false);
+            await writer.WriteAsync(interrupted with
             {
                 EventId = Guid.NewGuid(),
                 Phase = "finished",
@@ -41,7 +40,7 @@ internal sealed partial class ObservedBackgroundExecution(IOperationJournal jour
         var rootSource = parent?.RootSource ?? options.Source;
         var traceId = parent?.TraceId ?? Activity.Current?.TraceId.ToString() ?? operationId.ToString("N");
         var started = Started(descriptor, operationId, startedAt, parent);
-        await RecordAsync(started).ConfigureAwait(false);
+        await writer.WriteAsync(started).ConfigureAwait(false);
         using var operationScope = context.Enter(new ExecutionOrigin(operationId, options.Source, rootId, rootSource,
             started.Metadata!.InitiatorId, traceId, parent?.CorrelationId), system: true);
         string? outcome = null;
@@ -63,7 +62,7 @@ internal sealed partial class ObservedBackgroundExecution(IOperationJournal jour
                 };
             }
             catch (Exception) { /* 分类故障不应篡改已经得到的业务结果。 */ }
-            if (outcome is null) { ReportFailure(operationId, "classification"); }
+            if (outcome is null) { writer.ReportFailure(operationId, "classification"); }
             return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -81,7 +80,7 @@ internal sealed partial class ObservedBackgroundExecution(IOperationJournal jour
             operationScope.Dispose();
             if (outcome is not null)
             {
-                await RecordAsync(started with
+                await writer.WriteAsync(started with
                 {
                     EventId = Guid.NewGuid(),
                     Phase = "finished",
@@ -119,26 +118,4 @@ internal sealed partial class ObservedBackgroundExecution(IOperationJournal jour
             CorrelationId = parent?.CorrelationId,
         },
     };
-
-    private async Task RecordAsync(OperationObservedV1 observation)
-    {
-        using var timeout = new CancellationTokenSource(options.WriteTimeout);
-        try
-        {
-            if ((await journal.AppendAsync(observation, timeout.Token).ConfigureAwait(false)).IsSuccess) { return; }
-        }
-        catch (Exception) { /* 来源采集故障不改变任务结果；不输出载荷或异常正文。 */ }
-        ReportFailure(observation.OperationId, observation.Phase);
-    }
-
-    private void ReportFailure(Guid operationId, string phase)
-    {
-        status.ReportFailure();
-        try { LogCaptureFailed(operationId, phase); }
-        catch (Exception) { /* 诊断提供器也不能改变执行结果。 */ }
-    }
-
-    [LoggerMessage(EventId = 10, Level = LogLevel.Error,
-        Message = "操作观察未持久化：OperationId={OperationId}，Phase={Phase}；操作日志已降级。")]
-    private partial void LogCaptureFailed(Guid operationId, string phase);
 }

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Reflection;
-using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
@@ -10,8 +9,8 @@ using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
-internal sealed partial class ObservedCommandExecution(IOperationJournal journal, OperationJournalStatus status,
-    OperationCaptureOptions options, IClock clock, OperationExecutionContext context, ILogger<ObservedCommandExecution> logger,
+internal sealed class ObservedCommandExecution(OperationObservationWriter writer,
+    OperationCaptureOptions options, IClock clock, OperationExecutionContext context,
     ICurrentUser? currentUser = null) : ICommandExecution, IExecutionContext
 {
     public ExecutionOrigin? Capture()
@@ -56,7 +55,7 @@ internal sealed partial class ObservedCommandExecution(IOperationJournal journal
             },
         };
         var timer = Stopwatch.StartNew();
-        await RecordAsync(started).ConfigureAwait(false);
+        await writer.WriteAsync(started).ConfigureAwait(false);
         using var operationScope = context.Enter(new ExecutionOrigin(operationId, options.Source, operationId,
             options.Source, actor, started.TraceId));
         var outcome = "failed";
@@ -75,7 +74,7 @@ internal sealed partial class ObservedCommandExecution(IOperationJournal journal
         finally
         {
             operationScope.Dispose();
-            await RecordAsync(started with
+            await writer.WriteAsync(started with
             {
                 EventId = Guid.NewGuid(),
                 Phase = "finished",
@@ -85,21 +84,4 @@ internal sealed partial class ObservedCommandExecution(IOperationJournal journal
             }).ConfigureAwait(false);
         }
     }
-
-    private async Task RecordAsync(OperationObservedV1 observation)
-    {
-        using var timeout = new CancellationTokenSource(options.WriteTimeout);
-        try
-        {
-            if ((await journal.AppendAsync(observation, timeout.Token).ConfigureAwait(false)).IsSuccess) { return; }
-        }
-        catch (Exception) { /* 观察故障不改写命令结果，也不输出可能含秘密的异常正文。 */ }
-        status.ReportFailure();
-        try { LogCaptureFailed(observation.OperationId, observation.Phase); }
-        catch (Exception) { /* 诊断提供器故障同样不能改变原命令。 */ }
-    }
-
-    [LoggerMessage(EventId = 10, Level = LogLevel.Error,
-        Message = "操作观察未持久化：OperationId={OperationId}，Phase={Phase}；操作日志已降级。")]
-    private partial void LogCaptureFailed(Guid operationId, string phase);
 }
