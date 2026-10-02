@@ -22,6 +22,12 @@ if (args is ["migrate-identity"])
     return;
 }
 
+if (args is ["migrate-platform"])
+{
+    Environment.ExitCode = await PlatformDatabaseCommand.RunAsync();
+    return;
+}
+
 // 平台能力的**唯一宿主**。不变量 8：这个进程由什么组成，一眼看得出来——
 // 下面五行就是它的全部内容，没有 InitApplication(moduleKey)，也没有"我是哪个服务"的运行时枚举。
 //
@@ -63,7 +69,7 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。
 builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
-builder.Services.AddPlatformModule();
+builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule();
 builder.Services.AddAuditingModule();
 builder.Services.AddFilesModule(builder.Configuration);
@@ -141,8 +147,8 @@ if (app.Environment.IsDevelopment())
 }
 
 // 存活 = 进程还能应答 HTTP；就绪 = 依赖可用。
-// Identity 的 PostgreSQL 模式检查数据库，Files 检查存储可写可删。
-// 其余模块当前使用内存适配器，没有外部存储依赖。
+// Identity / Platform 的 PostgreSQL 模式各自检查数据库，Files 检查存储可写可删。
+// Scheduling / Auditing 当前使用内存适配器。
 app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/ready");

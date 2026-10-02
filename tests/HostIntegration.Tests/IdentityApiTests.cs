@@ -329,6 +329,7 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
             new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["Identity:Storage:Provider"] = "Memory",
+                ["Platform:Storage:Provider"] = "Memory",
             }));
         return base.CreateHost(builder);
     }

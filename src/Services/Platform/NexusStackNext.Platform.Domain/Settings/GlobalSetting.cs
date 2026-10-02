@@ -100,12 +100,24 @@ public sealed record GlobalSettingChanged(SettingId SettingId, string Key, strin
 /// 全局配置聚合根。
 /// <para>
 /// Platform 是配置的<b>唯一真相</b>：其他上下文只按 key 读取，不 join 它的表，也不缓存到失去失效能力。
-/// 因此每次变更都要发 <see cref="GlobalSettingChanged"/>——它是别的上下文刷新缓存的唯一信号。
+/// 值变化记录为 <see cref="GlobalSettingChanged"/>；领域事实本身不等于跨上下文消费者已收到通知。
 /// </para>
 /// <para><b>同值写入不发事件</b>：空操作触发缓存失效会让整个系统无谓抖动。</para>
 /// </summary>
 public sealed class GlobalSetting : AggregateRoot<SettingId>
 {
+    private GlobalSetting(GlobalSetting source)
+        : base(source)
+    {
+        Key = source.Key;
+        Value = source.Value;
+        Description = source.Description;
+    }
+
+    /// <summary>保留当前状态与版本的独立副本，不携带待发布事实。</summary>
+    /// <returns>与后续变更隔离的配置状态。</returns>
+    public GlobalSetting Snapshot() => new(this);
+
     private GlobalSetting(SettingId id, SettingKey key, string? value, string? description)
         : base(id)
     {

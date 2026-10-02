@@ -28,6 +28,8 @@
     <PackageVersion Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
     <!-- EF Core 与 PostgreSQL 提供程序。二者均 MIT。 -->
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <!-- 持久化适配器提供 readiness 探针，不要求引用完整 ASP.NET 宿主框架。 -->
+    <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
     <!-- 只给 `dotnet ef` 用：设计时工厂与迁移脚手架。 -->

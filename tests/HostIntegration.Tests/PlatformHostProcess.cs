@@ -5,7 +5,7 @@ using NexusStackNext.PlatformHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-internal sealed class IdentityHostProcess : IAsyncDisposable
+internal sealed class PlatformHostProcess : IAsyncDisposable
 {
     private readonly Process _process;
     private readonly Task<string> _output;
@@ -13,7 +13,7 @@ internal sealed class IdentityHostProcess : IAsyncDisposable
 
     public HttpClient Client { get; }
 
-    private IdentityHostProcess(string connectionString)
+    private PlatformHostProcess(string connectionString, string? rootPassword)
     {
         using var reservation = new TcpListener(IPAddress.Loopback, 0);
         reservation.Start();
@@ -32,19 +32,20 @@ internal sealed class IdentityHostProcess : IAsyncDisposable
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment["Identity__Storage__Provider"] = "Postgres";
         start.Environment["ConnectionStrings__Identity"] = connectionString;
+        start.Environment["ConnectionStrings__Platform"] = connectionString;
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";
         start.Environment["AgileConfig__AppId"] = string.Empty;
         start.Environment["RabbitMQ__HostName"] = string.Empty;
-        start.Environment["Identity__Root__UserName"] = string.Empty;
-        start.Environment["Identity__Root__Password"] = string.Empty;
+        start.Environment["Identity__Root__UserName"] = rootPassword is null ? string.Empty : "journey-root";
+        start.Environment["Identity__Root__Password"] = rootPassword ?? string.Empty;
         _process = Process.Start(start)!;
         _output = _process.StandardOutput.ReadToEndAsync();
         _errors = _process.StandardError.ReadToEndAsync();
     }
 
-    public static async Task<IdentityHostProcess> StartAsync(string connectionString)
+    public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null)
     {
-        var host = new IdentityHostProcess(connectionString);
+        var host = new PlatformHostProcess(connectionString, rootPassword);
         try
         {
             var elapsed = Stopwatch.StartNew();
@@ -64,7 +65,7 @@ internal sealed class IdentityHostProcess : IAsyncDisposable
                 await Task.Delay(100);
             }
 
-            throw new InvalidOperationException("Identity 子进程未就绪；不回显可能包含敏感信息的宿主日志。");
+            throw new InvalidOperationException("平台子进程未就绪；不回显可能包含敏感信息的宿主日志。");
         }
         catch
         {

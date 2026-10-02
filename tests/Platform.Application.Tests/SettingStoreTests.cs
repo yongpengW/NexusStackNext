@@ -9,7 +9,7 @@ namespace NexusStackNext.Platform.Application.Tests;
 /// 配置读写。
 /// <para>
 /// 重点两条：**写是"不存在就创建"**（调用方不必先问注册过没有，那之间有竞态），
-/// 以及**同值写入不发事件**——它是别的上下文刷新缓存的唯一信号，抖动会让整个系统跟着抖。
+/// 以及同值写入保持已提交版本；领域事实是否对外发布取决于真实消费者与契约映射。
 /// </para>
 /// </summary>
 public sealed class SettingStoreTests
@@ -22,6 +22,22 @@ public sealed class SettingStoreTests
     {
         repository = new InMemorySettingRepository();
         return new SettingStore(repository, new SequentialIdGenerator(1000), new FixedClock(Now));
+    }
+
+    [Fact]
+    public async Task PreviouslyReadSetting_RemainsTheObservedVersion_AfterAnotherWrite()
+    {
+        var store = NewStore(out _);
+        var key = Key("mail.sender");
+        await store.WriteAsync(key, "original", "original");
+        var observed = await store.GetAsync(key);
+        Assert.NotNull(observed);
+        Assert.True((await store.WriteAsync(key, "changed", "changed", expectedVersion: observed.Version)).IsSuccess);
+        Assert.Equal("original", observed.Value);
+        Assert.Equal(1, observed.Version);
+        var stale = await store.WriteAsync(key, "stale", expectedVersion: observed.Version);
+        Assert.Equal(SettingStore.Conflict, stale.Error);
+        Assert.Equal("changed", await store.ReadAsync(key));
     }
 
     [Fact]
@@ -67,35 +83,29 @@ public sealed class SettingStoreTests
     }
 
     [Fact]
-    public async Task SameValueWrite_RaisesNoEvent()
+    public async Task SameValueWrite_PreservesCommittedVersion()
     {
-        var store = NewStore(out var repository);
+        var store = NewStore(out _);
         var key = Key("identity.token.lifetime");
         await store.WriteAsync(key, "30m");
 
-        var setting = await repository.FindAsync(key);
-        setting!.ClearDomainEvents();
-
         await store.WriteAsync(key, "30m");
-
-        Assert.Empty(setting.DomainEvents);
+        Assert.Equal(1, (await store.GetAsync(key))!.Version);
     }
 
     [Fact]
-    public async Task ChangedValue_RaisesExactlyOneEvent()
+    public async Task ChangedValue_CommitsTheNextVersion()
     {
-        var store = NewStore(out var repository);
+        var store = NewStore(out _);
         var key = Key("identity.token.lifetime");
         await store.WriteAsync(key, "30m");
 
-        var setting = await repository.FindAsync(key);
-        setting!.ClearDomainEvents();
-
         await store.WriteAsync(key, "45m");
-
-        var changed = Assert.IsType<GlobalSettingChanged>(Assert.Single(setting.DomainEvents));
-        Assert.Equal("45m", changed.NewValue);
-        Assert.Equal("identity.token.lifetime", changed.Key);
+        var committed = await store.GetAsync(key);
+        Assert.NotNull(committed);
+        Assert.Equal(2, committed.Version);
+        Assert.Equal("45m", committed.Value);
+        Assert.Equal("identity.token.lifetime", committed.Key.Value);
     }
 
     [Fact]

@@ -21,7 +21,7 @@ public sealed class IdentityPersistenceJourneyTests
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await database.MigrateAsync();
         JsonElement tokens;
-        await using (var first = await IdentityHostProcess.StartAsync(database.ConnectionString))
+        await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString))
         {
             await CreateAsync(first.Client, "/api/identity/users", new { userName = "process-user", password = "journey-test-password" });
             tokens = await AuthenticateAsync(first.Client, "process-user", "journey-test-password");
@@ -29,7 +29,7 @@ public sealed class IdentityPersistenceJourneyTests
             Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         }
 
-        await using var restarted = await IdentityHostProcess.StartAsync(database.ConnectionString);
+        await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString);
         restarted.Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("accessToken").GetString());
         using var denied = await restarted.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
@@ -269,11 +269,13 @@ public sealed class IdentityPersistenceJourneyTests
 internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
 {
     private readonly string _connectionString;
+    private readonly string _platformConnectionString;
     private readonly string? _rootPassword;
 
-    public PersistentIdentityApp(string connectionString, string? rootPassword = null)
+    public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null)
     {
         _connectionString = connectionString;
+        _platformConnectionString = platformConnectionString ?? connectionString;
         _rootPassword = rootPassword;
         UseKestrel(0);
     }
@@ -285,6 +287,7 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
             {
                 ["Identity:Storage:Provider"] = "Postgres",
                 ["ConnectionStrings:Identity"] = _connectionString,
+                ["ConnectionStrings:Platform"] = _platformConnectionString,
             }));
         return base.CreateHost(builder);
     }
@@ -322,9 +325,12 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         // 子进程输出可能包含框架异常，失败时也不把凭据写进测试日志。
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Identity migrations applied.", result.Output, StringComparison.Ordinal);
+        var platform = await RunMigrationAsync(ConnectionString, "Platform");
+        Assert.Equal(0, platform.ExitCode);
+        Assert.Contains("Platform migrations applied.", platform.Output, StringComparison.Ordinal);
     }
 
-    internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString)
+    internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")
     {
         var start = new ProcessStartInfo("dotnet")
         {
@@ -333,8 +339,8 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
             CreateNoWindow = true,
         };
         start.ArgumentList.Add(typeof(PlatformHostMarker).Assembly.Location);
-        start.ArgumentList.Add("migrate-identity");
-        start.Environment["ConnectionStrings__Identity"] = connectionString ?? string.Empty;
+        start.ArgumentList.Add("migrate-" + context.ToLowerInvariant());
+        start.Environment["ConnectionStrings__" + context] = connectionString ?? string.Empty;
         start.Environment["AgileConfig__AppId"] = "migration-probe";
         start.Environment["AgileConfig__Secret"] = "unused-test-secret";
         start.Environment["AgileConfig__Nodes"] = "http://127.0.0.1:1";

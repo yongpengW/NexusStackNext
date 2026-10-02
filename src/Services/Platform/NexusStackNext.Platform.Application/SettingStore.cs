@@ -23,8 +23,15 @@ public interface ISettingRepository
     /// <summary>保存新配置项。</summary>
     /// <param name="setting">配置聚合。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>任务。</returns>
-    Task AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default);
+    /// <returns>已提交，或稳定键冲突。</returns>
+    Task<Result> AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default);
+
+    /// <summary>原子保存已读取配置的值、说明和版本。</summary>
+    /// <param name="setting">已修改的配置聚合。</param>
+    /// <param name="originalVersion">应用修改前读到的版本。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>已提交，或读取版本已过期。</returns>
+    Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -36,7 +43,7 @@ public interface ISettingRepository
 /// </para>
 /// <para>
 /// <b>"同值写入不发事件"由聚合保证</b>（<c>GlobalSetting.ChangeValue</c>）：
-/// 它是别的上下文刷新缓存的唯一信号，抖动会让整个系统无谓地跟着抖。
+/// 是否公开为跨上下文通知由应用层的契约映射与真实消费者决定。
 /// </para>
 /// </summary>
 /// <param name="settings">配置仓储。</param>
@@ -44,6 +51,19 @@ public interface ISettingRepository
 /// <param name="clock">时钟。</param>
 public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, IClock clock)
 {
+    /// <summary>当前版本或稳定键已被其他写入改变。</summary>
+    public static readonly Error Conflict = new("platform.setting.conflict", "配置已被其他操作修改，请重新读取后再提交。");
+
+    /// <summary>读取配置的值、说明与版本；未注册时返回空。</summary>
+    /// <param name="key">配置键。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>配置当前状态。</returns>
+    public Task<GlobalSetting?> GetAsync(SettingKey key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return settings.FindAsync(key, cancellationToken);
+    }
+
     /// <summary>读一个配置值。键不存在与键存在但没有值都返回 <c>null</c>。</summary>
     /// <param name="key">配置键。</param>
     /// <param name="cancellationToken">取消令牌。</param>
@@ -61,31 +81,46 @@ public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, 
     /// <param name="value">新值；<c>null</c> 表示清空。</param>
     /// <param name="description">说明；<c>null</c> 表示不改。</param>
     /// <param name="cancellationToken">取消令牌。</param>
+    /// <param name="expectedVersion">条件写的读取版本；0 要求尚未注册，省略则替换请求开始时读取的状态。</param>
     /// <returns>成功，或聚合拒绝的原因。</returns>
     public async Task<Result> WriteAsync(
         SettingKey key,
         string? value,
         string? description = null,
+        long? expectedVersion = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        if (expectedVersion < 0)
+        {
+            return Result.Failure(new Error("platform.setting.version", "配置版本不能为负数。"));
+        }
 
         var setting = await settings.FindAsync(key, cancellationToken).ConfigureAwait(false);
+        if (expectedVersion is { } expected && expected != (setting?.Version ?? 0))
+        {
+            return Result.Failure(Conflict);
+        }
 
         if (setting is null)
         {
             // 首次写入即创建：初值直接带上，不先建后改。
             setting = GlobalSetting.Create(new SettingId(ids.NextId()), key, value, description);
-            await settings.AddAsync(setting, cancellationToken).ConfigureAwait(false);
-            return Result.Success();
+            return await settings.AddAsync(setting, cancellationToken).ConfigureAwait(false);
         }
 
+        var originalVersion = setting.Version;
         if (description is not null)
         {
             setting.Describe(description);
         }
 
-        return setting.ChangeValue(value, clock.UtcNow);
+        var changed = setting.ChangeValue(value, clock.UtcNow);
+        if (changed.IsSuccess)
+        {
+            return await settings.SaveAsync(setting, originalVersion, cancellationToken).ConfigureAwait(false);
+        }
+        return changed;
     }
 
     /// <summary>列出一个分组下的全部配置。</summary>
