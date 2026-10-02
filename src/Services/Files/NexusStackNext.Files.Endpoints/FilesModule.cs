@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http.Features;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Files.Application;
@@ -25,13 +27,48 @@ public static class FilesModule
     /// <summary>注册本模块需要的服务，包含它自己的就绪检查。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="configuration">配置——本模块自己知道要读哪个键。</param>
+    /// <param name="environment">运行环境；内存元数据仅用于开发和测试。</param>
     /// <returns>同一个服务集合，便于串联。</returns>
     public static IServiceCollection AddFilesModule(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
+        services.AddSingleton(new FileUploadLimits(
+            configuration.GetValue<long?>("Files:Upload:MaxBytes") ?? 64 * 1024 * 1024,
+            configuration.GetValue<int?>("Files:Upload:MaxConcurrentUploads") ?? 4));
+        services.AddSingleton(new FileRecoveryOptions(
+            configuration.GetValue<int?>("Files:Cleanup:IntervalSeconds") ?? 30,
+            configuration.GetValue<int?>("Files:Cleanup:BatchSize") ?? 64,
+            configuration.GetValue<int?>("Files:Cleanup:RetryDelaySeconds") ?? 30,
+            configuration.GetValue<int?>("Files:Cleanup:OrphanAgeSeconds") ?? 3600));
+
+        var provider = configuration["Files:Storage:Provider"];
+        if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
+        if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing"))
+            {
+                throw new InvalidOperationException("Files:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
+            }
+            services.AddSingleton<IStoredFileRepository, InMemoryStoredFileRepository>();
+        }
+        else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var connection = configuration.GetConnectionString("Files");
+            if (string.IsNullOrWhiteSpace(connection))
+            {
+                throw new InvalidOperationException("必须配置 ConnectionStrings:Files；开发测试可显式选择 Files:Storage:Provider=Memory。");
+            }
+            services.AddFilesPostgresMetadata(connection);
+        }
+        else
+        {
+            throw new InvalidOperationException("Files:Storage:Provider 仅支持 Postgres / Memory。");
+        }
 
         var storageRoot = configuration[StorageRootConfigurationKey];
         if (string.IsNullOrWhiteSpace(storageRoot))
@@ -64,26 +101,18 @@ public static class FilesModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        // **进程内也要要求认证**：每个端点末尾的 `.RequireAuthorization()`。
-        //
-        // 部署不变量说"业务服务不对外暴露、边缘是唯一入口"，而那条约定**没有任何测试守着**。
-        // 网关确实会挡（`files-api` 是 requireAuthentication: true），但那是**编排**的事实，
-        // 不是代码的事实：谁能直连到这个进程，谁就绕过了整套保护。
-        // 此前这五个端点在进程内**没有任何授权判定**——宿主注释里那句"授权过滤器由模块
-        // 自己挂在它的分组上"只对 Identity 成立。
-        //
-        // 为什么用框架的 `RequireAuthorization()` 而不是 Identity 那个过滤器：
-        // 那个要算**权限键**（路由模板:方法）并比对预计算集合，是 RBAC 的落点；
-        // 这四个上下文还没有登记权限键，它们要的只是"令牌有效"——那正是框架能力的范围。
-        // 等哪个上下文开始登记权限键，再把它换成过滤器。
-
+        // 会话撤销检查先于归属判断；根管理员也不隐式拥有其他人的私有文件。
+        var fileEndpoints = endpoints.MapGroup("/api/files").RequireAuthorization().RequireAuthenticated();
+        fileEndpoints.AddEndpointFilter<NexusStackAuthorizationFilter>();
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
         // 需要 multipart 时它可以在这一层之上加，不影响下面任何东西。
-        endpoints.MapPost("/api/files", async (ApiResponses responses,
+        fileEndpoints.MapPost("", async (ApiResponses responses,
             HttpRequest request,
             string name,
             FileService files,
+            FileUploadLimits limits,
+            ICurrentUser currentUser,
             CancellationToken cancellationToken) =>
         {
             var fileName = FileName.Create(name);
@@ -92,43 +121,50 @@ public static class FilesModule
                 return Failure(fileName.Error);
             }
 
-            using var buffer = new MemoryStream();
-            await request.Body.CopyToAsync(buffer, cancellationToken);
-            buffer.Position = 0;
+            if (request.ContentLength > limits.MaxBytes)
+            {
+                return Failure(new Error("files.too_large", "文件超过上传大小限制。"));
+            }
+            var bodyLimit = request.HttpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (bodyLimit is { IsReadOnly: false }) { bodyLimit.MaxRequestBodySize = limits.MaxBytes; }
 
             var uploaded = await files.UploadAsync(
                 fileName.Value,
                 request.ContentType ?? "application/octet-stream",
-                buffer,
-                ownerId: null,
+                request.Body,
+                ownerId: currentUser.UserId!,
                 cancellationToken);
 
             return uploaded.IsFailure
                 ? Failure(uploaded.Error)
-                : responses.Created($"/api/files/{uploaded.Value.Id.Value}", new FileUploadedResponse(uploaded.Value.Id.Value, uploaded.Value.Name.Value, uploaded.Value.Size, uploaded.Value.StorageKey));
-        }).Produces<ApiResponse<FileUploadedResponse>>(201).ProducesApiErrors(400, 401, 403, 500).RequireAuthorization();
+                : responses.Created($"/api/files/{uploaded.Value.Id.Value}", new FileUploadedResponse(uploaded.Value.Id.Value, uploaded.Value.Name.Value, uploaded.Value.Size));
+        }).Produces<ApiResponse<FileUploadedResponse>>(201).ProducesApiErrors(400, 401, 403, 413, 429, 500).RequireAuthorization();
 
         // 下载字节。**文件名由领域校验过**，因此这里不必再防路径穿越——
         // 而磁盘存储解析句柄时还有第二道闸（见 LocalDiskFileStore）。
-        endpoints.MapGet("/api/files/{id:long}", async (
+        fileEndpoints.MapGet("/{id:long}", async (
             long id,
+            HttpResponse response,
             FileService files,
+            ICurrentUser currentUser,
             CancellationToken cancellationToken) =>
         {
-            var opened = await files.OpenAsync(new StoredFileId(id), cancellationToken);
+            var opened = await files.OpenAsync(new StoredFileId(id), currentUser.UserId!, cancellationToken);
 
-            return opened.IsFailure
-                ? Failure(opened.Error)
-                : Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
+            if (opened.IsFailure) { return Failure(opened.Error); }
+            response.Headers.XContentTypeOptions = "nosniff";
+            response.Headers.CacheControl = "private, no-store";
+            return Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
         }).Produces(200, contentType: "application/octet-stream").ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 元数据（不碰字节）。
-        endpoints.MapGet("/api/files/{id:long}/metadata", async (ApiResponses responses,
+        fileEndpoints.MapGet("/{id:long}/metadata", async (ApiResponses responses,
             long id,
             FileService files,
+            ICurrentUser currentUser,
             CancellationToken cancellationToken) =>
         {
-            var file = await files.DescribeAsync(new StoredFileId(id), cancellationToken);
+            var file = await files.DescribeAsync(new StoredFileId(id), currentUser.UserId!, cancellationToken);
 
             return file is null
                 ? Failure(new Error("files.not_found", $"文件不存在：{id}。"))
@@ -136,18 +172,35 @@ public static class FilesModule
         }).Produces<ApiResponse<FileMetadataResponse>>().ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 删除：先软删元数据，再删字节（顺序的理由见 FileService）。
-        endpoints.MapDelete("/api/files/{id:long}", async (
+        fileEndpoints.MapDelete("/{id:long}", async (
+            ApiResponses responses,
+            HttpResponse response,
             long id,
             FileService files,
+            ICurrentUser currentUser,
             CancellationToken cancellationToken) =>
         {
-            var deleted = await files.DeleteAsync(new StoredFileId(id), cancellationToken);
+            var deleted = await files.DeleteAsync(new StoredFileId(id), currentUser.UserId!, cancellationToken);
+            if (deleted.IsSuccess && !deleted.Value) { response.Headers.Location = $"/api/files/{id}/deletion"; }
+            return deleted.IsFailure ? Failure(deleted.Error)
+                : deleted.Value ? Results.NoContent()
+                : responses.Accepted(new FileDeletionResponse(id, false));
+        }).Produces(204).Produces<ApiResponse<FileDeletionResponse>>(202).ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
-            return deleted.IsFailure ? Failure(deleted.Error) : Results.NoContent();
-        }).Produces(204).ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
+        fileEndpoints.MapGet("/{id:long}/deletion", async (
+            ApiResponses responses,
+            long id,
+            FileService files,
+            ICurrentUser currentUser,
+            CancellationToken cancellationToken) =>
+        {
+            var completed = await files.DeletionCompletedAsync(new StoredFileId(id), currentUser.UserId!, cancellationToken);
+            return completed is null ? Failure(new Error("files.not_found", "文件不存在。"))
+                : responses.Ok(new FileDeletionResponse(id, completed.Value));
+        }).Produces<ApiResponse<FileDeletionResponse>>().ProducesApiErrors(401, 403, 404, 500);
 
         // 校验文件名——目录穿越的第一道闸在领域里，这里只是把它暴露出来。
-        endpoints.MapGet("/api/files/validate-name", (ApiResponses responses, string name) =>
+        fileEndpoints.MapGet("/validate-name", (ApiResponses responses, string name) =>
         {
             var parsed = FileName.Create(name);
 
@@ -161,14 +214,17 @@ public static class FilesModule
 
     /// <summary>
     /// 本模块自己的错误码 → 状态码映射。
-    /// <para>与 Platform 的**故意不同**：这里 <c>files.not_found</c> 是 404，
-    /// 而 Platform 的全部是 400。</para>
+    /// <para>文件不存在、资源超限与普通校验错误有各自的 HTTP 语义。</para>
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == "files.not_found"
-            ? StatusCodes.Status404NotFound
-            : StatusCodes.Status400BadRequest,
+        statusCode: error.Code switch
+        {
+            "files.not_found" => StatusCodes.Status404NotFound,
+            "files.too_large" => StatusCodes.Status413PayloadTooLarge,
+            "files.upload_busy" => StatusCodes.Status429TooManyRequests,
+            _ => StatusCodes.Status400BadRequest,
+        },
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
@@ -219,6 +275,7 @@ internal sealed partial class FileStoreInitializer(
     private static partial void LogStorageReady(ILogger logger, string rootDirectory);
 }
 
-internal sealed record FileUploadedResponse(long FileId, string Name, long Size, string? StorageKey);
+internal sealed record FileUploadedResponse(long FileId, string Name, long Size);
 internal sealed record FileMetadataResponse(long FileId, string Name, string ContentType, long Size, bool Stored, DateTimeOffset UploadedAt);
 internal sealed record FileNameResponse(string FileName);
+internal sealed record FileDeletionResponse(long FileId, bool Completed);

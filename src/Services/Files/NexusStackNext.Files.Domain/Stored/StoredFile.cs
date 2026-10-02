@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.Files.Domain.Stored;
@@ -46,12 +47,12 @@ public sealed class FileName : ValueObject
 
         if (trimmed.Contains('/', StringComparison.Ordinal)
             || trimmed.Contains('\\', StringComparison.Ordinal)
-            || trimmed.Contains('\0', StringComparison.Ordinal)
+            || value!.Any(char.IsControl)
             || trimmed is "." or "..")
         {
             return Result.Failure<FileName>(new Error(
                 "files.file_name.unsafe",
-                "文件名不能包含路径分隔符，也不能是 . 或 .."));
+                "文件名不能包含路径分隔符或控制字符，也不能是 . 或 .."));
         }
 
         return Result.Success(new FileName(trimmed));
@@ -85,13 +86,31 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
         UploadedAt = uploadedAt;
     }
 
+    private StoredFile(StoredFile source)
+        : base(source)
+    {
+        Name = source.Name;
+        ContentType = source.ContentType;
+        OwnerId = source.OwnerId;
+        UploadedAt = source.UploadedAt;
+        StorageKey = source.StorageKey;
+        Size = source.Size;
+        IsDeleted = source.IsDeleted;
+        BytesRemovedAt = source.BytesRemovedAt;
+        NextCleanupAttemptAt = source.NextCleanupAttemptAt;
+    }
+
+    /// <summary>取得独立快照；修改它不会改变尚未提交的仓储状态。</summary>
+    /// <returns>具有相同标识、版本和文件状态的独立实例。</returns>
+    public StoredFile Snapshot() => new(this);
+
     /// <summary>文件名。</summary>
     public FileName Name { get; }
 
     /// <summary>内容类型。</summary>
     public string ContentType { get; }
 
-    /// <summary>归属者标识；公共文件为 <c>null</c>。</summary>
+    /// <summary>归属者标识；无归属的历史记录不授予任何请求访问权。</summary>
     public string? OwnerId { get; }
 
     /// <summary>上传时刻。</summary>
@@ -105,6 +124,12 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
 
     /// <summary>是否已删除（软删）。</summary>
     public bool IsDeleted { get; private set; }
+
+    /// <summary>字节已确认清除的时刻；软删除本身不代表清除完成。</summary>
+    public DateTimeOffset? BytesRemovedAt { get; private set; }
+
+    /// <summary>删除失败后的下一次清理时刻；空值表示可以立即处理。</summary>
+    public DateTimeOffset? NextCleanupAttemptAt { get; private set; }
 
     /// <summary>是否已有可读取的内容。</summary>
     public bool IsStored => StorageKey is not null;
@@ -125,9 +150,19 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
     {
         ArgumentNullException.ThrowIfNull(name);
 
-        return string.IsNullOrWhiteSpace(contentType)
-            ? Result.Failure<StoredFile>(new Error("files.content_type.empty", "内容类型不能为空。"))
-            : Result.Success(new StoredFile(id, name, contentType.Trim(), ownerId, uploadedAt));
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return Result.Failure<StoredFile>(new Error("files.content_type.empty", "内容类型不能为空。"));
+        }
+
+        var trimmedType = contentType.Trim();
+        if (trimmedType.Length > 255 || contentType.Any(char.IsControl)
+            || !MediaTypeHeaderValue.TryParse(trimmedType, out var parsed)
+            || parsed.MediaType is null || parsed.MediaType.Contains('*', StringComparison.Ordinal))
+        {
+            return Result.Failure<StoredFile>(new Error("files.content_type.invalid", "必须提供有效且具体的内容类型。"));
+        }
+        return Result.Success(new StoredFile(id, name, trimmedType, ownerId, uploadedAt));
     }
 
     /// <summary>标记内容已写入存储。</summary>
@@ -170,6 +205,29 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
         IsDeleted = true;
         return Changed();
     }
+
+    /// <summary>确认已软删除文件的物理字节清除完成。</summary>
+    /// <param name="at">由调用方提供的完成时刻。</param>
+    /// <returns>成功，或文件尚未软删除。</returns>
+    public Result ConfirmBytesRemoved(DateTimeOffset at)
+    {
+        if (!IsDeleted) { return Result.Failure(new Error("files.not_deleted", "文件尚未请求删除。")); }
+        if (BytesRemovedAt is not null) { return Result.Success(); }
+        BytesRemovedAt = at;
+        NextCleanupAttemptAt = null;
+        return Changed();
+    }
+
+    /// <summary>持久记录下一次清理时间，避免失败文件占满每一轮的处理名额。</summary>
+    /// <param name="retryAt">下一次尝试时刻。</param>
+    /// <returns>成功，或文件尚未软删除。</returns>
+    public Result PostponeCleanup(DateTimeOffset retryAt)
+    {
+        if (!IsDeleted) { return Result.Failure(new Error("files.not_deleted", "文件尚未请求删除。")); }
+        if (BytesRemovedAt is not null || NextCleanupAttemptAt == retryAt) { return Result.Success(); }
+        NextCleanupAttemptAt = retryAt;
+        return Changed();
+    }
 }
 
 /// <summary>
@@ -187,12 +245,12 @@ public sealed class StoredFile : AggregateRoot<StoredFileId>
 /// </summary>
 public interface IFileStore
 {
-    /// <summary>写入字节，返回不透明的存储句柄。</summary>
+    /// <summary>写入字节并保护它们；调用方必须持有返回的保护直到元数据保存结束。</summary>
     /// <param name="content">内容流。</param>
     /// <param name="contentType">内容类型。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>存储句柄。</returns>
-    Task<string> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default);
+    /// <returns>带不透明句柄的写入保护；释放不会删除字节。</returns>
+    Task<FileWrite> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default);
 
     /// <summary>打开读取流。</summary>
     /// <param name="storageKey">存储句柄。</param>
@@ -205,6 +263,29 @@ public interface IFileStore
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>任务。</returns>
     Task DeleteAsync(string storageKey, CancellationToken cancellationToken = default);
+}
+
+/// <summary>已写入字节的保护；元数据提交结束前不得回收对应内容。</summary>
+public sealed class FileWrite : IAsyncDisposable
+{
+    private IAsyncDisposable? _protection;
+
+    /// <summary>由存储适配器构造受保护的写入结果。</summary>
+    /// <param name="storageKey">不透明且永不复用的句柄。</param>
+    /// <param name="protection">释放时解除回收保护的资源。</param>
+    public FileWrite(string storageKey, IAsyncDisposable protection)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(storageKey);
+        ArgumentNullException.ThrowIfNull(protection);
+        StorageKey = storageKey;
+        _protection = protection;
+    }
+
+    /// <summary>存储句柄。</summary>
+    public string StorageKey { get; }
+
+    /// <inheritdoc />
+    public ValueTask DisposeAsync() => Interlocked.Exchange(ref _protection, null)?.DisposeAsync() ?? ValueTask.CompletedTask;
 }
 
 /// <summary>

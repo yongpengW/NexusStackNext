@@ -25,8 +25,20 @@ public sealed class AggregateVersionTests
         Assert.True(file.Delete().IsSuccess);
         Assert.Equal(3, file.Version);
 
+        Assert.True(file.PostponeCleanup(Now.AddMinutes(1)).IsSuccess);
+        Assert.Equal(4, file.Version);
+        Assert.True(file.PostponeCleanup(Now.AddMinutes(1)).IsSuccess);
+        Assert.Equal(4, file.Version);
+        Assert.True(file.ConfirmBytesRemoved(Now.AddMinutes(2)).IsSuccess);
+        Assert.Equal(5, file.Version);
+        Assert.True(file.ConfirmBytesRemoved(Now.AddMinutes(3)).IsSuccess);
+        Assert.True(file.PostponeCleanup(Now.AddMinutes(4)).IsSuccess);
+        Assert.Equal(5, file.Version);
+        Assert.Equal(Now.AddMinutes(2), file.BytesRemovedAt);
+        Assert.Null(file.NextCleanupAttemptAt);
+
         Assert.True(file.Delete().IsSuccess);
-        Assert.Equal(3, file.Version);
+        Assert.Equal(5, file.Version);
     }
 
     /// <summary>

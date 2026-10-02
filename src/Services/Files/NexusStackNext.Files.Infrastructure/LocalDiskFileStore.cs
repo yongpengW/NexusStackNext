@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Domain.Stored;
@@ -18,11 +17,16 @@ namespace NexusStackNext.Files.Infrastructure;
 /// <c>../../</c> 这类值就会让读写落到存储根目录之外。因此解析时**两道闸**：
 /// 先拒绝含分隔符与 <c>..</c> 的句柄，再断言拼出来的绝对路径确实在根目录之内。</para>
 /// </summary>
-public sealed class LocalDiskFileStore : IFileStore
+public sealed class LocalDiskFileStore : IFileStore, IOrphanFileStore, IDisposable
 {
     private readonly string _root;
     private readonly string _rootWithSeparator;
     private volatile bool _rootCreated;
+    private readonly object _initialization = new();
+    private string? _storeId;
+    private const string IdentityFile = ".nsn-storage-id";
+    private readonly SemaphoreSlim _scanGate = new(1, 1);
+    private IEnumerator<string>? _scan;
 
     /// <summary>
     /// 构造磁盘存储。**不做任何 I/O**——目录创建推迟到 <see cref="EnsureCreated"/>。
@@ -60,41 +64,79 @@ public sealed class LocalDiskFileStore : IFileStore
             return;
         }
 
-        Directory.CreateDirectory(_root);
-        _rootCreated = true;
+        lock (_initialization)
+        {
+            if (_rootCreated) { return; }
+            Directory.CreateDirectory(_root);
+            var identityPath = Path.Combine(_root, IdentityFile);
+            if (!File.Exists(identityPath))
+            {
+                var identity = Guid.NewGuid().ToString("N");
+                var pending = identityPath + "." + identity;
+                try
+                {
+                    using (var created = new FileStream(pending, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    {
+                        created.Write(System.Text.Encoding.ASCII.GetBytes(identity));
+                        created.Flush(flushToDisk: true);
+                    }
+                    try { File.Move(pending, identityPath); }
+                    catch (IOException) when (File.Exists(identityPath)) { }
+                }
+                finally { File.Delete(pending); }
+            }
+            _storeId = ReadStoreIdentity();
+            _rootCreated = true;
+        }
     }
 
     /// <summary>存储根目录（绝对路径）。</summary>
     public string RootDirectory => _root;
 
     /// <inheritdoc />
-    public async Task<string> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
+    public async Task<FileWrite> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(content);
 
         // 启动步骤没跑过时（直接构造本类的测试、或是被跳过初始化的宿主），在这里补上。
         EnsureCreated();
+        ValidateRoot();
 
         // 句柄与文件名无关：文件名是不可信输入，而句柄是我们自己生成的。
-        var storageKey = Guid.NewGuid().ToString("n");
+        var storageKey = "v1-" + _storeId + "-" + Guid.NewGuid().ToString("n");
         var path = ResolvePath(storageKey);
-
-        await using (var target = File.Create(path))
+        var protection = new FileStream(path + ".lock", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+        var partial = path + ".part";
+        try
         {
-            await content.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+            await using (var target = File.Create(partial))
+            {
+                await content.CopyToAsync(target, cancellationToken).ConfigureAwait(false);
+            }
+            File.Move(partial, path);
+            return new FileWrite(storageKey, protection);
         }
-
-        return storageKey;
+        catch
+        {
+            var cleaned = false;
+            try { File.Delete(partial); cleaned = true; }
+            catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException) { }
+            await protection.DisposeAsync().ConfigureAwait(false);
+            if (cleaned)
+            {
+                try { File.Delete(path + ".lock"); }
+                catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException) { }
+            }
+            throw;
+        }
     }
 
     /// <inheritdoc />
     public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default)
     {
         var path = ResolvePath(storageKey);
-
-        return File.Exists(path)
-            ? Task.FromResult<Stream>(File.OpenRead(path))
-            : throw new FileNotFoundException($"存储中没有这个句柄：{storageKey}。", storageKey);
+        ValidateRoot(storageKey);
+        return Task.FromResult<Stream>(File.OpenRead(path));
     }
 
     /// <inheritdoc />
@@ -102,12 +144,96 @@ public sealed class LocalDiskFileStore : IFileStore
     {
         var path = ResolvePath(storageKey);
 
-        if (File.Exists(path))
+        // File.Exists 会把“目录不可用 / 无权限”也折叠成 false，不能据此宣布清除成功。
+        ValidateRoot(storageKey);
+        using (var protection = new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
         {
-            File.Delete(path);
+            DeleteBytes(path);
         }
+        File.Delete(path + ".lock");
 
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public async Task CollectOrphansAsync(Func<string, CancellationToken, Task<bool>> retireUnreferenced,
+        DateTimeOffset olderThan, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(retireUnreferenced);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+        var storageFailure = false;
+        await _scanGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ValidateRoot();
+            _scan ??= Directory.EnumerateFiles(_root, "v1-*.lock").GetEnumerator();
+            for (var index = 0; index < limit; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!_scan.MoveNext()) { _scan.Dispose(); _scan = null; break; }
+                var lockPath = _scan.Current;
+                var key = Path.GetFileName(lockPath)[..^5];
+                if (!IsManagedKey(key) || File.GetCreationTimeUtc(lockPath) >= olderThan.UtcDateTime) { continue; }
+                FileStream protection;
+                try { protection = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+                catch (IOException) { continue; } // 正在写入，或已被另一个恢复者清除。
+                try
+                {
+                    var retired = false;
+                    await using (protection.ConfigureAwait(false))
+                    {
+                        retired = await retireUnreferenced(key, cancellationToken).ConfigureAwait(false);
+                        if (retired) { DeleteBytes(ResolvePath(key)); }
+                    }
+                    if (retired) { File.Delete(lockPath); }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // 保留扫描位置，让单个坏文件不能饿死后续候选；本轮结束后统一报告故障。
+                    storageFailure = true;
+                }
+            }
+        }
+        catch
+        {
+            _scan?.Dispose();
+            _scan = null;
+            throw;
+        }
+        finally { _scanGate.Release(); }
+        if (storageFailure) { throw new IOException("部分孤儿文件暂时无法清理，将继续重试。"); }
+    }
+
+    private void ValidateRoot(string? storageKey = null)
+    {
+        if (!string.Equals(_storeId, ReadStoreIdentity(), StringComparison.Ordinal)
+            || (storageKey is not null && !IsManagedKey(storageKey)))
+        {
+            throw new IOException("文件存储身份不匹配，请恢复原存储。");
+        }
+    }
+
+    private string ReadStoreIdentity()
+    {
+        var identity = File.ReadAllText(Path.Combine(_root, IdentityFile));
+        if (!Guid.TryParseExact(identity, "N", out _)) { throw new IOException("文件存储身份无效。"); }
+        return identity;
+    }
+
+    private static void DeleteBytes(string path)
+    {
+        File.Delete(path);
+        File.Delete(path + ".part");
+    }
+
+    private bool IsManagedKey(string storageKey) => storageKey.StartsWith("v1-" + _storeId + "-", StringComparison.Ordinal)
+        && Guid.TryParseExact(storageKey.AsSpan(36), "N", out _);
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _scan?.Dispose();
+        _scanGate.Dispose();
     }
 
     /// <summary>
@@ -133,27 +259,77 @@ public sealed class LocalDiskFileStore : IFileStore
     }
 }
 
-/// <summary>内存文件元数据仓储。<b>只保存未软删的文件</b>——调用方不需要自己记得过滤。</summary>
+/// <summary>仅用于开发测试的文件元数据仓储；查询返回快照，提交时比较版本。</summary>
 public sealed class InMemoryStoredFileRepository : IStoredFileRepository
 {
-    private readonly ConcurrentDictionary<long, StoredFile> _files = new();
+    private readonly Dictionary<long, StoredFile> _files = [];
+    private readonly object _gate = new();
+    private readonly HashSet<string> _retired = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(id);
 
-        return Task.FromResult(
-            _files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file : null);
+        lock (_gate)
+        {
+            return Task.FromResult(
+                _files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file.Snapshot() : null);
+        }
     }
 
     /// <inheritdoc />
-    public Task SaveAsync(StoredFile file, CancellationToken cancellationToken = default)
+    public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(id);
+        lock (_gate)
+        {
+            return Task.FromResult(_files.TryGetValue(id.Value, out var file) && file.IsDeleted ? file.Snapshot() : null);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult<IReadOnlyList<StoredFile>>(_files.Values
+                .Where(file => file.IsDeleted && file.BytesRemovedAt is null
+                    && (file.NextCleanupAttemptAt is null || file.NextCleanupAttemptAt <= now))
+                .OrderBy(file => file.NextCleanupAttemptAt).ThenBy(file => file.Id.Value).Take(limit).Select(file => file.Snapshot()).ToArray());
+        }
+    }
+
+    /// <inheritdoc />
+    public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        _files[file.Id.Value] = file;
+        lock (_gate)
+        {
+            if (file.StorageKey is not null && _retired.Contains(file.StorageKey))
+            {
+                throw new InvalidOperationException("该文件写入已失效，不能发布元数据。");
+            }
+            var exists = _files.TryGetValue(file.Id.Value, out var current);
+            if (originalVersion is null ? exists : !exists || current!.Version != originalVersion.Value)
+            {
+                throw new FileMetadataConflictException();
+            }
+            _files[file.Id.Value] = file.Snapshot();
+        }
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            if (_files.Values.Any(file => string.Equals(file.StorageKey, storageKey, StringComparison.Ordinal))) { return Task.FromResult(false); }
+            _retired.Add(storageKey);
+            return Task.FromResult(true);
+        }
     }
 }
 
@@ -161,7 +337,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository
 public static class FilesInfrastructureServiceCollectionExtensions
 {
     /// <summary>
-    /// 注册本地磁盘存储与内存元数据仓储。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。
+    /// 注册本地磁盘字节存储；元数据适配器由模块独立选择。<b>不做程序集扫描</b>（架构不变量 8）。
     ///
     /// <para><b>注册期不 new、也不碰文件系统。</b>存储用工厂注册，
     /// <c>LocalDiskFileStore</c> 的构造期已不再做 I/O（见该类的说明）。
@@ -181,9 +357,11 @@ public static class FilesInfrastructureServiceCollectionExtensions
         // 同一个实例同时以具体类型与端口暴露：启动步骤要具体类型上的 EnsureCreated，
         // 而业务代码只看得到 IFileStore。
         services.AddSingleton<IFileStore>(sp => sp.GetRequiredService<LocalDiskFileStore>());
+        services.AddSingleton<IOrphanFileStore>(sp => sp.GetRequiredService<LocalDiskFileStore>());
 
-        services.AddSingleton<IStoredFileRepository, InMemoryStoredFileRepository>();
         services.AddScoped<FileService>();
+        services.AddScoped<FileRecovery>();
+        services.AddHostedService<FileRecoveryWorker>();
 
         return services;
     }

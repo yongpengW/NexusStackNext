@@ -15,23 +15,57 @@ namespace NexusStackNext.Files.Application.Tests;
 /// </summary>
 public sealed class FileServiceTests
 {
+    private const string Owner = "file-owner";
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
     private static (FileService Service, FakeFileStore Store, FakeStoredFileRepository Files) NewService()
     {
         var store = new FakeFileStore();
         var files = new FakeStoredFileRepository();
-        return (new FileService(store, files, new SequentialIdGenerator(7000), new FixedClock(new DateTimeOffset(2026, 9, 29, 12, 0, 0, TimeSpan.Zero))), store, files);
+        var clock = new FixedClock(Now);
+        return (new FileService(store, files, new SequentialIdGenerator(7000), clock, new FileUploadLimits(),
+            new FileRecovery(store, files, clock, new FileRecoveryOptions(), store)), store, files);
     }
 
     private static MemoryStream Content(string text = "hello") => new(System.Text.Encoding.UTF8.GetBytes(text));
+
+    [Fact]
+    public async Task FailedMetadataUpdate_DoesNotHideThePreviouslyCommittedFile()
+    {
+        var repository = new RejectUpdatesRepository(new InMemoryStoredFileRepository());
+        var store = new FakeFileStore();
+        var clock = new FixedClock(Now);
+        var service = new FileService(store, repository, new SequentialIdGenerator(7000), clock, new FileUploadLimits(),
+            new FileRecovery(store, repository, clock, new FileRecoveryOptions(), store));
+        using var content = Content();
+        var uploaded = await service.UploadAsync(FileName.Create("kept.txt").Value, "text/plain", content, Owner);
+        Assert.True(uploaded.IsSuccess);
+        await Assert.ThrowsAsync<IOException>(() => service.DeleteAsync(uploaded.Value.Id, Owner));
+        var stillVisible = await service.DescribeAsync(uploaded.Value.Id, Owner);
+        Assert.NotNull(stillVisible);
+        var downloaded = await service.OpenAsync(uploaded.Value.Id, Owner);
+        Assert.True(downloaded.IsSuccess);
+        await downloaded.Value.Content.DisposeAsync();
+    }
+
+    private sealed class RejectUpdatesRepository(IStoredFileRepository inner) : IStoredFileRepository
+    {
+        public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default) => inner.FindAsync(id, cancellationToken);
+        public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default) => inner.FindDeletedAsync(id, cancellationToken);
+        public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+            inner.PendingDeletionsAsync(now, limit, cancellationToken);
+        public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default) =>
+            inner.RetireUnreferencedStorageAsync(storageKey, cancellationToken);
+        public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default) =>
+            originalVersion is null ? inner.SaveAsync(file, cancellationToken: cancellationToken) : throw new IOException("Simulated metadata failure");
+    }
 
     [Fact]
     public async Task Upload_WritesBytesThenSavesMetadata()
     {
         var (service, store, files) = NewService();
 
-        var result = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content("hello"));
+        var result = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content("hello"), Owner);
 
         Assert.True(result.IsSuccess);
         Assert.Equal(5, result.Value.Size);
@@ -49,20 +83,18 @@ public sealed class FileServiceTests
         store.FailWrites = true;
 
         await Assert.ThrowsAsync<IOException>(
-            () => service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content()));
+            () => service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner));
 
         Assert.Empty(files.Saved);
     }
 
     [Fact]
-    public async Task Upload_RejectsANonSeekableStream()
+    public async Task Upload_AcceptsANonSeekableStream_AndCountsActualBytes()
     {
-        // "内容流必须可定位"是写在接口文档上的约束，因此它必须有测试盯着——
-        // 否则约束会退化成"运行时才发现"。
         var (service, _, _) = NewService();
-
-        await Assert.ThrowsAsync<ArgumentException>(
-            () => service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", new NonSeekableStream()));
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", new NonSeekableStream(), Owner);
+        Assert.True(uploaded.IsSuccess);
+        Assert.Equal(0, uploaded.Value.Size);
     }
 
     [Fact]
@@ -70,7 +102,7 @@ public sealed class FileServiceTests
     {
         var (service, store, files) = NewService();
 
-        var result = await service.UploadAsync(FileName.Create("a.txt").Value, "  ", Content());
+        var result = await service.UploadAsync(FileName.Create("a.txt").Value, "  ", Content(), Owner);
 
         Assert.True(result.IsFailure);
         Assert.Equal("files.content_type.empty", result.Error.Code);
@@ -83,7 +115,7 @@ public sealed class FileServiceTests
     {
         var (service, _, _) = NewService();
 
-        var result = await service.OpenAsync(new StoredFileId(404));
+        var result = await service.OpenAsync(new StoredFileId(404), Owner);
 
         Assert.True(result.IsFailure);
         Assert.Equal("files.not_found", result.Error.Code);
@@ -93,13 +125,14 @@ public sealed class FileServiceTests
     public async Task Open_RegisteredButNeverStored_FailsWithContentMissing()
     {
         var (service, _, files) = NewService();
-        var file = StoredFile.Register(new StoredFileId(1), FileName.Create("a.txt").Value, "text/plain", null, Now).Value;
+        var file = StoredFile.Register(new StoredFileId(1), FileName.Create("a.txt").Value, "text/plain", Owner, Now).Value;
         await files.SaveAsync(file);
 
-        var result = await service.OpenAsync(new StoredFileId(1));
+        var result = await service.OpenAsync(new StoredFileId(1), Owner);
 
         Assert.True(result.IsFailure);
         Assert.Equal("files.content_missing", result.Error.Code);
+        Assert.DoesNotContain("测试注入", result.Error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -109,24 +142,25 @@ public sealed class FileServiceTests
         // 它必须以一个**明确的失败**返回，而不是把存储的异常直接抛给调用方：
         // 调用方拿到 Result 才能决定是 404、是 500、还是告警。
         var (service, store, _) = NewService();
-        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content());
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner);
         store.FailReads = true;
 
-        var result = await service.OpenAsync(uploaded.Value.Id);
+        var result = await service.OpenAsync(uploaded.Value.Id, Owner);
 
         Assert.True(result.IsFailure);
         Assert.Equal("files.content_missing", result.Error.Code);
+        Assert.DoesNotContain("测试注入", result.Error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task Open_SoftDeletedFile_LooksLikeItDoesNotExist()
     {
         var (service, _, _) = NewService();
-        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content());
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner);
 
-        await service.DeleteAsync(uploaded.Value.Id);
+        await service.DeleteAsync(uploaded.Value.Id, Owner);
 
-        var result = await service.OpenAsync(uploaded.Value.Id);
+        var result = await service.OpenAsync(uploaded.Value.Id, Owner);
         Assert.True(result.IsFailure);
         Assert.Equal("files.not_found", result.Error.Code);
     }
@@ -135,9 +169,9 @@ public sealed class FileServiceTests
     public async Task Delete_SoftDeletesMetadataThenRemovesBytes()
     {
         var (service, store, files) = NewService();
-        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content());
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner);
 
-        var result = await service.DeleteAsync(uploaded.Value.Id);
+        var result = await service.DeleteAsync(uploaded.Value.Id, Owner);
 
         Assert.True(result.IsSuccess);
         Assert.Single(store.Deleted);
@@ -145,19 +179,19 @@ public sealed class FileServiceTests
     }
 
     [Fact]
-    public async Task Delete_WhenBytesCannotBeRemoved_ReportsItInsteadOfPretendingSuccess()
+    public async Task Delete_WhenBytesCannotBeRemoved_ReportsPendingInsteadOfPretendingCompletion()
     {
         // 元数据已经软删了，字节删不掉——文件对用户已经不可见，但字节还在。
-        // **返回成功会让这件事永远没人知道。** 所以给一个可区分的失败码，
-        // 让调用方能告警或重试，而不是拿到 204 以为干净了。
+        // 已受理与清除完成必须可区分，不能拿 204 假装完成。
         var (service, store, _) = NewService();
-        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content());
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner);
         store.FailDeletes = true;
 
-        var result = await service.DeleteAsync(uploaded.Value.Id);
+        var result = await service.DeleteAsync(uploaded.Value.Id, Owner);
 
-        Assert.True(result.IsFailure);
-        Assert.Equal("files.bytes_not_removed", result.Error.Code);
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value);
+        Assert.False(await service.DeletionCompletedAsync(uploaded.Value.Id, Owner));
     }
 
     [Fact]
@@ -165,7 +199,7 @@ public sealed class FileServiceTests
     {
         var (service, _, _) = NewService();
 
-        var result = await service.DeleteAsync(new StoredFileId(404));
+        var result = await service.DeleteAsync(new StoredFileId(404), Owner);
 
         Assert.True(result.IsFailure);
         Assert.Equal("files.not_found", result.Error.Code);
@@ -175,9 +209,9 @@ public sealed class FileServiceTests
     public async Task Describe_ReturnsMetadataWithoutTouchingBytes()
     {
         var (service, store, _) = NewService();
-        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content());
+        var uploaded = await service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner);
 
-        var described = await service.DescribeAsync(uploaded.Value.Id);
+        var described = await service.DescribeAsync(uploaded.Value.Id, Owner);
 
         Assert.NotNull(described);
         Assert.Equal("a.txt", described!.Name.Value);
@@ -186,9 +220,10 @@ public sealed class FileServiceTests
 }
 
 /// <summary>可配置失败的存储替身。用它把"磁盘坏掉"变成可测的输入。</summary>
-internal sealed class FakeFileStore : IFileStore
+internal sealed class FakeFileStore : IFileStore, IOrphanFileStore
 {
     private readonly ConcurrentDictionary<string, byte[]> _blobs = new();
+    private int _nextKey;
 
     public bool FailWrites { get; set; }
 
@@ -206,7 +241,7 @@ internal sealed class FakeFileStore : IFileStore
 
     public string? LastKey { get; private set; }
 
-    public Task<string> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
+    public Task<FileWrite> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
     {
         if (FailWrites)
         {
@@ -216,12 +251,12 @@ internal sealed class FakeFileStore : IFileStore
         using var buffer = new MemoryStream();
         content.CopyTo(buffer);
 
-        var key = $"key-{_blobs.Count}";
+        var key = $"key-{Interlocked.Increment(ref _nextKey)}";
         _blobs[key] = buffer.ToArray();
         Written.Add(key);
         LastKey = key;
 
-        return Task.FromResult(key);
+        return Task.FromResult(new FileWrite(key, Stream.Null));
     }
 
     public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default)
@@ -247,6 +282,15 @@ internal sealed class FakeFileStore : IFileStore
         Deleted.Add(storageKey);
         return Task.CompletedTask;
     }
+
+    public async Task CollectOrphansAsync(Func<string, CancellationToken, Task<bool>> retireUnreferenced,
+        DateTimeOffset olderThan, int limit, CancellationToken cancellationToken = default)
+    {
+        foreach (var key in _blobs.Keys.Take(limit))
+        {
+            if (await retireUnreferenced(key, cancellationToken)) { await DeleteAsync(key, cancellationToken); }
+        }
+    }
 }
 
 /// <summary>元数据仓储替身。<b>查找时过滤已软删</b>——与端口契约一致。</summary>
@@ -259,7 +303,17 @@ internal sealed class FakeStoredFileRepository : IStoredFileRepository
     public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
         Task.FromResult(_files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file : null);
 
-    public Task SaveAsync(StoredFile file, CancellationToken cancellationToken = default)
+    public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_files.TryGetValue(id.Value, out var file) && file.IsDeleted ? file : null);
+
+    public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<StoredFile>>(_files.Values.Where(file => file.IsDeleted && file.BytesRemovedAt is null
+            && (file.NextCleanupAttemptAt is null || file.NextCleanupAttemptAt <= now)).Take(limit).ToArray());
+
+    public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default) =>
+        Task.FromResult(!_files.Values.Any(file => file.StorageKey == storageKey));
+
+    public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default)
     {
         _files[file.Id.Value] = file;
         return Task.CompletedTask;
