@@ -18,6 +18,7 @@
   </Folder>
 
   <Folder Name="/src/Services/Platform/">
+    <Project Path="src/Services/Platform/NexusStackNext.Platform.Contracts/NexusStackNext.Platform.Contracts.csproj" />
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Domain/NexusStackNext.Platform.Domain.csproj" />
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Application/NexusStackNext.Platform.Application.csproj" />
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Infrastructure/NexusStackNext.Platform.Infrastructure.csproj" />

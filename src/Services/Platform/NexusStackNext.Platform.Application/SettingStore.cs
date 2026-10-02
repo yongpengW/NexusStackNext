@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Domain.Settings;
 
 namespace NexusStackNext.Platform.Application;
@@ -22,16 +25,18 @@ public interface ISettingRepository
 
     /// <summary>保存新配置项。</summary>
     /// <param name="setting">配置聚合。</param>
+    /// <param name="audit">与状态同事务保存的最小事实。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>已提交，或稳定键冲突。</returns>
-    Task<Result> AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default);
+    Task<Result> AddAsync(GlobalSetting setting, SettingCommittedV1 audit, CancellationToken cancellationToken = default);
 
     /// <summary>原子保存已读取配置的值、说明和版本。</summary>
     /// <param name="setting">已修改的配置聚合。</param>
     /// <param name="originalVersion">应用修改前读到的版本。</param>
+    /// <param name="audit">与状态同事务保存的事实；空操作不产生事实。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>已提交，或读取版本已过期。</returns>
-    Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, CancellationToken cancellationToken = default);
+    Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, SettingCommittedV1? audit, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -49,7 +54,8 @@ public interface ISettingRepository
 /// <param name="settings">配置仓储。</param>
 /// <param name="ids">标识生成器——<b>由调用方注入，不在构造函数里取全局状态</b>（架构不变量 6）。</param>
 /// <param name="clock">时钟。</param>
-public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, IClock clock)
+/// <param name="currentUser">可信执行身份。</param>
+public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, IClock clock, ICurrentUser currentUser)
 {
     /// <summary>当前版本或稳定键已被其他写入改变。</summary>
     public static readonly Error Conflict = new("platform.setting.conflict", "配置已被其他操作修改，请重新读取后再提交。");
@@ -106,10 +112,11 @@ public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, 
         {
             // 首次写入即创建：初值直接带上，不先建后改。
             setting = GlobalSetting.Create(new SettingId(ids.NextId()), key, value, description);
-            return await settings.AddAsync(setting, cancellationToken).ConfigureAwait(false);
+            return await settings.AddAsync(setting, Fact(setting, "created"), cancellationToken).ConfigureAwait(false);
         }
 
         var originalVersion = setting.Version;
+        var clearingValue = setting.Value is not null && value is null;
         if (description is not null)
         {
             setting.Describe(description);
@@ -118,9 +125,26 @@ public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, 
         var changed = setting.ChangeValue(value, clock.UtcNow);
         if (changed.IsSuccess)
         {
-            return await settings.SaveAsync(setting, originalVersion, cancellationToken).ConfigureAwait(false);
+            return await settings.SaveAsync(setting, originalVersion,
+                setting.Version == originalVersion ? null : Fact(setting, clearingValue ? "cleared" : "changed"), cancellationToken).ConfigureAwait(false);
         }
         return changed;
+    }
+
+    private SettingCommittedV1 Fact(GlobalSetting setting, string operation)
+    {
+        var trace = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+        return new SettingCommittedV1
+        {
+            Key = setting.Key.Value,
+            Operation = operation,
+            Version = setting.Version,
+            ActorId = currentUser.UserId,
+            OccurredAt = clock.UtcNow,
+            TraceId = trace,
+            // 来源执行的事件标识关联，不从用户自报的 Actor/Source/关联字段取证。
+            CorrelationId = trace,
+        };
     }
 
     /// <summary>列出一个分组下的全部配置。</summary>

@@ -6,8 +6,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
+using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
 
@@ -39,8 +41,7 @@ public static class PricingModule
             broker.Validate();
             var consumer = configuration.GetValue<string>("Pricing:Messaging:ConsumerName") ?? "pricing-cost";
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
-            services.AddSingleton(new PricingMessaging(broker, consumer));
-            services.AddHostedService<PricingCostConsumer>();
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = consumer });
             services.AddHealthChecks().AddAsyncCheck("pricing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: ["ready"]);

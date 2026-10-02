@@ -30,7 +30,9 @@ internal sealed partial class PricingCacheInvalidationWorker(IServiceScopeFactor
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
-            catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or DbUpdateException)
+            // EF 的无重试策略可能包装数据库异常，故障时仍要保留宿主和后续失效重试。
+            catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or DbUpdateException
+                or InvalidOperationException { InnerException: System.Data.Common.DbException })
             { InvalidationPending(logger); }
             try { await Task.Delay(options.InvalidationPollInterval, stoppingToken).ConfigureAwait(false); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }

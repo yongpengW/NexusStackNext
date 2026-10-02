@@ -51,6 +51,7 @@ public sealed class ArchitectureInvariantTests
         "NexusStackNext.Identity.Infrastructure",
         "NexusStackNext.Platform.Endpoints",
         "NexusStackNext.Platform.Application",
+        "NexusStackNext.Platform.Contracts",
         "NexusStackNext.Platform.Domain",
         "NexusStackNext.Platform.Infrastructure",
         "NexusStackNext.PlatformHost",

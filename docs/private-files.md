@@ -26,7 +26,7 @@
 
 目录内的 `.nsn-storage-id` 是持久存储身份，备份、迁移时必须与字节一起保留。句柄绑定此身份；挂载丢失或路径被空目录替换时，不得把“找不到文件”认作删除成功。重启后即使新目录可以写入，旧文件的删除仍保持待恢复，直到原存储恢复。此前内存模式产生的无持久归属文件不自动导入，也不自动删除。
 
-仅 Development / Testing 允许显式选择 `Files__Storage__Provider=Memory`。无库平台演示还需同时选择 Identity 和 Platform 的 Memory 模式；内存元数据会在重启后丢失，已有磁盘字节不能因此被认作公开文件。
+仅 Development / Testing 允许显式选择 `Files__Storage__Provider=Memory`。无库平台演示还需同时选择 Identity、Platform 和 Auditing 的 Memory 模式；内存元数据会在重启后丢失，已有磁盘字节不能因此被认作公开文件。
 
 ## 上传资源限制
 

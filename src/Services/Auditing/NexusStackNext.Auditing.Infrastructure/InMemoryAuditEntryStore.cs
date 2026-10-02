@@ -1,54 +1,61 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Domain.Entries;
-using NexusStackNext.BuildingBlocks.Application.Events;
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
-/// <summary>
-/// 内存审计条目存储。
-/// <para>
-/// <b>追加只写</b>：接口上没有修改与删除，聚合上也没有 setter——
-/// "发生过的事不可被改写"如果只靠约定，迟早会有人加一个 <c>Update</c>。
-/// </para>
-/// <para>
-/// 与其它内存适配器一样，它是开发与测试用的：进程重启即丢失。
-/// 真实的审计存储必须是追加写、可校验（例如带哈希链）的持久化实现。
-/// </para>
-/// </summary>
+/// <summary>开发测试适配器：同一把锁原子登记事实身份与记录，读取返回不可变事实。</summary>
 public sealed class InMemoryAuditEntryStore : IAuditEntryStore
 {
-    private readonly ConcurrentQueue<AuditEntry> _entries = new();
-
-    /// <summary>当前条目数。<b>只给测试与诊断用</b>——业务侧没有查询入口（ADR-0001）。</summary>
-    public int Count => _entries.Count;
+    private readonly Dictionary<(string EventName, Guid MessageId), AuditEntry> _entries = new();
+    private readonly Lock _writes = new();
 
     /// <inheritdoc />
-    public Task AddAsync(AuditEntry entry, CancellationToken cancellationToken = default)
+    public Task<Result<IngestionOutcome>> AcceptAsync(AuditEntry entry, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_writes)
+        {
+            var key = (entry.Fact.EventName, entry.Fact.MessageId);
+            if (_entries.TryGetValue(key, out var existing))
+            {
+                return Task.FromResult(existing.Fact == entry.Fact ? Result.Success(IngestionOutcome.Duplicate)
+                    : Result.Failure<IngestionOutcome>(AuditIngestion.MessageConflict));
+            }
+            _entries.Add(key, entry);
+            return Task.FromResult(Result.Success(IngestionOutcome.Accepted));
+        }
+    }
 
-        _entries.Enqueue(entry);
-        return Task.CompletedTask;
+    /// <inheritdoc />
+    public Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, 1000);
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_writes)
+        {
+            return Task.FromResult(new AuditPage(_entries.Values.OrderByDescending(static entry => entry.RecordedAt).ThenByDescending(static entry => entry.Id.Value)
+                .Skip((page - 1) * limit).Take(limit).ToArray(), _entries.Count));
+        }
     }
 }
 
-/// <summary>把 Auditing 的端口接到内存适配器上。</summary>
+/// <summary>Auditing 开发测试存储的显式装配。</summary>
 public static class AuditingInfrastructureServiceCollectionExtensions
 {
-    /// <summary>注册内存审计存储、内存收件箱与摄取服务。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。</summary>
+    /// <summary>注册内存审计存储；进程重启会清空。</summary>
     /// <param name="services">服务集合。</param>
-    /// <returns>同一个集合，便于链式调用。</returns>
+    /// <returns>服务集合。</returns>
     public static IServiceCollection AddAuditingInMemoryStorage(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-
         services.AddSingleton<IAuditEntryStore, InMemoryAuditEntryStore>();
-        services.AddSingleton<IInboxStore, InMemoryInboxStore>();
         services.AddScoped<AuditIngestion>();
-
         return services;
     }
 }

@@ -13,7 +13,8 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
 
     public HttpClient Client { get; }
 
-    private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize)
+    private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
+        IReadOnlyDictionary<string, string>? settings)
     {
         using var reservation = new TcpListener(IPAddress.Loopback, 0);
         reservation.Start();
@@ -33,6 +34,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["Identity__Storage__Provider"] = "Postgres";
         start.Environment["Platform__Storage__Provider"] = "Postgres";
         start.Environment["Files__Storage__Provider"] = "Postgres";
+        start.Environment["Auditing__Storage__Provider"] = "Postgres";
         start.Environment["Files__Cleanup__IntervalSeconds"] = "1";
         start.Environment["Files__Cleanup__RetryDelaySeconds"] = "1";
         start.Environment["Files__Cleanup__OrphanAgeSeconds"] = "1";
@@ -40,21 +42,23 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["ConnectionStrings__Identity"] = connectionString;
         start.Environment["ConnectionStrings__Platform"] = connectionString;
         start.Environment["ConnectionStrings__Files"] = connectionString;
+        start.Environment["ConnectionStrings__Auditing"] = connectionString;
         if (filesRoot is not null) { start.Environment["Files__StorageRoot"] = filesRoot; }
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";
         start.Environment["AgileConfig__AppId"] = string.Empty;
         start.Environment["RabbitMQ__HostName"] = string.Empty;
         start.Environment["Identity__Root__UserName"] = rootPassword is null ? string.Empty : "journey-root";
         start.Environment["Identity__Root__Password"] = rootPassword ?? string.Empty;
+        if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
         _process = Process.Start(start)!;
         _output = _process.StandardOutput.ReadToEndAsync();
         _errors = _process.StandardError.ReadToEndAsync();
     }
 
     public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null,
-        int cleanupBatchSize = 64)
+        int cleanupBatchSize = 64, IReadOnlyDictionary<string, string>? settings = null, bool requireReady = true)
     {
-        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize);
+        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize, settings);
         try
         {
             var elapsed = Stopwatch.StartNew();
@@ -62,7 +66,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
             {
                 try
                 {
-                    using var ready = await host.Client.GetAsync(new Uri("/health/ready", UriKind.Relative));
+                    using var ready = await host.Client.GetAsync(new Uri(requireReady ? "/health/ready" : "/health/live", UriKind.Relative));
                     if (ready.IsSuccessStatusCode)
                     {
                         return host;

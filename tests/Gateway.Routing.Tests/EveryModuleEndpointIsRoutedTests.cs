@@ -25,21 +25,8 @@ namespace NexusStackNext.Gateway.Routing.Tests;
 /// </summary>
 public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
 {
-    /// <summary>
-    /// **有意不经边缘暴露**的端点（方法 + 路径前缀）。
-    ///
-    /// <para>Auditing 整个前缀在里面，理由写在它自己的 ADR 里（只写上下文，
-    /// 给它开边缘路由等于让任何人都能注入审计记录）。</para>
-    ///
-    /// <para><b>Platform 的写路径曾经也在这里</b>——那是票据 68 的临时状态：
-    /// "没人能改一条设置"当时是事实，而它还没有被选中。现在选了"该经边缘改"：
-    /// 路由表里多了 `platform-write`（PUT/DELETE，requireAuthentication: true），
-    /// 于是那两行从这份清单里**移走**——它们有归宿了，而不是被豁免。</para>
-    /// </summary>
-    private static readonly (string Method, string PathPrefix)[] DeclaredInternal =
-    [
-        ("*", "/api/auditing"),
-    ];
+    // 当前模块 HTTP 面均经过边缘；审计仅开放显式授权的调查 GET。
+    private static readonly (string Method, string PathPrefix)[] DeclaredInternal = [];
 
     [Theory]
     [InlineData("routes.json", "routes.pricing.json", "pricing")]

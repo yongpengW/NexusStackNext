@@ -42,7 +42,7 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         var item = Guid.NewGuid();
         Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 50m, 0.2m))).IsSuccess);
         var envelope = Cost(item, 2, 80m);
-        Assert.True(await scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(envelope));
+        Assert.True(await scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(envelope));
         Assert.Equal("Pending", (await sender.QueryAsync(new GetRecalculation(envelope.MessageId))).Value.State);
         var quote = (await sender.QueryAsync(new GetPriceQuote(item))).Value;
         Assert.Equal(80m, quote.Cost);
@@ -59,13 +59,13 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(async _ =>
         {
             await using var scope = app.CreateAsyncScope();
-            return await scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(latest);
+            return await scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(latest);
         }));
         Assert.All(results, Assert.True);
         await using var read = app.CreateAsyncScope();
         var sender = read.ServiceProvider.GetRequiredService<ISender>();
         var before = (await sender.QueryAsync(new GetPriceQuote(item))).Value;
-        var processor = read.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+        var processor = read.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name);
         Assert.True(await processor.HandleAsync(Cost(item, 1, 80m)));
         Assert.True(await processor.HandleAsync(Cost(item, 3, 120m)));
         Assert.False(await processor.HandleAsync(Cost(item, 3, 121m)));
@@ -84,13 +84,13 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         await using (var app = CreateApplication())
         await using (var scope = app.CreateAsyncScope())
         {
-            var processor = scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+            var processor = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name);
             Assert.True(await processor.HandleAsync(latest));
             Assert.True(await processor.HandleAsync(ignored));
         }
         await using var reopened = CreateApplication();
         await using var read = reopened.CreateAsyncScope();
-        var receiver = read.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+        var receiver = read.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name);
         Assert.True(await receiver.HandleAsync(latest));
         Assert.True(await receiver.HandleAsync(ignored));
         var serializer = new SystemTextJsonIntegrationEventSerializer();
@@ -113,7 +113,7 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         {
             await using var scope = app.CreateAsyncScope();
             await Assert.ThrowsAsync<Microsoft.EntityFrameworkCore.DbUpdateException>(() =>
-                scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(message));
+                scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(message));
             var sender = scope.ServiceProvider.GetRequiredService<ISender>();
             Assert.True((await sender.QueryAsync(new GetPriceQuote(item))).IsFailure);
             Assert.True((await sender.QueryAsync(new GetRecalculation(message.MessageId))).IsFailure);
@@ -121,7 +121,7 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         await database.AllowTaskInsertsAsync();
         await using var reopened = CreateApplication();
         await using var read = reopened.CreateAsyncScope();
-        Assert.True(await read.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(message));
+        Assert.True(await read.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(message));
         Assert.Equal(100m, (await read.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPriceQuote(item))).Value.Cost);
     }
 
@@ -131,7 +131,7 @@ public sealed class CostIngestionTests(PricingDatabaseFixture database) : IClass
         await using var app = CreateApplication();
         await using var scope = app.CreateAsyncScope();
         var item = Guid.NewGuid();
-        var processor = scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>();
+        var processor = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name);
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
         Assert.True(await processor.HandleAsync(Cost(item, 1, 80m)));
         var quote = (await sender.QueryAsync(new GetPriceQuote(item))).Value;

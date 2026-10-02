@@ -45,12 +45,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.TryAddSingleton(delivery);
         services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
 
-        // **领域事件 → 集成事件的映射器**：当前一个上下文都还没发布过集成事件，
-        // 所以注册的是"一律不发布"的那一个（它把"事实"写成了代码，而不是留成一次缺席）。
-        // 某个上下文有真事件时注册自己的实现即可覆盖它。
-        //
-        // 它同时是**发件箱拦截器能被挂上去的前提**：拦截器的构造函数要一个映射器，
-        // 没有实现时 `UseNexusStackInterceptors` 会解析失败——那会把审计字段也一起拖下水。
+        // 默认不公开内部领域事件；生产者显式登记最小契约，或注册自己的映射器。
         services.TryAddSingleton<IIntegrationEventMapper, NoIntegrationEventsMapper>();
 
         // 发件箱的内存适配器必须一起注册：收件箱一直有内存适配器，发件箱此前没有。

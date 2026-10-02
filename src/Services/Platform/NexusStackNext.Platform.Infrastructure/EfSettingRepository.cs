@@ -1,15 +1,17 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Platform.Application;
+using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Domain.Settings;
 using NexusStackNext.Platform.Infrastructure.Persistence;
 using Npgsql;
 
 namespace NexusStackNext.Platform.Infrastructure;
 
-internal sealed class EfSettingRepository(PlatformDbContext context) : ISettingRepository
+internal sealed class EfSettingRepository(PlatformDbContext context, IIntegrationEventSerializer serializer) : ISettingRepository
 {
     public Task<GlobalSetting?> FindAsync(SettingKey key, CancellationToken cancellationToken = default) =>
         context.Settings.AsNoTracking().SingleOrDefaultAsync(setting => setting.Key == key, cancellationToken);
@@ -18,18 +20,20 @@ internal sealed class EfSettingRepository(PlatformDbContext context) : ISettingR
         await context.Settings.AsNoTracking().Where(setting => EF.Property<string>(setting, "Scope") == scope)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
-    public async Task<Result> AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default)
+    public async Task<Result> AddAsync(GlobalSetting setting, SettingCommittedV1 audit, CancellationToken cancellationToken = default)
     {
         context.Settings.Add(setting);
+        context.Outbox.Add(OutboxEntry.From(audit, serializer));
         return await CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, CancellationToken cancellationToken = default)
+    public Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, SettingCommittedV1? audit, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(setting);
         var entry = context.Attach(setting);
         entry.State = EntityState.Modified;
         entry.Property(item => item.Version).OriginalValue = originalVersion;
+        if (audit is not null) { context.Outbox.Add(OutboxEntry.From(audit, serializer)); }
         return CommitAsync(cancellationToken);
     }
 
@@ -77,6 +81,8 @@ public static class PlatformPersistenceServiceCollectionExtensions
             .UseNexusStackPostgres(connectionString, PlatformDbContext.SchemaName)
             .UseNexusStackInterceptors(provider));
         services.AddScoped<ISettingRepository, EfSettingRepository>();
+        services.AddScoped<IOutboxStore, EfOutboxStore<PlatformDbContext>>();
+        services.AddScoped<ISettingAuditDelivery, EfSettingAuditDelivery>();
         services.AddScoped<SettingStore>();
         services.AddHostedService<PlatformDatabaseStartupCheck>();
         services.AddHealthChecks().AddCheck<PlatformDatabaseHealthCheck>("platform-database");
