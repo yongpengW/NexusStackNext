@@ -257,12 +257,15 @@ public sealed class PricingWorkflowTests(PricingDatabaseFixture database) : ICla
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
         var request = new UpdatePricingCost(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 0.2m);
         Assert.True((await sender.SendAsync(request)).IsSuccess);
+        var initial = (await sender.QueryAsync(new GetPriceQuote(request.ItemId))).Value;
+        Assert.NotNull(initial.Audit);
         var lease = (await sender.SendAsync(new ClaimPricingWork())).Value!;
         await database.RejectTaskCompletionAsync(lease.TaskId);
         await Assert.ThrowsAsync<Microsoft.EntityFrameworkCore.DbUpdateException>(() => sender.SendAsync(new CompletePricingWork(lease.TaskId, lease.Epoch)));
         var quote = (await sender.QueryAsync(new GetPriceQuote(request.ItemId))).Value;
         Assert.Null(quote.BreakEvenPrice);
         Assert.Equal(1, quote.Version);
+        Assert.Equal(initial.Audit, quote.Audit);
         Assert.Equal("Running", (await sender.QueryAsync(new GetRecalculation(request.RequestId))).Value.State);
     }
 }

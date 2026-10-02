@@ -41,7 +41,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         plan.Property(task => task.Code).HasConversion(code => code.Value, value => TaskCode.Create(value).Value)
             .HasMaxLength(TaskCode.MaxLength).IsRequired();
         plan.HasIndex(task => task.Code).IsUnique().HasDatabaseName("ux_plans_code");
-        plan.Property(task => task.CreatedBy).HasMaxLength(128).IsRequired();
+        plan.Property(task => task.DelegatedBy).HasMaxLength(128).IsRequired();
         plan.Property(task => task.Version).IsConcurrencyToken().ValueGeneratedNever();
         plan.Property(task => task.LastSchedulingErrorCode).HasMaxLength(96);
         plan.Ignore(task => task.Interval);

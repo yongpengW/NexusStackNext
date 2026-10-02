@@ -94,7 +94,7 @@ internal sealed partial class PricingRedisCache : IAsyncDisposable
 
     private async Task<IDatabase> DatabaseAsync(CancellationToken token) =>
         (await _connection!.Value.WaitAsync(_options.RedisTimeout, token).ConfigureAwait(false)).GetDatabase();
-    private RedisKey Key(Guid itemId) => $"{_options.Namespace}:pricing:quote:v1:{itemId:N}";
+    private RedisKey Key(Guid itemId) => $"{_options.Namespace}:pricing:quote:v2:{itemId:N}";
     private static bool IsCacheFailure(Exception error) => error is RedisException or TimeoutException or JsonException;
     private bool BackingOff => Environment.TickCount64 < Volatile.Read(ref _retryAfter);
     private void BackOff()

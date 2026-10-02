@@ -58,7 +58,7 @@ public sealed class AuditInterceptor(
             return;
         }
 
-        var now = clock.UtcNow;
+        var now = clock.UtcNow.ToUniversalTime();
         var user = currentUser.UserId;
 
         foreach (var entry in context.ChangeTracker.Entries<IAuditedEntity>())
@@ -75,6 +75,17 @@ public sealed class AuditInterceptor(
                     break;
 
                 case EntityState.Modified:
+                    // 分离实体的适配器可能把整个实体标为 Modified。版本未推进时，
+                    // 保留并发检查，但不能把一次空操作记录为修改。
+                    Preserve(entry, nameof(IAuditedEntity.CreatedAt));
+                    Preserve(entry, nameof(IAuditedEntity.CreatedBy));
+                    var version = entry.Metadata.FindProperty("Version");
+                    if (version is not null && Equals(entry.Property("Version").OriginalValue, entry.Property("Version").CurrentValue))
+                    {
+                        Preserve(entry, nameof(IAuditedEntity.UpdatedAt));
+                        Preserve(entry, nameof(IAuditedEntity.UpdatedBy));
+                        break;
+                    }
                     entry.Entity.UpdatedAt = now;
                     entry.Entity.UpdatedBy = user;
                     break;
@@ -85,5 +96,12 @@ public sealed class AuditInterceptor(
                     break;
             }
         }
+    }
+
+    private static void Preserve(Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<IAuditedEntity> entry, string name)
+    {
+        var property = entry.Property(name);
+        property.CurrentValue = property.OriginalValue;
+        property.IsModified = false;
     }
 }

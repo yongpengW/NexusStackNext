@@ -41,7 +41,7 @@ public static class PricingServices
         services.AddSingleton<PricingQueryBudget>();
         services.AddLogging();
         services.AddSingleton<PricingRedisCache>();
-        services.AddScoped(_ => PricingDatabase.CreateContext(connectionString));
+        services.AddScoped(provider => PricingDatabase.CreateContext(connectionString, provider));
         services.AddKeyedScoped<IIntegrationEventProcessor, PricingCostIngestion>(CostCalculatedV1.Name);
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();

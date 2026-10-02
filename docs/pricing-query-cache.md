@@ -16,7 +16,8 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_REDIS` 与 `NEXUSSTACK_PRICING_CACHE_NAM
 权限判断均直接使用已有权威存储。新模块接入暂不提供通用缓存 SDK：只有 Pricing 一个消费者，
 遵守第二个上下文证明必要后才提取到 BuildingBlocks 的规则。
 
-键为 `{Namespace}:pricing:quote:v1:{ItemId:N}`，Redis 数据库由连接配置选择。
+键为 `{Namespace}:pricing:quote:v2:{ItemId:N}`，Redis 数据库由连接配置选择。
+v2 投影包含业务行的 `audit` 元数据；旧格式的 v1 缓存不参与当前查询。
 单键保存 `token` 或 `value`；业务方不需要自己管理令牌或调用删除。
 结果最多 16 KiB，不缓存不存在的对象。没有本机一级缓存。
 

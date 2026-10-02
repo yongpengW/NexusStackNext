@@ -68,6 +68,7 @@ _Avoid_: Version、业务输入版本、计划时刻
 
 **Delegation**:
 操作者在有权创建计划时作出的后台执行委托。暂停阻止未来发生，已经登记的 Occurrence 仍保留原委托。
+原委托人由 `DelegatedBy` 保存；计划的行审计另记当前写入者，后台触发不会冒充原委托人。
 _Avoid_: 登录会话、每次执行重新登录
 
 **OccurrenceDelivery**:

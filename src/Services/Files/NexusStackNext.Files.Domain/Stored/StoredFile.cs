@@ -75,7 +75,7 @@ public sealed class FileName : ValueObject
 /// 不持有字节、也不知道自己是存在本地磁盘还是对象存储上。
 /// </para>
 /// </summary>
-public sealed class StoredFile : AggregateRoot<StoredFileId>
+public sealed class StoredFile : AuditedAggregateRoot<StoredFileId>
 {
     private StoredFile(StoredFileId id, FileName name, string contentType, string? ownerId, DateTimeOffset uploadedAt)
         : base(id)

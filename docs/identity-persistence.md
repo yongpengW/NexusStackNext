@@ -23,7 +23,7 @@ pwsh -File scripts/run-host.ps1 platform
 运行期 `/health/ready` 检查数据库连通性；数据库掉线返回 503，`/health/live` 不查数据库。
 
 部署先备份并检查迁移脚本，使用有 schema 修改权限的部署账号运行迁移；运行账号只给必需的数据访问权限。
-本轮迁移为用户和刷新令牌增加会话版本列，不删除现有数据。旧内存模式的数据不会自动导入。
+2026-10-02 开发阶段确认没有历史数据后，七个上下文的迁移统一重置。`InitialIdentity` 一次创建完整模型，包括会话版本和用户、角色、API 资源、菜单树的创建与修改审计字段。该初始迁移用于空 schema，不是旧迁移链的增量升级：已有开发 schema 需先清理，再初始化；不能仅清空迁移历史并保留旧表。只处置确认可重建的 NSN schema，保留共用数据库中配置中心或其他系统的数据。旧内存模式的数据不会自动导入。
 生成审阅用 SQL 可使用与项目相同版本的 EF 工具；设计时工厂使用无凭据占位配置，不连接数据库。
 迁移流程依据 [EF Core 官方迁移文档](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/applying)。
 

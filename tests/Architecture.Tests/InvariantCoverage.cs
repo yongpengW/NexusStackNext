@@ -112,6 +112,8 @@ internal static class InvariantCoverage
     public static IReadOnlyList<string> StructuralHygieneClasses { get; } =
     [
         "AuditBypassIsForbiddenTests",
+        "EntityAuditCoverageTests",
+        "InitialMigrationTests",
         "ContextMapTests",
         "EndpointPurityTests",
         "TestProjectHygieneTests",

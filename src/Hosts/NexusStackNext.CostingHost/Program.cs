@@ -35,6 +35,8 @@ try
     builder.AddNexusStackAgileConfig();
     builder.AddNexusStackServiceDefaults();
     builder.Services.AddNexusStackApplication();
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
     builder.Services.AddCostingModule(builder.Configuration);
     builder.Services.AddApiResponseContract();
     builder.Services.AddOpenApi();

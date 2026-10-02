@@ -126,12 +126,19 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     {
         var requestId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
+        DateTimeOffset createdAt;
         await using (var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString))
         {
             app.Authenticate();
             using var response = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId, itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m });
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var initial = (await app.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/pricing/items/{itemId}", UriKind.Relative))).GetProperty("data");
+            createdAt = initial.GetProperty("audit").GetProperty("createdAt").GetDateTimeOffset();
+            Assert.NotEqual(default, createdAt);
+            Assert.Equal("test-operator", initial.GetProperty("audit").GetProperty("createdBy").GetString());
+            Assert.Equal(JsonValueKind.Null, initial.GetProperty("audit").GetProperty("updatedAt").ValueKind);
+            Assert.Equal(JsonValueKind.Null, initial.GetProperty("audit").GetProperty("updatedBy").ValueKind);
         }
         await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true);
         restarted.Authenticate();
@@ -144,6 +151,10 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
         }
         var quote = await restarted.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/pricing/items/{itemId}", UriKind.Relative));
         Assert.Equal(100m, quote.GetProperty("data").GetProperty("breakEvenPrice").GetDecimal());
+        Assert.Equal(createdAt, quote.GetProperty("data").GetProperty("audit").GetProperty("createdAt").GetDateTimeOffset());
+        Assert.Equal("test-operator", quote.GetProperty("data").GetProperty("audit").GetProperty("createdBy").GetString());
+        Assert.True(quote.GetProperty("data").GetProperty("audit").GetProperty("updatedAt").GetDateTimeOffset() >= createdAt);
+        Assert.Equal(JsonValueKind.Null, quote.GetProperty("data").GetProperty("audit").GetProperty("updatedBy").ValueKind);
     }
 
     [PostgresFact]

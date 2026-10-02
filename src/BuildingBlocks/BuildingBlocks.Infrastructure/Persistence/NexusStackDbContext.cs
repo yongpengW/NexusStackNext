@@ -142,6 +142,14 @@ public static class ModelBuilderConventions
         {
             ApplyKeyConvention(entityType);
             ApplySoftDeleteFilter(modelBuilder, entityType);
+            if (typeof(IAuditedEntity).IsAssignableFrom(entityType.ClrType))
+            {
+                var audited = modelBuilder.Entity(entityType.ClrType);
+                audited.Property<DateTimeOffset>(nameof(IAuditedEntity.CreatedAt)).IsRequired();
+                audited.Property<string?>(nameof(IAuditedEntity.CreatedBy)).HasMaxLength(128);
+                audited.Property<DateTimeOffset?>(nameof(IAuditedEntity.UpdatedAt));
+                audited.Property<string?>(nameof(IAuditedEntity.UpdatedBy)).HasMaxLength(128);
+            }
         }
     }
 

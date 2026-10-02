@@ -151,16 +151,4 @@ public sealed class InterceptorWiringTests
         await context.Database.GetService<IRelationalDatabaseCreator>().CreateTablesAsync();
     }
 
-    /// <summary>确定的当前用户：断言里要能说出"是谁写的"。</summary>
-    private sealed class FixedCurrentUser(string userId) : ICurrentUser
-    {
-        /// <inheritdoc />
-        public string? UserId { get; } = userId;
-
-        /// <inheritdoc />
-        public bool IsRoot => false;
-
-        /// <inheritdoc />
-        public long? SessionVersion => null;
-    }
 }

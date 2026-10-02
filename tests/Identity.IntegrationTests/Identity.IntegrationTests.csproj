@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IntegrationSupport\IntegrationSupport.csproj" />
+    <ProjectReference Include="..\TestSupport\TestSupport.csproj" />
     <ProjectReference Include="..\..\src\Services\Identity\NexusStackNext.Identity.Infrastructure\NexusStackNext.Identity.Infrastructure.csproj" />
   </ItemGroup>
 

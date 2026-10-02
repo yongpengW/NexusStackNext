@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Pricing.Application;
@@ -31,7 +32,7 @@ internal sealed class PricingQuoteQueries(PricingDbContext database, PricingCach
             if (quote is null) { return Missing(); }
             var value = new PriceQuoteView(quote.Id.Value, quote.Version, quote.Cost, quote.FeeRate,
                 quote.InputRevision, quote.CalculatedRevision, quote.BreakEvenPrice)
-            { CostingRevision = quote.CostingRevision };
+            { CostingRevision = quote.CostingRevision, Audit = EntityAuditMetadata.From(quote) };
             if (cached.Token is not null) { await cache.FillAsync(value, cached.Token, timeout.Token).ConfigureAwait(false); }
             return Result.Success(value);
         }

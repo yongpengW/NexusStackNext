@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -128,8 +129,8 @@ public static class SchedulingModule
             return responses.Page(page.Items
                 .Select(static task => new TaskItem(task.Id.Value, task.Code.Value, task.Interval?.TotalSeconds,
                     task.IsEnabled, task.LastRunAt, task.NextRunAt, task.Target.Kind, task.Target.SubjectId,
-                    task.CreatedBy, task.Version, task.Rule, task.ScheduleRevision, task.RetryAt,
-                    task.LastSchedulingErrorCode, task.SchedulingFailureCount)).ToArray(), page.Total, paging);
+                    task.DelegatedBy, task.Version, task.Rule, task.ScheduleRevision, task.RetryAt,
+                    task.LastSchedulingErrorCode, task.SchedulingFailureCount, EntityAuditMetadata.From(task))).ToArray(), page.Total, paging);
         }).Produces<ApiPage<TaskItem>>().RequirePermission("/api/scheduling/tasks", "GET");
 
         // 固定间隔未指定首次延迟时立即到期；日历计划使用明确规则的下一发生。
@@ -256,4 +257,4 @@ internal sealed record UpdateScheduleRuleRequest(long ExpectedVersion, ScheduleR
 internal sealed record RetryOccurrenceRequest(DateTimeOffset ExpectedDeadLetteredAt);
 internal sealed record TaskItem(long TaskId, string Code, double? IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt,
     DateTimeOffset? NextRunAt, string TargetKind, Guid TargetId, string CreatedBy, long Version, ScheduleRule Rule, long ScheduleRevision,
-    DateTimeOffset? RetryAt, string? LastSchedulingErrorCode, int SchedulingFailureCount);
+    DateTimeOffset? RetryAt, string? LastSchedulingErrorCode, int SchedulingFailureCount, EntityAuditMetadata? Audit);

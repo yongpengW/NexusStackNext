@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.Features;
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
@@ -168,7 +169,7 @@ public static class FilesModule
 
             return file is null
                 ? Failure(new Error("files.not_found", $"文件不存在：{id}。"))
-                : responses.Ok(new FileMetadataResponse(file.Id.Value, file.Name.Value, file.ContentType, file.Size, file.IsStored, file.UploadedAt));
+                : responses.Ok(new FileMetadataResponse(file.Id.Value, file.Name.Value, file.ContentType, file.Size, file.IsStored, file.UploadedAt, EntityAuditMetadata.From(file)));
         }).Produces<ApiResponse<FileMetadataResponse>>().ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 删除：先软删元数据，再删字节（顺序的理由见 FileService）。
@@ -277,6 +278,6 @@ internal sealed partial class FileStoreInitializer(
 }
 
 internal sealed record FileUploadedResponse(long FileId, string Name, long Size);
-internal sealed record FileMetadataResponse(long FileId, string Name, string ContentType, long Size, bool Stored, DateTimeOffset UploadedAt);
+internal sealed record FileMetadataResponse(long FileId, string Name, string ContentType, long Size, bool Stored, DateTimeOffset UploadedAt, EntityAuditMetadata? Audit);
 internal sealed record FileNameResponse(string FileName);
 internal sealed record FileDeletionResponse(long FileId, bool Completed);

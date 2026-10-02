@@ -1,4 +1,8 @@
 using System.Net;
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.Files.Application;
+using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.IntegrationSupport;
 using Npgsql;
 
@@ -6,6 +10,34 @@ namespace NexusStackNext.HostIntegration.Tests;
 
 public sealed class FilesPersistenceJourneyTests
 {
+    [PostgresFact]
+    public async Task FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor()
+    {
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateAsync();
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "files-root-password");
+        using var client = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-root-password");
+        using var bytes = new ByteArrayContent([1, 2, 3]);
+        using var upload = await client.PostAsync(new Uri("/api/files?name=audit-delete.bin", UriKind.Relative), bytes);
+        Assert.Equal(HttpStatusCode.Created, upload.StatusCode);
+        var id = (await upload.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
+        using var metadata = await client.GetAsync(new Uri($"/api/files/{id}/metadata", UriKind.Relative));
+        var audit = (await metadata.Content.ReadApiDataAsync()).GetProperty("audit");
+        var beforeDelete = DateTimeOffset.UtcNow;
+        using var deleted = await client.DeleteAsync(new Uri($"/api/files/{id}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        await using var reopened = app.Services.CreateAsyncScope();
+        var file = await reopened.ServiceProvider.GetRequiredService<IStoredFileRepository>().FindDeletedAsync(new StoredFileId(id));
+        Assert.NotNull(file);
+        Assert.True(file.IsDeleted);
+        Assert.Equal(audit.GetProperty("createdAt").GetDateTimeOffset(), file.CreatedAt);
+        Assert.Equal(audit.GetProperty("createdBy").GetString(), file.CreatedBy);
+        Assert.Equal(file.CreatedBy, file.UpdatedBy);
+        Assert.NotNull(file.UpdatedAt);
+        Assert.InRange(file.UpdatedAt.Value, beforeDelete, DateTimeOffset.UtcNow);
+    }
+
     [PostgresFact]
     public async Task FirstCleanupAttempt_IsNotStarvedByDueFailingRetries()
     {
@@ -487,6 +519,8 @@ public sealed class FilesPersistenceJourneyTests
             await using var database = await IdentityJourneyDatabase.CreateAsync();
             await database.MigrateAsync();
             byte[] bytes = [0, 128, 255, 13, 10, 42];
+            var beforeUpload = DateTimeOffset.UtcNow;
+            string originalAudit;
             long id;
             await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root))
             {
@@ -495,6 +529,12 @@ public sealed class FilesPersistenceJourneyTests
                 using var uploaded = await first.Client.PostAsync(new Uri("/api/files?name=restart.bin", UriKind.Relative), content);
                 Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
                 id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
+                using var initialMetadata = await first.Client.GetAsync(new Uri($"/api/files/{id}/metadata", UriKind.Relative));
+                var audit = (await initialMetadata.Content.ReadApiDataAsync()).GetProperty("audit");
+                Assert.InRange(audit.GetProperty("createdAt").GetDateTimeOffset(), beforeUpload, DateTimeOffset.UtcNow);
+                Assert.False(string.IsNullOrEmpty(audit.GetProperty("createdBy").GetString()));
+                Assert.Equal(JsonValueKind.Null, audit.GetProperty("updatedAt").ValueKind);
+                originalAudit = audit.GetRawText();
             }
 
             await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root);
@@ -502,6 +542,7 @@ public sealed class FilesPersistenceJourneyTests
             using var metadata = await restarted.Client.GetAsync(new Uri($"/api/files/{id}/metadata", UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, metadata.StatusCode);
             var file = await metadata.Content.ReadApiDataAsync();
+            Assert.Equal(originalAudit, file.GetProperty("audit").GetRawText());
             Assert.Equal("restart.bin", file.GetProperty("name").GetString());
             Assert.Equal(6, file.GetProperty("size").ReadHttpInt64());
             using var download = await restarted.Client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));

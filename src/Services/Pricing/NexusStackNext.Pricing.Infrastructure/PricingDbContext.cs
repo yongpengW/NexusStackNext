@@ -98,10 +98,13 @@ internal sealed class PricingDbContextFactory : IDesignTimeDbContextFactory<Pric
 /// <summary>独立迁移入口；普通业务请求不建表或迁移。</summary>
 public static class PricingDatabase
 {
-    internal static PricingDbContext CreateContext(string connectionString) => new(
-        new DbContextOptionsBuilder<PricingDbContext>()
-            .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "pricing"))
-            .Options);
+    internal static PricingDbContext CreateContext(string connectionString, IServiceProvider? services = null)
+    {
+        var builder = new DbContextOptionsBuilder<PricingDbContext>()
+            .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "pricing"));
+        if (services is not null) { builder.UseNexusStackAuditInterceptor(services); }
+        return new PricingDbContext(builder.Options);
+    }
 
     /// <summary>执行 Pricing 的已登记迁移。</summary>
     /// <param name="connectionString">所属数据库。</param>

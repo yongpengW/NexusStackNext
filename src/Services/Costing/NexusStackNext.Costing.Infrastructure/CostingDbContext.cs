@@ -97,10 +97,13 @@ internal sealed class CostingDbContextFactory : IDesignTimeDbContextFactory<Cost
 /// <summary>独立迁移入口；普通业务请求不建表或迁移。</summary>
 public static class CostingDatabase
 {
-    internal static CostingDbContext CreateContext(string connectionString) => new(
-        new DbContextOptionsBuilder<CostingDbContext>()
-            .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "costing"))
-            .Options);
+    internal static CostingDbContext CreateContext(string connectionString, IServiceProvider? services = null)
+    {
+        var builder = new DbContextOptionsBuilder<CostingDbContext>()
+            .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "costing"));
+        if (services is not null) { builder.UseNexusStackAuditInterceptor(services); }
+        return new CostingDbContext(builder.Options);
+    }
 
     /// <summary>执行 Costing 的已登记迁移。</summary>
     /// <param name="connectionString">所属数据库。</param>

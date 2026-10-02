@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 
 namespace NexusStackNext.Pricing.Application;
@@ -83,6 +84,8 @@ public sealed record PriceQuoteView(Guid ItemId, long Version, decimal Cost, dec
 {
     /// <summary>已接纳的上游成本版本，零表示手工成本。</summary>
     public long CostingRevision { get; init; }
+    /// <summary>当前持久化行的创建和最近修改信息。</summary>
+    public EntityAuditMetadata? Audit { get; init; }
 }
 
 /// <summary>仅更新 Pricing 拥有的费率并登记重算，不覆盖上游成本。</summary>

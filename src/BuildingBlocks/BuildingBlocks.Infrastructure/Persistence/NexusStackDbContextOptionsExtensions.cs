@@ -74,14 +74,9 @@ public static class NexusStackDbContextOptionsExtensions
     /// <summary>
     /// 把本仓的两个 <c>SaveChanges</c> 拦截器接到这个上下文上：<b>审计字段</b>与<b>发件箱</b>。
     ///
-    /// <para><b>为什么这是一个扩展方法，而不是在各处 <c>AddInterceptors</c>。</b>
-    /// 这两个拦截器此前**写完了但没有任何注册点**——全仓 <c>AddInterceptors</c> 只出现在测试的探针上下文里。
-    /// 后果是安静的：审计字段在生产里从不写（<c>CreatedAt</c> 一直是 default），
-    /// 领域事件也不进发件箱。而"没写"与"没有要写的"从外面看是一样的。</para>
-    ///
-    /// <para>把它们接在**装配的缝**上（用了 <c>UseNexusStackPostgres</c> 的上下文都会调这里），
-    /// 任何新增的 EF 上下文都不必记得这件事——与"每个宿主显式组装"同一条道理：
-    /// 组装写在一处，读代码的人看得见它由什么组成。</para>
+    /// <para>装配与实体覆盖是两项义务：调用本方法注册拦截器，
+    /// 需要审计的业务聚合还必须实现审计契约并映射字段。真实业务持久化测试验证两者。
+    /// 自己管理 Outbox 的上下文只调用 <see cref="UseNexusStackAuditInterceptor"/>。</para>
     /// </summary>
     /// <param name="builder">选项构建器。</param>
     /// <param name="services">服务提供者（拦截器从它取时钟、当前用户、映射器与序列化器）。</param>
@@ -93,20 +88,25 @@ public static class NexusStackDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(services);
 
-        // `ICurrentUser` 用 GetService 而不是 GetRequiredService：**基座不注册它**
-        // （`AddNexusStackApplication` 只管应用层基座），它由宿主按自己的认证形态注册。
-        // 没有它时用 `AnonymousCurrentUser`——那是"认证还没接入"的正确表现，
-        // 而不是一次失败：此时 `CreatedBy` 本来就该是 null。
-        // （这条是实测出来的：改成 GetRequiredService 会让 Identity 的 16 条集成测试一起红。）
-        var currentUser = services.GetService<ICurrentUser>() ?? new AnonymousCurrentUser();
-
+        builder.UseNexusStackAuditInterceptor(services);
         builder.AddInterceptors(
-            new AuditInterceptor(services.GetRequiredService<IClock>(), currentUser),
             new DomainEventOutboxInterceptor(
                 services.GetRequiredService<IIntegrationEventMapper>(),
                 services.GetRequiredService<IIntegrationEventSerializer>()));
 
         return builder;
+    }
+
+    /// <summary>只装配行审计，供自己管理 Outbox 的业务上下文使用。</summary>
+    /// <param name="builder">上下文选项。</param>
+    /// <param name="services">作用域服务，提供时钟和当前操作者。</param>
+    /// <returns>原选项。</returns>
+    public static DbContextOptionsBuilder UseNexusStackAuditInterceptor(this DbContextOptionsBuilder builder, IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(services);
+        var currentUser = services.GetService<ICurrentUser>() ?? new AnonymousCurrentUser();
+        return builder.AddInterceptors(new AuditInterceptor(services.GetRequiredService<IClock>(), currentUser));
     }
 
     /// <summary>泛型重载，便于 <c>AddDbContext&lt;TContext&gt;</c> 里直接使用。</summary>
