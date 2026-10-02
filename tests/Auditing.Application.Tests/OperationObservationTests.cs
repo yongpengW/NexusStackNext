@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
@@ -12,6 +14,79 @@ namespace NexusStackNext.Auditing.Application.Tests;
 public sealed class OperationObservationTests
 {
     private static readonly DateTimeOffset StartedAt = new(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
+
+    [Theory]
+    [InlineData("action", "")]
+    [InlineData("action", "bad\nvalue")]
+    [InlineData("executionRole", "committed")]
+    [InlineData("subjectType", "Order")]
+    [InlineData("subjectId", "private-raw-value")]
+    [InlineData("spanId", "0000000000000000")]
+    [InlineData("parentSpanId", "UPPERCASEINVALID")]
+    [InlineData("correlationId", "bad\tvalue")]
+    [InlineData("correlationId", "01234567890123456789012345678901234567890123456789012345678901234567890")]
+    public async Task InvalidExecutionMetadata_IsRejectedWithoutConsumingIdentity(string field, string value)
+    {
+        await using var application = CreateApplication();
+        await using var scope = application.CreateAsyncScope();
+        var message = Finished(Started()) with { Metadata = new OperationDetails { Action = "orders.read", ExecutionRole = "endpoint" } };
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        var payload = JsonNode.Parse(serializer.Serialize(message))!.AsObject();
+        payload["metadata"]![field] = value;
+        Assert.False(await scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(new EventEnvelope
+        {
+            MessageId = message.EventId,
+            EventName = message.EventName,
+            OccurredAt = message.OccurredAt,
+            Payload = payload.ToJsonString(),
+        }));
+        var observations = scope.ServiceProvider.GetRequiredService<IOperationObservationStore>();
+        Assert.Empty((await observations.QueryAsync(new OperationQuery(1, 100))).Operations);
+        Assert.True(await DeliverAsync(scope.ServiceProvider, message));
+        Assert.Equal("orders.read", Assert.Single((await observations.QueryAsync(new OperationQuery(1, 100))).Operations).Metadata?.Action);
+    }
+
+    [Fact]
+    public async Task SafeExecutionMetadata_SurvivesIngestionAndInvestigation()
+    {
+        await using var application = CreateApplication();
+        await using var scope = application.CreateAsyncScope();
+        var message = Finished(Started());
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        var payload = JsonNode.Parse(serializer.Serialize(message))!.AsObject();
+        payload["metadata"] = new JsonObject
+        {
+            ["action"] = "costing.task.read",
+            ["description"] = "查看成本任务",
+            ["executionRole"] = "endpoint",
+            ["subjectType"] = "CostTask",
+            ["subjectIdKind"] = "guid",
+            ["subjectId"] = "98e26a25-036d-49cb-aaef-2e6197a33ce0",
+            ["spanId"] = "1234567890abcdef",
+            ["parentSpanId"] = "abcdef1234567890",
+            ["correlationId"] = "order-process-62",
+        };
+        Assert.True(await scope.ServiceProvider.GetRequiredService<IIntegrationEventProcessor>().HandleAsync(new EventEnvelope
+        {
+            MessageId = message.EventId,
+            EventName = message.EventName,
+            OccurredAt = message.OccurredAt,
+            Payload = payload.ToJsonString(),
+        }));
+
+        var page = await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(new OperationQuery(1, 100));
+        var found = JsonSerializer.SerializeToElement(Assert.Single(page.Operations), JsonSerializerOptions.Web)
+            .GetProperty("metadata");
+        Assert.Equal("costing.task.read", found.GetProperty("action").GetString());
+        Assert.Equal("查看成本任务", found.GetProperty("description").GetString());
+        Assert.Equal("endpoint", found.GetProperty("executionRole").GetString());
+        Assert.Equal("CostTask", found.GetProperty("subjectType").GetString());
+        Assert.Equal("guid", found.GetProperty("subjectIdKind").GetString());
+        Assert.Equal("98e26a25-036d-49cb-aaef-2e6197a33ce0", found.GetProperty("subjectId").GetString());
+        Assert.Equal("1234567890abcdef", found.GetProperty("spanId").GetString());
+        Assert.Equal("abcdef1234567890", found.GetProperty("parentSpanId").GetString());
+        Assert.Equal("order-process-62", found.GetProperty("correlationId").GetString());
+    }
 
     [Fact]
     public async Task StartedWithoutCompletion_RemainsUnconfirmed()

@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Claims;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Web;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
@@ -92,8 +94,12 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(next);
-        if (!context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
-            || context.Request.Path.StartsWithSegments("/api/auditing", StringComparison.OrdinalIgnoreCase))
+        if (context.GetEndpoint()?.Metadata.GetMetadata<OperationLogSuppression>() is not null
+            || context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/openapi", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase)
+            || context.Request.Path.StartsWithSegments("/gateway/openapi", StringComparison.OrdinalIgnoreCase))
         {
             await next(context).ConfigureAwait(false);
             return;
@@ -108,8 +114,9 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             Phase = "started",
             OccurredAt = clock.UtcNow,
             TraceId = Activity.Current?.TraceId.ToString() ?? operationId.ToString("N"),
-            HttpMethod = context.Request.Method,
-            RouteTemplate = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText,
+            HttpMethod = ClassifyMethod(context.Request.Method),
+            RouteTemplate = SafeRouteTemplate(context.GetEndpoint() as RouteEndpoint),
+            Metadata = Describe(context),
         };
         var timer = Stopwatch.StartNew();
         await RecordAsync(started).ConfigureAwait(false);
@@ -133,7 +140,7 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             var actor = context.User.Identity?.IsAuthenticated == true
                 ? context.User.FindFirstValue("sub") ?? context.User.FindFirstValue(ClaimTypes.NameIdentifier) : null;
             // 身份无法满足安全元数据约束时省略；不把未经认证的请求字段当成替代身份。
-            if (actor is { Length: > 200 } || actor?.Any(char.IsControl) == true) { actor = null; }
+            if (string.IsNullOrWhiteSpace(actor) || actor.Length > 200 || actor.Any(char.IsControl)) { actor = null; }
             await RecordAsync(started with
             {
                 EventId = Guid.NewGuid(),
@@ -152,6 +159,56 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             }).ConfigureAwait(false);
         }
     }
+
+    private static OperationDetails Describe(HttpContext context)
+    {
+        var declaration = context.GetEndpoint()?.Metadata.GetMetadata<OperationDescription>();
+        var subject = declaration?.Subject;
+        string? subjectId = null;
+        string? subjectKind = null;
+        if (subject is not null && context.Request.RouteValues[subject.RouteParameter] is string { Length: <= 64 } raw)
+        {
+            if (subject.Kind == OperationSubjectIdKind.Uuid && Guid.TryParse(raw, out var id) && id != Guid.Empty)
+            {
+                subjectId = id.ToString("D");
+                subjectKind = "guid";
+            }
+            else if (subject.Kind == OperationSubjectIdKind.Numeric
+                && long.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var number) && number > 0)
+            {
+                subjectId = number.ToString(CultureInfo.InvariantCulture);
+                subjectKind = "int64";
+            }
+        }
+        var span = Activity.Current?.SpanId.ToString();
+        var parent = Activity.Current?.ParentSpanId.ToString();
+        return new OperationDetails
+        {
+            Action = declaration?.Action ?? "http." + ClassifyMethod(context.Request.Method).ToLowerInvariant(),
+            Description = declaration?.Description,
+            ExecutionRole = declaration?.IsProxy == true ? "proxy" : "endpoint",
+            SubjectType = subjectId is null ? null : subject!.Type,
+            SubjectIdKind = subjectKind,
+            SubjectId = subjectId,
+            SpanId = span == "0000000000000000" ? null : span,
+            ParentSpanId = parent == "0000000000000000" ? null : parent,
+            CorrelationId = CorrelationId.Resolve(context.Request.Headers[CorrelationId.HeaderName]),
+        };
+    }
+
+    private static string? SafeRouteTemplate(RouteEndpoint? endpoint)
+    {
+        var template = endpoint?.RoutePattern.RawText;
+        return template is { Length: > 0 and <= 500 } && template.StartsWith('/') && !template.Any(char.IsControl)
+            ? template : null;
+    }
+
+    private static string ClassifyMethod(string method) => method switch
+    {
+        "GET" or "HEAD" or "POST" or "PUT" or "DELETE" or "CONNECT" or "OPTIONS" or "TRACE" or "PATCH"
+            or "PROPFIND" or "PROPPATCH" or "MKCOL" or "COPY" or "MOVE" or "LOCK" or "UNLOCK" or "M-SEARCH" => method,
+        _ => "OTHER",
+    };
 
     private async Task RecordAsync(OperationObservedV1 observation)
     {

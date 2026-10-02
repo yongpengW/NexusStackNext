@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using NexusStackNext.BuildingBlocks.Application.Events;
 
 namespace NexusStackNext.Auditing.Contracts;
@@ -31,4 +32,7 @@ public sealed record OperationObservedV1 : IntegrationEvent
     public int? StatusCode { get; init; }
     /// <summary>来源单调计时器测得的耗时毫秒数；开始时为空。</summary>
     public long? DurationMs { get; init; }
+    /// <summary>显式的安全执行描述；缺失时保留旧消息形状，不补造描述或客体。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OperationDetails? Metadata { get; init; }
 }

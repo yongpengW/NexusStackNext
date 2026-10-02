@@ -119,6 +119,15 @@ ConnectionStrings__OperationJournal=
         $skeleton += "`n# 文件存储根目录；留空则用 AppContext.BaseDirectory 下的 file-storage。`n# Files__StorageRoot=`n"
     }
     else {
+        $skeleton += @"
+
+# 网关的操作 journal 由 Auditing 拥有，可与平台共物理数据库，独立事务。
+ConnectionStrings__OperationJournal=
+# 先执行：pwsh -File scripts/migrate-operation-journal.ps1 -EnvFile env/gateway.dev
+# 无库演示须显式选择（重启丢失记录）：
+# DOTNET_ENVIRONMENT=Development
+# OperationJournal__Storage__Provider=Memory
+"@
         $skeleton += "`n# 路由表路径；留空则用应用目录下的 routes.json。`n# Gateway__RouteTablePath=`n"
     }
 

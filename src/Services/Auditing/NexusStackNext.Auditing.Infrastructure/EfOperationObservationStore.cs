@@ -17,7 +17,7 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context) : I
         ArgumentNullException.ThrowIfNull(observation);
         // 指纹的原始字段形状保持稳定，不能因领域 ID 包装类型改变而拒绝同一消息重投。
         var data = observation.Data;
-        var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        var legacyFields = new
         {
             OperationId = data.OperationId.Value,
             data.Source,
@@ -31,6 +31,25 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context) : I
             data.RouteTemplate,
             data.StatusCode,
             data.DurationMs,
+        };
+        // 旧记录保持原指纹。扩展字段显式参与指纹，不能重投补写已经接纳的阶段。
+        // 契约中的可选字段忽略 null；将来增加字段时也不能改变已有消息的身份。
+        var metadata = data.Metadata;
+        var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes<object>(metadata is null ? legacyFields : new
+        {
+            Observation = legacyFields,
+            Metadata = new OperationDetails
+            {
+                Action = metadata.Action,
+                ExecutionRole = metadata.ExecutionRole,
+                Description = metadata.Description,
+                SubjectType = metadata.SubjectType,
+                SubjectIdKind = metadata.SubjectIdKind,
+                SubjectId = metadata.SubjectId,
+                SpanId = metadata.SpanId,
+                ParentSpanId = metadata.ParentSpanId,
+                CorrelationId = metadata.CorrelationId,
+            },
         })));
         return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
@@ -105,7 +124,8 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context) : I
                     .Where(started => started.Data.Source == item.Data.Source && started.Data.OperationId == item.Data.OperationId
                         && started.Data.Phase == "started").Select(started => (DateTimeOffset?)started.Data.OccurredAt).SingleOrDefault(),
                 item.Data.Phase == "finished" ? item.Data.OccurredAt : null,
-                item.Data.Outcome ?? "unconfirmed", item.Data.StatusCode, item.Data.DurationMs))
+                item.Data.Outcome ?? "unconfirmed", item.Data.StatusCode, item.Data.DurationMs)
+            { Metadata = item.Data.Metadata })
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
         return new OperationPage(page, total);
     }

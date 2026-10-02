@@ -163,6 +163,7 @@ builder.Services.AddOpenApi();
 var app = builder.Build();
 
 app.UseRouting();
+app.UseCorrelationId();
 app.UseOperationJournal();
 app.UseExceptionHandler();
 app.UseApiResponseContract();

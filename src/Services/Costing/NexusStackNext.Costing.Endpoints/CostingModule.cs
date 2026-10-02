@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure;
@@ -73,7 +74,8 @@ public static class CostingModule
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415);
+        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("costing.cost.update", "更新成本组成并申请重算"));
         group.MapGet("/tasks/{taskId:guid}/delivery", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostDelivery(taskId), token).ConfigureAwait(false);
@@ -98,7 +100,9 @@ public static class CostingModule
         {
             var result = await sender.SendAsync(new RetryCostingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415);
+        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("costing.task.retry", "重试成本计算",
+                new OperationSubjectRoute("CostCalculation", "taskId", OperationSubjectIdKind.Uuid)));
         return endpoints;
     }
 

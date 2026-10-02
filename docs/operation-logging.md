@@ -1,6 +1,6 @@
 # 自动操作日志
 
-本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60) 与[首个切片 #61](https://github.com/yongpengW/NexusStackNext/issues/61) 的架构、使用语义和验收边界。PlatformHost 与 PricingHost 的默认采集、持久交付和受权查询样板已经实现，核心链路已通过真实 HTTP、PostgreSQL、RabbitMQ 与进程重启的目标验收。该范围不代表全宿主覆盖，也不替代全量回归和 CI 的门禁结论。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
+本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60)、[持久链路 #61](https://github.com/yongpengW/NexusStackNext/issues/61) 与[全宿主 HTTP 覆盖 #62](https://github.com/yongpengW/NexusStackNext/issues/62) 的架构、使用语义和验收边界。四个宿主均已显式接入默认采集；这不代表后台任务已完成操作采集，也不替代全量回归和 CI 的门禁结论。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
 
 ## 三种审计信息
 
@@ -25,7 +25,7 @@ flowchart LR
     Business --> Facts["业务状态 + 最小 AuditFact Outbox<br/>同一事务"]
 ```
 
-SourceJournal 是 Auditing 模块部署在来源宿主的一部分，不属于该宿主中的业务上下文。PlatformHost 和 PricingHost 都显式组合这个模块；业务 Domain / Application 不引用 Auditing 的 Infrastructure，不直接访问其表。来源和中央使用不同 DbContext、schema 与迁移历史。暂时共用物理 PostgreSQL 可以降低开发部署成本，但各自使用独立连接和事务，不能把共库描述成存储故障隔离。
+SourceJournal 是 Auditing 模块部署在来源宿主的一部分，不属于该宿主中的业务上下文。PlatformHost、PricingHost、CostingHost 与 Gateway 显式组合这个模块；业务 Domain / Application 不引用 Auditing 的 Infrastructure，不直接访问其表。来源和中央使用不同 DbContext、schema 与迁移历史。暂时共用物理 PostgreSQL 可以降低开发部署成本，但各自使用独立连接和事务，不能把共库描述成存储故障隔离。网关部署因此需要日志存储配置；journal 的数据仍由 Auditing 拥有。
 
 journal 中的待投递记录本身就是 Outbox。采集适配器一次持久写入稳定身份的观察；没有“先记日志再写消息”的第二次独立写入。RabbitMQ 确认后才标记已投递，进程在确认与标记之间退出时会重发同一消息。已投递只说明 broker 接受，最终是否已接纳以中央调查结果为准。
 
@@ -48,17 +48,40 @@ HTTP 结果按观察定义：
 | `canceled` | 观察到与客户端取消相关的执行取消；不据此断言业务一定回滚 |
 | `unconfirmed` | 中央没有 Finished 证据，是查询结论，不是来源补发的虚构结果 |
 
-两个来源宿主显式采用 `UseRouting → UseOperationJournal → UseExceptionHandler → UseApiResponseContract → UseAuthentication → UseAuthorization`。观察适配器包住后续处理，路由之后可取模板，返回时可读异常处理转换后的实际状态；不能依赖框架自动插入中间件后恰好得到所需顺序。ASP.NET Core 的自动装配与显式排序依据见 [Microsoft 官方文档](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-10.0#middleware-added-automatically-by-webapplication)。
+来源宿主显式采用 `UseRouting → UseCorrelationId → UseOperationJournal → UseExceptionHandler → UseApiResponseContract → UseAuthentication → UseAuthorization`。网关在认证后另显式接入限流和超时处理，均位于观察适配器内部。路由之后可取模板，返回时可读异常处理转换后的实际状态；不能依赖框架自动插入中间件后恰好得到所需顺序。ASP.NET Core 的排序依据见 [Microsoft 官方文档](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-10.0#middleware-added-automatically-by-webapplication)。
+
+YARP 2.3 的路由超时会被转换成 400，见[上游问题 #2662](https://github.com/dotnet/yarp/issues/2662)。网关只在框架超时 token 确实已取消、YARP 报告取消且响应尚未开始时，将取消交回框架超时处理器生成 504。普通下游 400、客户端主动断开均不按此改写。真实 HTTP 验证分别得到 504 / `failed` 与客户端断开 / `canceled`；已开始的流式响应不能改写已发送的状态码。
 
 本票 Started 位于认证前，Actor 为空；Finished 仅使用已认证声明中的用户身份，认证失败或没有用户时为空。后台执行的 Actor 与原 Initiator 必须独立表达；后台任务采集与关联是后续票据，当前 HTTP 样板不承诺已经覆盖它们。
 
 ## 默认覆盖与安全边界
 
-#61 的实际接入范围是 **PlatformHost 与 PricingHost**。普通业务 `/api` 请求默认进入观察，包括授权拒绝路径；健康、文档、静态资源以及 Auditing 自身的调查入口不采集，避免调查操作和故障诊断不断产生新的采集工作。不能为保留这两个宿主样板而把其它服务标为已覆盖；Costing、Gateway 和后台执行留到后续切片。
+四个宿主的普通 HTTP 入口默认进入观察，包括 `/api` 以外的业务路由、授权拒绝和未匹配请求。`/health`、`/openapi`、`/swagger`（含 UI 静态资源）、`/gateway/openapi` 与既有 `/hubs` 协议路径是保留排除范围。当前没有其它静态文件宿主；以后增加资源服务必须显式确定其管线或排除元数据。Auditing 的两个调查 GET 端点显式排除；网关只为对应的专用 GET 代理路由附加同样声明，通配代理路由和未来管理写入继续默认采集。
+
+`OperationEndpointInventoryTests` 从四个真实宿主的 EndpointDataSource 枚举路由，非空断言后逐个请求业务接口并检查待交付观察；健康、文档、调查查询和 Swagger 静态资源验证无新增记录。实时协议只做范围识别，不在本票新增或验收 SignalR 功能。新加的普通端点没有日志声明也会采集。
 
 默认只允许固定安全字段：来源、操作和消息标识、观察阶段、发生时间、受信身份、HTTP 方法、已匹配的路由模板、响应状态、耗时、稳定结果和追踪关联。记录路由模板，不用含真实标识或秘密的原始路径替代未匹配模板。
 
-不记录原始 body、query 值、Authorization、Cookie、口令、令牌、文件内容、任意请求对象或异常原文。业务描述、Action、Subject 与扩展字段须通过显式元数据边界，并受白名单和长度限制；不能因为方便而反射序列化整个参数对象。第一票的固定元数据不能被宣称为可自由保存业务载荷的通用日志接口。
+操作观察不记录原始 body、query 值、Authorization、Cookie、口令、令牌、文件内容、任意请求对象或异常原文。框架诊断日志属于另一条日志管线，本模块不承诺自动清洗框架或业务自行输出的文本。业务描述、Action、Subject 须通过显式元数据边界，并受格式和长度限制；不能反射序列化整个参数对象。
+
+### 声明固定说明与安全客体
+
+业务 Endpoints 只引用 `Auditing.Contracts`，无需自行发布消息：
+
+```csharp
+endpoint.WithMetadata(new OperationDescription("costing.task.retry", "重试成本计算",
+    new OperationSubjectRoute("CostCalculation", "taskId", OperationSubjectIdKind.Uuid)));
+```
+
+Action 最多 200 字符、Description 最多 256 字符，均为固定文本；没有声明时 Action 使用 `http.get` 等固定方法分类，与路由模板共同识别入口。非常规方法使用有界分类，未知方法为 `OTHER`，不保存任意方法原文。路由模板超过 500 字符或不满足安全格式时为空，绝不退回原始路径。
+
+Subject 仅从指定路由参数读取非空 Guid 或正 Int64，统一为字符串；`9007199254740993` 不会经 JavaScript number 丢精度。非法值整体省略 Subject，不丢弃该次请求；body 中的 ItemId 不自动采集。Subject 表示请求指向的客体，不证明它存在或已经成功授权。成本和定价的重试接口给出了两个真实用例。
+
+低价值轮询可声明 `new OperationLogSuppression("明确的静态原因")`，优先于描述；不能因为旧 PoS 某接口曾标记 NoLogging 就批量复制排除范围。
+
+网关转发的 `metadata.executionRole` 为 `proxy`，其 Action 为 `gateway.forward`；下游处理为 `endpoint`，两条记录有不同的 OperationId。调查应按角色区分转发结果和业务处理，再用 TraceId 关联，不能把两条 `completed` 算成两次业务提交。SpanId / ParentSpanId 保存实际追踪关系；中间可能存在代理客户端 span，不能推断下游的直接父级一定是网关服务端 span。
+
+`X-Correlation-Id` 只接受 1–64 位 ASCII 字母、数字、点、下划线和短横线；缺失、超长、多值、控制字符及其它字符均重新生成，不截断。四个宿主在采集前规范化，并随请求转发、随响应返回。它允许由客户端选择，因此只用于关联，不能用来认证用户或判断消息重复。
 
 所有环境都不提供公共 HTTP 写入观察的接口，root 也不能通过 HTTP 自报 Actor 或 Source。消息摄取的信任边界仍是 broker 发布身份、ACL 和受信契约；固定 Source 字符串不是数字签名，持有合法发布权限的进程必须受到对应权限约束。
 
@@ -74,7 +97,7 @@ HTTP 结果按观察定义：
 | 开始后进程退出 | 不能保证产生 Finished；只有 Started 的中央操作显示 `unconfirmed` |
 | 同身份异内容 | 拒绝冲突消息，不能修改已接纳证据或当作正常重复忽略 |
 
-PlatformHost 与 PricingHost 将业务就绪和异步日志诊断分开：
+四个宿主将业务就绪和异步日志诊断分开：
 
 | 健康入口 | 检查范围与用途 |
 |---|---|
@@ -101,16 +124,24 @@ PlatformHost 与 PricingHost 将业务就绪和异步日志诊断分开：
 | `OperationJournal:WriteTimeout` | 每个阶段写入预算，默认 `00:00:02`，允许 50 毫秒至 5 秒 |
 | `OperationJournal:Delivery` | 来源发布的 `OutboxDeliveryOptions` 配置；broker 确认与中央接纳仍是不同状态 |
 
-上述名称是两个样板宿主当前使用的配置接口，独立启动、迁移与真实交付已完成目标验证。Memory 用于开发演示，重启会丢失观察，不能用于声称持久性或恢复能力。来源 journal 与中央观察表各自先迁移，再启动来源宿主和消费者；普通启动不代替数据库迁移。新的表和索引采用增量迁移，不重写已经合并的初始基线。
+上述配置接口由四个宿主共同使用。Memory 用于开发演示，重启会丢失观察，不能用于声称持久性或恢复能力。来源 journal 与中央观察表各自先迁移，再启动来源宿主和消费者；普通启动不代替数据库迁移。新的表和索引采用增量迁移，不重写已经合并的初始基线。Aspire 显式注入各来源 journal 连接与完整 RabbitMQ 配置；独立网关启动也必须提供 journal 配置。
 
-来源固定使用 `operation_journal` schema，迁移历史也归它所有。PlatformHost 与 PricingHost 都提供独立 `migrate-operation-journal` 命令，只迁移来源 journal，不启动业务 HTTP 或 broker。连接配置通过进程环境的 `ConnectionStrings__OperationJournal` 提供，值不能放入命令行或会话：
+来源固定使用 `operation_journal` schema，迁移历史也归它所有。四个宿主提供独立 `migrate-operation-journal` 命令，只迁移来源 journal，不启动业务 HTTP 或 broker。连接配置通过进程环境的 `ConnectionStrings__OperationJournal` 提供，值不能放入命令行或会话：
 
 ```powershell
 dotnet NexusStackNext.PlatformHost.dll migrate-operation-journal
 dotnet NexusStackNext.PricingHost.dll migrate-operation-journal
+dotnet NexusStackNext.CostingHost.dll migrate-operation-journal
+dotnet NexusStackNext.Gateway.dll migrate-operation-journal
 ```
 
-在来源宿主对应的部署目录运行适用的一条命令。两条都存在是为独立宿主部署；共用同一 journal 数据库时不代表必须执行两次。中央观察表属于 `auditing` schema，继续使用 PlatformHost 的 `migrate-auditing` 入口应用新增迁移。宿主代码固定的观察 Source 分别为 `platform` 与 `pricing`，不能在请求中覆盖。
+在来源宿主对应的部署目录运行适用的一条命令；共用同一 journal 数据库时只需初始化一次。中央观察表属于 `auditing` schema，继续使用 PlatformHost 的 `migrate-auditing` 入口。固定 Source 分别为 `platform`、`pricing`、`costing`、`gateway`，不能在请求中覆盖。
+
+### 升级与旧消息
+
+`OperationObservedV1` 增加可选 Metadata，所有新增可选字段为空时不输出 JSON；旧 journal 原文与中央旧指纹保持不变。中央 `OperationMetadata` 迁移只增加可空列。旧二进制冻结的消息及指纹测试证明积压重放不产生重复记录，且不能通过重投给旧阶段补写元数据。
+
+升级顺序：停止旧中央消费者，应用中央迁移并启动新消费者，再启用带 Metadata 的新来源。旧消费者会忽略新字段，因此本轮不支持新来源与旧中央消费者混跑时完整保存元数据；不要把可读旧积压误称为任意版本滚动兼容。普通宿主启动始终不自动迁移。
 
 ## 调查入口与验收
 
@@ -128,7 +159,9 @@ dotnet NexusStackNext.PricingHost.dll migrate-operation-journal
 - 调查接口的身份、权限、会话失效、分页与过滤边界确实生效，不存在公开 HTTP 摄取入口。
 - 独立迁移、Production 禁用 Memory、模板装配与架构约束。
 
-合并仍须完成全量串行回归、格式检查、Linux CI 与 Standards / Spec 双轴评审；以上目标验收不代表这些门禁已经全部通过。
+#62 在上述基线上追加验证：四宿主真实端点清单；代理与业务的角色、追踪和安全关联；401 / 403 / 400 / 429 / 500 / 502 / 504 / 202 与客户端取消；声明客体及排除优先级；旧消息、旧指纹和增量迁移兼容。Gateway 与 Costing 的真实进程在未接入 broker 时保存观察，退出重启后恢复投递；两个来源的 journal 故障均不阻断成本提交或让业务就绪失败，恢复后仍保留历史缺口的降级标记。
+
+每个 PR 必须完成全量串行回归、格式检查、Linux CI 与 Standards / Spec 双轴评审；实际门禁结果记录在对应票据和 PR 中，目标测试不能替代整套门禁。
 
 ## 后续能力边界
 

@@ -5,8 +5,14 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
+using NexusStackNext.Auditing.Contracts;
+using NexusStackNext.Auditing.Endpoints;
+using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Infrastructure;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Gateway;
@@ -14,6 +20,11 @@ using NexusStackNext.Gateway.Routing;
 using Yarp.ReverseProxy.Configuration;
 using Yarp.ReverseProxy.Configuration.RouteValidators;
 using Yarp.ReverseProxy.Model;
+
+if (args is ["migrate-operation-journal"])
+{
+    return await OperationJournalModule.MigrateOperationJournalAsync();
+}
 
 // 网关宿主。不变量 8：这个服务由什么组成，一眼看得出来。
 //
@@ -63,6 +74,13 @@ var rateLimitWindowSeconds = builder.Configuration.GetValue("Gateway:RateLimit:W
 
 // ---------- 2. 显式组装 ----------
 builder.Services.AddNexusStackApplication();
+builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "gateway");
+var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
+if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
+{
+    builder.Services.AddNexusStackRabbitMqEventBus(rabbit, OperationJournalServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("OperationJournal:Delivery").Get<OutboxDeliveryOptions>());
+}
 builder.Services.AddOpenApi();
 builder.Services.AddApiResponseContract();
 
@@ -191,12 +209,15 @@ builder.Services.AddRequestTimeouts();
 
 var app = builder.Build();
 
-app.UseExceptionHandler();
+app.UseRouting();
 app.UseCorrelationId();
+app.UseOperationJournal();
+app.UseExceptionHandler();
 app.UseApiResponseContract();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseRequestTimeouts();
+app.UseProxyTimeoutResponse();
 app.UseAuthorization();
 
 // 网关自己的文档。**放在一个内部路径上**：对外提供的是聚合文档，见下。
@@ -247,7 +268,14 @@ app.MapHub<GatewayHub>("/hubs/gateway");
 // 此前它只报自己的状态——于是所有后端都挂掉时它仍然报健康，编排系统会继续把流量送进来。
 app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = static _ => false });
-app.MapHealthChecks("/health/ready");
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag),
+});
+app.MapHealthChecks("/health/logging", new HealthCheckOptions
+{
+    Predicate = static check => check.Tags.Contains(AuditingDiagnostics.HealthTag),
+});
 
 // 路由表自述：把"网关现在按什么规则转发"变成可查询的事实，而不是只能读配置文件。
 //
@@ -274,6 +302,17 @@ app.MapGet("/gateway/routes", (ApiResponses responses, GatewayRouteConfiguration
 // 路由表管理。**只认根管理员**——改路由表是系统级动作。
 app.MapGatewayRouteAdmin();
 
-app.MapReverseProxy();
+var proxyEndpoints = app.MapReverseProxy()
+    .WithMetadata(new OperationDescription("gateway.forward", "边缘转发") { IsProxy = true });
+proxyEndpoints.Add(endpoint =>
+{
+    // 只排除专用的调查 GET 路由；新增管理写入和通配路由仍默认采集。
+    var route = endpoint.Metadata.OfType<RouteModel>().LastOrDefault()?.Config;
+    if (route?.Match.Methods is ["GET"] && route.Match.Path is "/api/auditing/entries" or "/api/auditing/operations")
+    {
+        endpoint.Metadata.Add(new OperationLogSuppression("调查查询不产生新的操作观察，避免查询放大日志。"));
+    }
+});
 
 app.Run();
+return 0;

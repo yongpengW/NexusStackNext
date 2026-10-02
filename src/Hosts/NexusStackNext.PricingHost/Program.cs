@@ -83,6 +83,7 @@ try
         policy.RequireAuthenticatedUser().RequireClaim(NexusStackClaims.Root, "true"));
     var app = builder.Build();
     app.UseRouting();
+    app.UseCorrelationId();
     app.UseOperationJournal();
     app.UseExceptionHandler();
     app.UseApiResponseContract();

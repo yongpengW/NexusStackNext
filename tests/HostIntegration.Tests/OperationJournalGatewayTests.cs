@@ -137,7 +137,7 @@ public sealed class OperationJournalGatewayTests
         Assert.Equal("Degraded", await response.Content.ReadAsStringAsync());
     }
 
-    private static async Task SetJournalStorageAvailableAsync(string connectionString, bool available)
+    internal static async Task SetJournalStorageAvailableAsync(string connectionString, bool available)
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();

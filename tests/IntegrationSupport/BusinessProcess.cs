@@ -37,12 +37,13 @@ internal sealed class BusinessProcess : IAsyncDisposable
         return await StartHttpAsync(start);
     }
 
-    public static Task<BusinessProcess> StartGatewayAsync(string assembly, string routePath)
+    public static Task<BusinessProcess> StartGatewayAsync(string assembly, string routePath, IReadOnlyDictionary<string, string>? settings = null)
     {
         var start = StartInfo(assembly, "Gateway", string.Empty);
         start.ArgumentList.Clear();
         start.ArgumentList.Add(assembly);
         start.Environment["Gateway__RouteTablePath"] = routePath;
+        if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
         return StartHttpAsync(start);
     }
 

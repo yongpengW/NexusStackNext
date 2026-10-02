@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -69,7 +70,8 @@ public static class PricingModule
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415);
+        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("pricing.fee.update", "更新费率并申请重算"));
         group.MapGet("/items/{itemId:guid}", async (Guid itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetPriceQuote(itemId), token).ConfigureAwait(false);
@@ -84,7 +86,9 @@ public static class PricingModule
         {
             var result = await sender.SendAsync(new RetryPricingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415);
+        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("pricing.task.retry", "重试定价计算",
+                new OperationSubjectRoute("Recalculation", "taskId", OperationSubjectIdKind.Uuid)));
         return endpoints;
     }
 

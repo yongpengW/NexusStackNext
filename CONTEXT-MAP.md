@@ -1,6 +1,6 @@
 # Context Map
 
-五个平台限界上下文 + 两个独立业务参考上下文 + 一个不持有数据的边缘。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
+五个平台限界上下文 + 两个独立业务参考上下文 + 一个边缘宿主。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
 本文件只定义**边界**与**关系**。
 
 ## Contexts
@@ -11,13 +11,13 @@
   目前拥有全局设置（`GlobalSetting`）；开放应用配置与区域还在计划里。
 - [Scheduling](./src/Services/Scheduling/CONTEXT.md) — 计划触发：计划的定义与到期时刻；业务任务由所属上下文拥有。
 - [Auditing](./src/Services/Auditing/CONTEXT.md) — 已提交事实与操作调查：不可变 `AuditEntry` 保存已提交事实；
-  `OperationObservation` 已实现 PlatformHost / PricingHost 的来源采集与受权查询，尚未覆盖其它入口。令牌流转事实还在计划里。
+  `OperationObservation` 覆盖四个宿主的普通 HTTP 入口与受权查询，后台执行尚待接入。令牌流转事实还在计划里。
 - [Files](./src/Services/Files/CONTEXT.md) — 文件与下载中心：文件的存储、归属与分发。
 - [Pricing](./src/Services/Pricing/CONTEXT.md) — 独立定价样板：定价输入、派生结果与持久化重算，独立宿主和数据库。
 - [Costing](./src/Services/Costing/CONTEXT.md) — 独立成本核算样板：成本组成、计算结果与成本事件，独立宿主和数据库。
 
-**Gateway** — `src/Gateway/` — 不是上下文。它不持有数据、不持有不变量，只做路由、边缘鉴权、
-限流与关联 ID。任何落到网关的业务判断都是设计错误。
+**Gateway** — `src/Gateway/` — 不是业务上下文。它负责路由、边缘鉴权、限流与关联 ID，
+显式组合 Auditing 拥有的来源 journal；路由配置与操作观察不赋予网关业务数据所有权。任何落到网关的业务判断都是设计错误。
 
 ## Relationships
 
@@ -41,11 +41,11 @@
   认证 Actor 与关联信息；状态和 Outbox 同事务，Auditing 的 Inbox 与不可变记录同事务。
   不传设置值或说明，调查查询要求显式权限，HTTP 不接受审计写入。
 
-- **来源宿主 → Auditing**：PlatformHost 与 PricingHost 显式组合 Auditing 拥有的 SourceJournal，
+- **来源宿主 → Auditing**：PlatformHost、PricingHost、CostingHost 与 Gateway 显式组合 Auditing 拥有的 SourceJournal，
   以独立连接和事务保存操作 Started / Finished，再交付中央观察存储。journal 是来源宿主中 Auditing 模块的数据，
-  不归 Platform / Pricing 业务上下文；这是操作观察链路，不改变上面的 Platform 已提交事实关系。
+  不归 Platform / Pricing / Costing 业务上下文或网关；这是操作观察链路，不改变上面的 Platform 已提交事实关系。
   异步日志依赖的诊断与来源业务就绪分开，日志调查或交付故障不作为摘除仍可执行业务的宿主的依据。
-  两个宿主的真实交付、受权查询与故障隔离已完成核心目标验收；见[操作日志](docs/operation-logging.md)。
+  网关转发与下游处理有独立执行标识、明确角色并通过追踪关联；验收范围见[操作日志](docs/operation-logging.md)。
 
 - **Costing → Pricing**：通过 `CostCalculatedV1` 传递完整成本快照及来源版本。Costing 的结果与 Outbox 同事务；
   Pricing 的 Inbox、成本投影与重算任务同事务，费率归 Pricing。契约在 Costing.Contracts 中。
@@ -66,8 +66,8 @@ Platform → Auditing 与业务样板 Costing → Pricing 已使用真实消息�
 
 以下是**设计意图**，不是现状：
 
-- **其余入口 → Auditing 的 OperationObservation**：Costing / Gateway 的 HTTP 采集与后台执行观察留到后续切片；
-  不以两个已实现宿主的样板代表这些入口已经覆盖。
+- **后台入口 → Auditing 的 OperationObservation**：命令和任务执行、原发起人与当前执行者、父子操作关联由后续切片接入；
+  HTTP 请求的结束不能替代后台执行的结束。
 - **Identity → Auditing**：Identity 计划发出 `UserLoggedIn`、`LoginFailed`、
   `RefreshTokenIssued`、`RefreshTokenRevoked`（这些**领域事件已经存在**，在
   `IdentityDomainEvents.cs` 里），Auditing 消费后落审计。**消费端还没做。**

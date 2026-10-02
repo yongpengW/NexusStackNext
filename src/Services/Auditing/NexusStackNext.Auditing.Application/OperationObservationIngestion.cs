@@ -66,5 +66,10 @@ public sealed class OperationObservationIngestion(IOperationObservationStore obs
     private static Result<OperationObservation> Record(OperationObservedV1 message, DateTimeOffset recordedAt) =>
         OperationObservation.Record(new OperationObservationId(message.EventId), new OperationObservationData(new OperationId(message.OperationId), message.Source, message.Kind,
             message.Phase, message.Outcome, message.OccurredAt, message.ActorId, message.TraceId, message.HttpMethod,
-            message.RouteTemplate, message.StatusCode, message.DurationMs), recordedAt);
+            message.RouteTemplate, message.StatusCode, message.DurationMs)
+        {
+            Metadata = message.Metadata is { } metadata ? new OperationMetadata(metadata.Action, metadata.ExecutionRole,
+                metadata.Description, metadata.SubjectType, metadata.SubjectIdKind, metadata.SubjectId,
+                metadata.SpanId, metadata.ParentSpanId, metadata.CorrelationId) : null,
+        }, recordedAt);
 }

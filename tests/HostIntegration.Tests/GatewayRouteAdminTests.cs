@@ -211,6 +211,7 @@ public sealed class GatewayRouteAdminApp : WebApplicationFactory<GatewayHostMark
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.UseEnvironment(Environments.Development);
+        builder.UseSetting("OperationJournal:Storage:Provider", "Memory");
         builder.UseSetting("Gateway:RouteTablePath", _routeTablePath);
     }
 

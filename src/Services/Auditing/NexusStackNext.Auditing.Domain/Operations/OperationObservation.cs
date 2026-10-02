@@ -16,7 +16,11 @@ namespace NexusStackNext.Auditing.Domain.Operations;
 /// <param name="StatusCode">实际观察到的状态码。</param>
 /// <param name="DurationMs">单调计时耗时。</param>
 public sealed record OperationObservationData(OperationId OperationId, string Source, string Kind, string Phase, string? Outcome,
-    DateTimeOffset OccurredAt, string? ActorId, string TraceId, string? HttpMethod, string? RouteTemplate, int? StatusCode, long? DurationMs);
+    DateTimeOffset OccurredAt, string? ActorId, string TraceId, string? HttpMethod, string? RouteTemplate, int? StatusCode, long? DurationMs)
+{
+    /// <summary>显式提供的固定执行元数据；旧记录保持为空。</summary>
+    public OperationMetadata? Metadata { get; init; }
+}
 
 /// <summary>不可修改的一条操作观察；消息身份由来源提供。</summary>
 public sealed class OperationObservation : Entity<OperationObservationId>
@@ -39,8 +43,9 @@ public sealed class OperationObservation : Entity<OperationObservationId>
         if (messageId.Value == Guid.Empty || data.OperationId.Value == Guid.Empty || data.OccurredAt == default || data.OccurredAt.Offset != TimeSpan.Zero
             || recordedAt == default || recordedAt.Offset != TimeSpan.Zero || !Safe(data.Source, 64) || !Safe(data.TraceId, 128)
             || (data.ActorId is not null && !Safe(data.ActorId, 200)) || data.Kind != "http"
-            || !Safe(data.HttpMethod, 16) || !data.HttpMethod!.All(char.IsAsciiLetter)
+            || !Safe(data.HttpMethod, 16) || (data.HttpMethod != "M-SEARCH" && !data.HttpMethod!.All(char.IsAsciiLetter))
             || (data.RouteTemplate is not null && (!Safe(data.RouteTemplate, 500) || !data.RouteTemplate.StartsWith('/')))
+            || (data.Metadata is not null && !data.Metadata.IsValid())
             || !ValidPhase(data))
         {
             return Result.Failure<OperationObservation>(new Error("auditing.observation.invalid", "操作观察包含无效的身份、安全字段或阶段结果。"));
