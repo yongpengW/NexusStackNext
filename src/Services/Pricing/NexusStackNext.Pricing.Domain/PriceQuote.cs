@@ -25,6 +25,8 @@ public sealed class PriceQuote : AggregateRoot<PriceId>
     public long CalculatedRevision { get; private set; }
     /// <summary>最近已计算的结果，是否最新由两个输入版本判定。</summary>
     public decimal? BreakEvenPrice { get; private set; }
+    /// <summary>已接纳的 Costing 输入版本；零表示仍由手工输入成本。</summary>
+    public long CostingRevision { get; private set; }
 
     /// <summary>校验演示输入；最多四位小数，避免存储舍入改变请求含义。</summary>
     /// <param name="cost">单位成本。</param>
@@ -54,11 +56,30 @@ public sealed class PriceQuote : AggregateRoot<PriceId>
     public Result UpdateCost(decimal cost, decimal feeRate)
     {
         if (!IsValidInput(cost, feeRate)) { return Result.Failure(InvalidInput); }
+        if (CostingRevision > 0 && cost != Cost) { return Result.Failure(new Error("pricing.cost_owned_by_costing", "成本已由 Costing 维护；请单独更新费率。")); }
         if (Cost == cost && FeeRate == feeRate) { return Result.Success(); }
         Cost = cost;
         FeeRate = feeRate;
         InputRevision++;
         return Changed();
+    }
+
+    /// <summary>接纳上游完整成本快照；旧版本无操作，费率始终留在本上下文。</summary>
+    /// <param name="revision">上游输入版本。</param>
+    /// <param name="cost">上游计算结果。</param>
+    /// <returns>是否接纳了新版本。</returns>
+    public Result<bool> ApplyCostingCost(long revision, decimal cost)
+    {
+        if (revision <= 0 || !IsValidInput(cost, FeeRate)) { return Result.Failure<bool>(InvalidInput); }
+        if (revision < CostingRevision) { return Result.Success(false); }
+        if (revision == CostingRevision)
+        {
+            return Cost == cost ? Result.Success(false)
+                : Result.Failure<bool>(new Error("pricing.cost_revision_conflict", "同一成本版本不能有不同结果。"));
+        }
+        if (Cost != cost) { Cost = cost; InputRevision++; }
+        CostingRevision = revision;
+        return Changed(true);
     }
 
     /// <summary>演示计算：成本除以一减费率，四位小数，远离零舍入。</summary>

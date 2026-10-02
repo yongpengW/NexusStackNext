@@ -59,6 +59,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Hosts\NexusStackNext.PlatformHost\NexusStackNext.PlatformHost.csproj" />
     <ProjectReference Include="../../src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
+    <ProjectReference Include="../../src/Hosts/NexusStackNext.CostingHost/NexusStackNext.CostingHost.csproj" />
+    <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Domain/NexusStackNext.Costing.Domain.csproj" />
+    <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Application/NexusStackNext.Costing.Application.csproj" />
+    <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
+    <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Infrastructure/NexusStackNext.Costing.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Endpoints/NexusStackNext.Costing.Endpoints.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Infrastructure/NexusStackNext.Pricing.Infrastructure.csproj" />

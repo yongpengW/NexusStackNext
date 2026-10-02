@@ -20,6 +20,7 @@
     <!-- 路由表是配置，不是代码：改了不需要重新编译，但要能通过票据 23 的校验。 -->
     <Content Update="routes.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Update="routes.pricing.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Update="routes.business.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 

@@ -44,6 +44,13 @@
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Infrastructure/NexusStackNext.Auditing.Infrastructure.csproj" />
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Endpoints/NexusStackNext.Auditing.Endpoints.csproj" />
   </Folder>
+  <Folder Name="/src/Services/Costing/">
+    <Project Path="src/Services/Costing/NexusStackNext.Costing.Application/NexusStackNext.Costing.Application.csproj" />
+    <Project Path="src/Services/Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
+    <Project Path="src/Services/Costing/NexusStackNext.Costing.Domain/NexusStackNext.Costing.Domain.csproj" />
+    <Project Path="src/Services/Costing/NexusStackNext.Costing.Endpoints/NexusStackNext.Costing.Endpoints.csproj" />
+    <Project Path="src/Services/Costing/NexusStackNext.Costing.Infrastructure/NexusStackNext.Costing.Infrastructure.csproj" />
+  </Folder>
 
   <Folder Name="/src/Services/Files/">
     <Project Path="src/Services/Files/NexusStackNext.Files.Domain/NexusStackNext.Files.Domain.csproj" />
@@ -53,6 +60,7 @@
   </Folder>
 
   <Folder Name="/src/Hosts/">
+    <Project Path="src/Hosts/NexusStackNext.CostingHost/NexusStackNext.CostingHost.csproj" />
     <Project Path="src/Hosts/NexusStackNext.PlatformHost/NexusStackNext.PlatformHost.csproj" />
     <Project Path="src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
   </Folder>
@@ -82,6 +90,7 @@
     <Project Path="tests/Identity.Application.Tests/Identity.Application.Tests.csproj" />
     <Project Path="tests/Platform.Application.Tests/Platform.Application.Tests.csproj" />
     <Project Path="tests/Auditing.Application.Tests/Auditing.Application.Tests.csproj" />
+    <Project Path="tests/Costing.IntegrationTests/Costing.IntegrationTests.csproj" />
     <Project Path="tests/Files.Application.Tests/Files.Application.Tests.csproj" />
     <Project Path="tests/Scheduling.Application.Tests/Scheduling.Application.Tests.csproj" />
     <Project Path="tests/Pricing.IntegrationTests/Pricing.IntegrationTests.csproj" />

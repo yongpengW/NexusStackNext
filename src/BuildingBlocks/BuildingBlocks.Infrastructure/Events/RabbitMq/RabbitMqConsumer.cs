@@ -6,50 +6,15 @@ using RabbitMQ.Client.Exceptions;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 
-/// <summary>处理一个集成事件。返回 <c>false</c> 表示这次没处理成功，该重试。</summary>
-public interface IIntegrationEventProcessor
-{
-    /// <summary>它处理哪个事件（与订阅里的 <c>EventName</c> 对应）。</summary>
-    string EventName { get; }
-
-    /// <summary>处理事件。</summary>
-    /// <param name="envelope">事件。</param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>处理成功为 <c>true</c>。</returns>
-    Task<bool> HandleAsync(EventEnvelope envelope, CancellationToken cancellationToken = default);
-}
-
-/// <summary>
-/// 消费一个订阅的消息。
-///
-/// <para><b>三件事都在这里，而且每一件都对应参照仓库的一处缺陷：</b></para>
-///
-/// <list type="number">
-/// <item><b>手动 ACK。</b>自动 ACK 下，broker 在消息**交给**消费者时就认为它成功了——
-/// 消费者随后的失败（进程崩、抛异常）会让消息永久消失。</item>
-/// <item><b>先查 Inbox，失败再还名额。</b>至少一次投递是消息队列的常态，不是异常。
-/// 重复的消息直接 ACK 跳过，业务只生效一次；而**这一步没做成时要把名额还回去**，
-/// 否则重投会被当成重复而跳过——重试与死信就都成了摆设（三段式的第二段）。</item>
-/// <item><b>失败按档位重投。</b>参照仓库没有 DLQ 消费者——死信队列会静默堆积，
-/// 而"堆积"与"没人发消息"在监控上看起来一样。</item>
-/// </list>
-///
-/// <para><b>通道恢复是第四件。</b><c>ChannelShutdownAsync</c> 与
-/// <c>CallbackExceptionAsync</c> 都会触发重建——参照仓库没有任何通道级恢复处理，
-/// 于是 broker 抖一次之后，那个消费者就永远不再消费了，而进程还活着。</para>
-/// </summary>
+/// <summary>手动 ACK 的消息运输器；接纳事务及幂等由应用处理器拥有。</summary>
 public sealed class RabbitMqConsumer : IAsyncDisposable
 {
     private readonly RabbitMqOptions _options;
-    private readonly EventTopology _topology;
     private readonly EventSubscription _subscription;
     private readonly IIntegrationEventProcessor _handler;
-    private readonly IInboxStore _inbox;
-    private readonly Func<DateTimeOffset> _clock;
 
     private IConnection? _connection;
     private IChannel? _channel;
-    private string? _consumerTag;
 
     /// <summary>
     /// 通道关闭时用来**叫醒**主循环的信号。
@@ -65,35 +30,28 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
     /// <param name="topology">拓扑。</param>
     /// <param name="subscription">要消费的订阅。</param>
     /// <param name="handler">处理器。</param>
-    /// <param name="inbox">去重用的 Inbox。</param>
-    /// <param name="clock">时钟；测试里可替换。</param>
     public RabbitMqConsumer(
         RabbitMqOptions options,
         EventTopology topology,
         EventSubscription subscription,
-        IIntegrationEventProcessor handler,
-        IInboxStore inbox,
-        Func<DateTimeOffset>? clock = null)
+        IIntegrationEventProcessor handler)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(topology);
         ArgumentNullException.ThrowIfNull(subscription);
         ArgumentNullException.ThrowIfNull(handler);
-        ArgumentNullException.ThrowIfNull(inbox);
+        if (handler.EventName != subscription.EventName || !topology.Subscriptions.Contains(subscription))
+        {
+            throw new ArgumentException("处理器、订阅与拓扑不一致。", nameof(subscription));
+        }
 
         _options = options;
-        _topology = topology;
         _subscription = subscription;
         _handler = handler;
-        _inbox = inbox;
-        _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
     /// <summary>已处理的消息数（含跳过重复）。</summary>
     public int HandledCount { get; private set; }
-
-    /// <summary>被判定为重复而跳过的消息数。</summary>
-    public int DuplicateCount { get; private set; }
 
     /// <summary>进入重试或死信的消息数。</summary>
     public int RetriedCount { get; private set; }
@@ -111,12 +69,14 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
             try
             {
                 await ConsumeUntilCancelledAsync(cancellationToken).ConfigureAwait(false);
+                // 回调/通道故障也要退避，避免坏消息在重连之间忙循环。
+                await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception ex) when (ex is BrokerUnreachableException or AlreadyClosedException or System.Net.Sockets.SocketException)
+            catch (Exception ex) when (ex is BrokerUnreachableException or AlreadyClosedException or System.Net.Sockets.SocketException or OperationInterruptedException or IOException)
             {
                 // broker 掉线：**等一会儿再来**，而不是让这个任务结束。
                 // 结束了它就再也不会被拉起来——而进程还活着、健康检查还是绿的。
@@ -140,23 +100,25 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
             UserName = _options.UserName,
             Password = _options.Password,
             VirtualHost = _options.VirtualHost,
+            AutomaticRecoveryEnabled = false,
             ClientProvidedName = $"{_options.ClientName}-{_subscription.ConsumerName}",
         };
 
         _connection = await factory.CreateConnectionAsync(cancellationToken).ConfigureAwait(false);
-        _channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        _channel = await _connection.CreateChannelAsync(new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true), cancellationToken).ConfigureAwait(false);
 
-        // 通道出问题时**把链接置空**：外层循环会重建。
-        // 不这么做的话，`IChannel` 会一直是个"已关闭但非 null"的对象，
-        // 于是消费者挂在一个死通道上，安静地什么都不做。
-        _channel.ChannelShutdownAsync += (_, args) =>
+        // 绑定本轮通道与信号。旧回调不能确认新通道的 delivery tag。
+        var channel = _channel;
+        var channelLost = _channelLost;
+        channel.CallbackExceptionAsync += (_, _) => { channelLost.TrySetResult(); return Task.CompletedTask; };
+        channel.ChannelShutdownAsync += (_, args) =>
         {
             RecoveryCount++;
-            _channel = null;
+
 
             // **叫醒主循环。** 见 `_channelLost` 的说明——不叫醒的话，
             // 重建那段代码永远不会被执行，而"不执行"与"执行了但没用"看起来一样。
-            _channelLost.TrySetResult();
+            channelLost.TrySetResult();
             _ = args;
             return Task.CompletedTask;
         };
@@ -168,10 +130,10 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
         var consumer = new AsyncEventingBasicConsumer(_channel);
         consumer.ReceivedAsync += async (_, deliver) =>
         {
-            await HandleDeliveryAsync(deliver, cancellationToken).ConfigureAwait(false);
+            await HandleDeliveryAsync(channel, deliver, cancellationToken).ConfigureAwait(false);
         };
 
-        _consumerTag = await _channel.BasicConsumeAsync(
+        await _channel.BasicConsumeAsync(
             queue: _subscription.QueueName,
             // **手动 ACK。** 见类文档。
             autoAck: false,
@@ -187,37 +149,16 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
     }
 
-    private async Task HandleDeliveryAsync(BasicDeliverEventArgs deliver, CancellationToken cancellationToken)
+    private async Task HandleDeliveryAsync(IChannel channel, BasicDeliverEventArgs deliver, CancellationToken cancellationToken)
     {
-        var channel = _channel;
-        if (channel is null)
-        {
-            return;
-        }
-
         var envelope = ReadEnvelope(deliver);
 
         if (envelope is null)
         {
             // 解析不了的消息**不能重投**：重投它还是解析不了，会无限循环。
             // 直接进死信——那里有人看着。
-            await MoveToAsync(channel, _subscription.DeadLetterQueueName, deliver, attempts: 0, cancellationToken)
+            await MoveToAsync(channel, _subscription.DeadLetterQueueName, deliver, cancellationToken)
                 .ConfigureAwait(false);
-            return;
-        }
-
-        // **先查 Inbox。** 至少一次投递是常态：同一条消息被投两次不是异常。
-        var isNew = await _inbox.TryBeginProcessingAsync(
-            _subscription.ConsumerName,
-            envelope.EventName,
-            envelope.MessageId,
-            _clock(),
-            cancellationToken).ConfigureAwait(false);
-
-        if (!isNew)
-        {
-            DuplicateCount++;
-            await channel.BasicAckAsync(deliver.DeliveryTag, multiple: false, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -233,26 +174,14 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
         }
         catch (Exception)
         {
-            handled = false;
+            // 基础设施暂时故障：原消息仍由 broker 持有，不经过 TTL/DLX 搬运。
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            await channel.BasicNackAsync(deliver.DeliveryTag, multiple: false, requeue: true, cancellationToken).ConfigureAwait(false);
+            return;
         }
 
         var attempts = ConsumePolicy.ReadAttempts(ReadHeaders(deliver));
         var decision = ConsumePolicy.Decide(handled, attempts, _subscription);
-
-        if (!handled)
-        {
-            // **失败删键**（幂等三段式的第二段）。
-            //
-            // 上面占掉的名额必须还回去，否则重投到达时会被判成重复而 ACK 跳过：
-            // 重试档位永远轮不到，处理器的失败也永远到不了死信队列——
-            // 而计数器还在显示"重试过"。三步里缺这一步，整条重试链是安静的死的。
-            //
-            // 放在搬运**之前**：搬运成功就 ACK 了，之后没有第二次机会；
-            // 而搬运失败时消息会自己回来，那时名额已经还了，正是我们要的。
-            await _inbox
-                .ReleaseAsync(_subscription.ConsumerName, envelope.EventName, envelope.MessageId, cancellationToken)
-                .ConfigureAwait(false);
-        }
 
         switch (decision.Outcome)
         {
@@ -263,13 +192,13 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
 
             case DeliveryOutcome.Retry:
                 RetriedCount++;
-                await MoveToAsync(channel, decision.RetryQueueName!, deliver, attempts, cancellationToken)
+                await MoveToAsync(channel, decision.RetryQueueName!, deliver, cancellationToken)
                     .ConfigureAwait(false);
                 break;
 
             default:
                 RetriedCount++;
-                await MoveToAsync(channel, _subscription.DeadLetterQueueName, deliver, attempts, cancellationToken)
+                await MoveToAsync(channel, _subscription.DeadLetterQueueName, deliver, cancellationToken)
                     .ConfigureAwait(false);
                 break;
         }
@@ -290,7 +219,6 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
         IChannel channel,
         string queue,
         BasicDeliverEventArgs deliver,
-        int attempts,
         CancellationToken cancellationToken)
     {
         var properties = new BasicProperties
@@ -299,6 +227,8 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
             MessageId = deliver.BasicProperties.MessageId,
             ContentType = deliver.BasicProperties.ContentType,
             Type = deliver.BasicProperties.Type,
+            CorrelationId = deliver.BasicProperties.CorrelationId,
+            Timestamp = deliver.BasicProperties.Timestamp,
             // `WithIncrementedAttempts` 返回只读字典，而 `BasicProperties.Headers` 要的是可变接口——
             // 复制一份。它同时是一道保护：**不改动调用方传进来的那个字典**。
             Headers = new Dictionary<string, object?>(ConsumePolicy.WithIncrementedAttempts(ReadHeaders(deliver)), StringComparer.Ordinal),
@@ -327,9 +257,11 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
                 ? Encoding.UTF8.GetString(raw as byte[] ?? Encoding.UTF8.GetBytes(raw.ToString()!))
                 : deliver.BasicProperties.Type ?? _subscription.EventName;
 
+            if (!Guid.TryParse(deliver.BasicProperties.MessageId, out var id) || id == Guid.Empty
+                || eventName != _subscription.EventName) { return null; }
             return new EventEnvelope
             {
-                MessageId = Guid.TryParse(deliver.BasicProperties.MessageId, out var id) ? id : Guid.NewGuid(),
+                MessageId = id,
                 EventName = eventName,
                 Payload = payload,
                 OccurredAt = DateTimeOffset.FromUnixTimeSeconds(deliver.BasicProperties.Timestamp.UnixTime),
@@ -350,8 +282,9 @@ public sealed class RabbitMqConsumer : IAsyncDisposable
     {
         if (_channel is not null)
         {
-            await _channel.DisposeAsync().ConfigureAwait(false);
+            var channel = _channel;
             _channel = null;
+            await channel.DisposeAsync().ConfigureAwait(false);
         }
 
         if (_connection is not null)

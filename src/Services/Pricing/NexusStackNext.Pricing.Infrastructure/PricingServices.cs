@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Pricing.Application;
@@ -23,6 +24,8 @@ public static class PricingServices
         policy.Validate();
         services.AddSingleton(policy);
         services.AddScoped(_ => PricingDatabase.CreateContext(connectionString));
+        services.AddScoped<IIntegrationEventProcessor, PricingCostIngestion>();
+        services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetRecalculation, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetPriceQuote, PriceQuoteView>, PricingCommands>();
@@ -73,7 +76,8 @@ internal sealed class PricingCommands(PricingDbContext database) : ICommandHandl
         }
         else
         {
-            _ = quote.UpdateCost(command.Cost, command.FeeRate);
+            var updated = quote.UpdateCost(command.Cost, command.FeeRate);
+            if (updated.IsFailure) { return Result.Failure<RecalculationStatus>(updated.Error); }
         }
 
         var task = new RecalculationEntry
@@ -105,6 +109,7 @@ internal sealed class PricingCommands(PricingDbContext database) : ICommandHandl
         var quote = await database.Quotes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken).ConfigureAwait(false);
         return quote is null ? Result.Failure<PriceQuoteView>(new Error("pricing.not_found", "定价对象不存在。"))
             : Result.Success(new PriceQuoteView(quote.Id.Value, quote.Version, quote.Cost, quote.FeeRate,
-                quote.InputRevision, quote.CalculatedRevision, quote.BreakEvenPrice));
+                quote.InputRevision, quote.CalculatedRevision, quote.BreakEvenPrice)
+            { CostingRevision = quote.CostingRevision });
     }
 }

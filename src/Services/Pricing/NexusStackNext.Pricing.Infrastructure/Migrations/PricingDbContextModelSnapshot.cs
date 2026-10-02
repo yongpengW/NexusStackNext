@@ -23,39 +23,69 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Domain.PriceQuote", b =>
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Application.Events.OutboxEntry", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<decimal?>("BreakEvenPrice")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("numeric(18,4)");
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
 
-                    b.Property<long>("CalculatedRevision")
-                        .HasColumnType("bigint");
+                    b.Property<DateTimeOffset?>("DeadLetteredAt")
+                        .HasColumnType("timestamp with time zone");
 
-                    b.Property<decimal>("Cost")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("numeric(18,4)");
+                    b.Property<DateTimeOffset?>("DeliveredAt")
+                        .HasColumnType("timestamp with time zone");
 
-                    b.Property<decimal>("FeeRate")
-                        .HasPrecision(5, 4)
-                        .HasColumnType("numeric(5,4)");
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
-                    b.Property<long>("InputRevision")
-                        .HasColumnType("bigint");
+                    b.Property<string>("LastFailure")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
 
-                    b.Property<long>("Version")
-                        .IsConcurrencyToken()
-                        .HasColumnType("bigint");
+                    b.Property<DateTimeOffset?>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
-                    b.ToTable("quotes", "pricing");
+                    b.HasIndex("DeliveredAt", "DeadLetteredAt", "NextAttemptAt")
+                        .HasDatabaseName("ix_outbox_pending");
+
+                    b.ToTable("outbox", "pricing");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.AttemptEntry", b =>
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.InboxMessage", b =>
+                {
+                    b.Property<string>("ConsumerName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("EventName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("MessageId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("ConsumerName", "EventName", "MessageId");
+
+                    b.ToTable("inbox", "pricing");
+                });
+
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
                 {
                     b.Property<Guid>("TaskId")
                         .HasColumnType("uuid");
@@ -81,6 +111,41 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.HasKey("TaskId", "Epoch");
 
                     b.ToTable("attempts", "pricing");
+                });
+
+            modelBuilder.Entity("NexusStackNext.Pricing.Domain.PriceQuote", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal?>("BreakEvenPrice")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CalculatedRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("Cost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<long>("CostingRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("FeeRate")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("numeric(5,4)");
+
+                    b.Property<long>("InputRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("quotes", "pricing");
                 });
 
             modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", b =>
@@ -123,6 +188,13 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("LeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)")
+                        .HasDefaultValue("manual");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(24)
@@ -137,7 +209,7 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.ToTable("tasks", "pricing");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.AttemptEntry", b =>
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
                 {
                     b.HasOne("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", null)
                         .WithMany("History")

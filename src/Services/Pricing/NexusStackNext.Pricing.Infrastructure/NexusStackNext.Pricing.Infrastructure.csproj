@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="../../Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
     <ProjectReference Include="../NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />

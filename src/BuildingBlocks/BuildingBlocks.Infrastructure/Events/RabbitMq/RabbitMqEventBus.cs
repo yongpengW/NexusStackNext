@@ -29,6 +29,18 @@ public sealed record RabbitMqOptions
 
     /// <summary>连接名——在 broker 的管理界面上用来认人。</summary>
     public string ClientName { get; init; } = "nexusstack";
+
+    /// <summary>宿主启用消息时验证连接配置，不要求 broker 此刻在线。</summary>
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(HostName) || Port is < 1 or > 65535
+            || string.IsNullOrWhiteSpace(UserName) || string.IsNullOrWhiteSpace(Password)
+            || string.IsNullOrWhiteSpace(VirtualHost) || string.IsNullOrWhiteSpace(ExchangeName)
+            || string.IsNullOrWhiteSpace(ClientName))
+        {
+            throw new InvalidOperationException("RabbitMq 连接配置不完整；检查主机、端口、账号、口令、虚拟主机、交换机与连接名。");
+        }
+    }
 }
 
 /// <summary>

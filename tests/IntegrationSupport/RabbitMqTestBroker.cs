@@ -1,7 +1,8 @@
 using System.Text.Json;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
+using Xunit;
 
-namespace NexusStackNext.RabbitMq.IntegrationTests;
+namespace NexusStackNext.IntegrationSupport;
 
 /// <summary>
 /// 真 broker 的连接信息与可用性判断。
@@ -14,7 +15,7 @@ namespace NexusStackNext.RabbitMq.IntegrationTests;
 /// **缺配置就跳过，并且把"跳过了什么、为什么"写在跳过原因里**——
 /// 跳过与通过必须能被区分开，否则这套测试就成了"一个不会失败的检查"。</para>
 /// </summary>
-public static class RabbitMqTestBroker
+internal static class RabbitMqTestBroker
 {
     /// <summary>连接信息所在的环境变量名。</summary>
     public const string VariableName = "NEXUSSTACK_TEST_RABBITMQ";
@@ -60,7 +61,7 @@ public static class RabbitMqTestBroker
 }
 
 /// <summary>需要真 broker 的测试。</summary>
-public sealed class RabbitMqFactAttribute : FactAttribute
+internal sealed class RabbitMqFactAttribute : FactAttribute
 {
     /// <summary>创建特性。</summary>
     public RabbitMqFactAttribute()
