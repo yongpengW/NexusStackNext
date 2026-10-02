@@ -252,14 +252,9 @@ public static class IdentityModule
                     $"/api/identity/api-resources/{result.Value.ApiResourceId}",
                     result.Value);
         }).ProducesApiErrors(415).Produces<ApiResponse<ApiResourceCreated>>(201)
-        // **引导端点：只要求"已认证"，不要求权限键。**
-        //
-        // 这里有一个真实的循环：要授权得先有权限键，而权限键由这个端点登记。
-        // 要求"注册权限"本身需要权限，就没人能注册第一个——系统永远起不来。
-        // 所以它停在"已认证"这一档。**代价说清楚**：任何已认证用户都能登记 API 资源，
-        // 而那意味着他能给自己造权限。生产部署必须把这个端点限制住（网关侧加角色约束），
-        // 或者改成由种子数据登记。现在留在这一档，是因为替代方案是"系统起不来"。
-        .RequireAuthenticated();
+        // 根账号通过既有旁路引导首个资源；之后可显式委派资源管理权。
+        // 仅有某个菜单的使用权，不能向该菜单添加新的管理权限。
+        .RequirePermission("/api/identity/api-resources", "POST");
 
         // ---------- 授权判定 ----------
 
