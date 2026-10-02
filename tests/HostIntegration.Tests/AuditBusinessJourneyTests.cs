@@ -94,6 +94,7 @@ public sealed class AuditBusinessJourneyTests
                     await Task.Delay(100, timeout.Token);
                 }
                 Assert.DoesNotContain("private-broker-value", failed.GetRawText(), StringComparison.Ordinal);
+                await AssertLoggingFailureDoesNotAffectReadinessAsync(first.Client);
             }
             await using var recovered = await PlatformHostProcess.StartAsync(database.ConnectionString, "audit-root-password", settings: Settings(broker, subscription.ConsumerName));
             await PlatformSettingsAccessTests.LoginAsync(recovered.Client, "journey-root", "audit-root-password");
@@ -136,9 +137,7 @@ public sealed class AuditBusinessJourneyTests
                 {
                     using var committed = await app.Client.PutAsJsonAsync(new Uri("/api/platform/settings/audit.outage", UriKind.Relative), new { value = "private-during-outage" });
                     Assert.Equal(HttpStatusCode.NoContent, committed.StatusCode);
-                    using var health = new HttpClient { BaseAddress = app.Client.BaseAddress, Timeout = TimeSpan.FromSeconds(10) };
-                    using var ready = await health.GetAsync(new Uri("/health/ready", UriKind.Relative));
-                    Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.StatusCode);
+                    await AssertLoggingFailureDoesNotAffectReadinessAsync(app.Client);
                     using var live = await app.Client.GetAsync(new Uri("/health/live", UriKind.Relative));
                     Assert.Equal(HttpStatusCode.OK, live.StatusCode);
                     original = await ReadEnvelopeAsync(broker, tap.QueueName, subscription.EventName);
@@ -162,6 +161,20 @@ public sealed class AuditBusinessJourneyTests
             Assert.Single(final.GetProperty("data").EnumerateArray(), item => item.GetProperty("fact").GetProperty("messageId").GetGuid() == original.MessageId);
         }
         finally { await DeleteTopologyAsync(broker, topology); }
+    }
+
+    private static async Task AssertLoggingFailureDoesNotAffectReadinessAsync(HttpClient client)
+    {
+        using var health = new HttpClient { BaseAddress = client.BaseAddress, Timeout = TimeSpan.FromSeconds(10) };
+        using (var budget = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+        using (var ready = await health.GetAsync(new Uri("/health/ready", UriKind.Relative), budget.Token))
+        {
+            Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+            Assert.Equal("Healthy", await ready.Content.ReadAsStringAsync());
+        }
+        using var logging = await health.GetAsync(new Uri("/health/logging", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, logging.StatusCode);
+        Assert.Equal("Unhealthy", await logging.Content.ReadAsStringAsync());
     }
 
     private static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, string queue, string eventName)
@@ -282,6 +295,7 @@ public sealed class AuditBusinessJourneyTests
         ["RabbitMQ__ExchangeName"] = broker.ExchangeName,
         ["RabbitMQ__ClientName"] = broker.ClientName,
         ["Auditing__Messaging__ConsumerName"] = consumerName,
+        ["Auditing__Messaging__OperationConsumerName"] = consumerName + "-operations",
     };
 
     internal static async Task<JsonElement> WaitForCountAsync(HttpClient client, int count)
@@ -305,6 +319,12 @@ public sealed class AuditBusinessJourneyTests
 
     internal static async Task DeleteTopologyAsync(RabbitMqOptions broker, EventTopology topology)
     {
+        if (!topology.Subscriptions.Any(item => item.EventName == "auditing.operation-observed.v1"))
+        {
+            var observations = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+                .Select(item => new EventSubscription { EventName = "auditing.operation-observed.v1", ConsumerName = item.ConsumerName + "-operations" });
+            topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(observations));
+        }
         var factory = new ConnectionFactory { HostName = broker.HostName, Port = broker.Port, UserName = broker.UserName, Password = broker.Password, VirtualHost = broker.VirtualHost };
         await using var connection = await factory.CreateConnectionAsync();
         await using var channel = await connection.CreateChannelAsync();

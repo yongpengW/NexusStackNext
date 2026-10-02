@@ -1,8 +1,10 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
 using NexusStackNext.Auditing.Endpoints;
+using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Infrastructure;
@@ -18,6 +20,12 @@ using NexusStackNext.Platform.Infrastructure;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
 using NexusStackNext.Scheduling.Infrastructure;
+
+if (args is ["migrate-operation-journal"])
+{
+    Environment.ExitCode = await OperationJournalModule.MigrateOperationJournalAsync();
+    return;
+}
 
 if (args is ["migrate-identity"])
 {
@@ -89,6 +97,8 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
         builder.Configuration.GetSection("Platform:Delivery").Get<OutboxDeliveryOptions>());
     builder.Services.AddNexusStackOutboxDelivery(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey,
         builder.Configuration.GetSection("Scheduling:Delivery").Get<OutboxDeliveryOptions>());
+    builder.Services.AddNexusStackOutboxDelivery(OperationJournalServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("OperationJournal:Delivery").Get<OutboxDeliveryOptions>());
 }
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。
@@ -97,6 +107,7 @@ builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule(builder.Configuration, builder.Environment);
 builder.Services.AddAuditingModule(builder.Configuration, builder.Environment);
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
+builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "platform");
 
 // ---------- 认证（ADR-0003：网关验签、上下文授权）----------
 //
@@ -151,6 +162,8 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
+app.UseRouting();
+app.UseOperationJournal();
 app.UseExceptionHandler();
 app.UseApiResponseContract();
 
@@ -170,12 +183,17 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "平台宿主"));
 }
 
-// 存活 = 进程还能应答 HTTP；就绪 = 依赖可用。
-// Identity / Platform / Auditing 的 PostgreSQL 模式各自检查数据库，Files 检查数据库和存储。
-// Scheduling 当前使用内存适配器。
-app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
-app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
-app.MapHealthChecks("/health/ready");
+// 日志慢故障不得消耗业务探测预算；日志依赖的异常通过独立诊断端点保留。
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = static _ => false });
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = static _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag),
+});
+app.MapHealthChecks("/health/logging", new HealthCheckOptions
+{
+    Predicate = static check => check.Tags.Contains(AuditingDiagnostics.HealthTag),
+});
 
 // 五个模块各自的 HTTP 面。路由前缀已经带上下文名（/api/identity、/api/files……），
 // 所以它们并到一个进程里**不需要改任何路由**——网关的路由表也只改目标地址。

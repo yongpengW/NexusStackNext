@@ -313,6 +313,8 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
                 ["ConnectionStrings:Platform"] = _platformConnectionString,
                 ["ConnectionStrings:Files"] = _filesConnectionString,
                 ["ConnectionStrings:Auditing"] = _auditingConnectionString,
+                ["OperationJournal:Storage:Provider"] = "Postgres",
+                ["ConnectionStrings:OperationJournal"] = _connectionString,
                 ["ConnectionStrings:Scheduling"] = _schedulingConnectionString,
             }));
         return base.CreateHost(builder);
@@ -376,6 +378,9 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         var scheduling = await RunMigrationAsync(ConnectionString, "Scheduling");
         Assert.Equal(0, scheduling.ExitCode);
         Assert.Contains("Scheduling migrations applied.", scheduling.Output, StringComparison.Ordinal);
+        var journal = await RunMigrationAsync(ConnectionString, "OperationJournal");
+        Assert.Equal(0, journal.ExitCode);
+        Assert.Contains("OperationJournal migrations applied.", journal.Output, StringComparison.Ordinal);
     }
 
     internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")
@@ -387,7 +392,7 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
             CreateNoWindow = true,
         };
         start.ArgumentList.Add(typeof(PlatformHostMarker).Assembly.Location);
-        start.ArgumentList.Add("migrate-" + context.ToLowerInvariant());
+        start.ArgumentList.Add(context == "OperationJournal" ? "migrate-operation-journal" : "migrate-" + context.ToLowerInvariant());
         start.Environment["ConnectionStrings__" + context] = connectionString ?? string.Empty;
         start.Environment["AgileConfig__AppId"] = "migration-probe";
         start.Environment["AgileConfig__Secret"] = "unused-test-secret";

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Application;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -23,6 +24,7 @@ public static class AuditingModule
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
         services.AddKeyedScoped<IIntegrationEventProcessor, PlatformAuditIngestion>(SettingCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, OperationObservationIngestion>(OperationObservedV1.Name);
         var broker = configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
         if (broker is not null && !string.IsNullOrWhiteSpace(broker.HostName) && configuration.GetValue("Auditing:Messaging:Enabled", true))
         {
@@ -30,9 +32,14 @@ public static class AuditingModule
             var consumer = configuration.GetValue<string>("Auditing:Messaging:ConsumerName") ?? AuditIngestion.ConsumerName;
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingCommittedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription
+            {
+                EventName = OperationObservedV1.Name,
+                ConsumerName = configuration.GetValue<string>("Auditing:Messaging:OperationConsumerName") ?? OperationObservationIngestion.ConsumerName,
+            });
             services.AddHealthChecks().AddAsyncCheck("auditing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
-                    ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("审计消息 broker 不可用。"));
+                    ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("审计消息 broker 不可用。"), tags: [AuditingDiagnostics.HealthTag]);
         }
         var provider = configuration["Auditing:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
@@ -78,6 +85,20 @@ public static class AuditingModule
             return (IResult)responses.Page(found.Entries.Select(static entry => new AuditEntryResponse(
                 entry.Id.Value, entry.Fact, entry.RecordedAt)).ToArray(), found.Total, paging);
         }).RequirePermission("/api/auditing/entries", "GET").Produces<ApiPage<AuditEntryResponse>>();
+        group.MapGet("/operations", async (IOperationObservationStore observations, ApiResponses responses,
+            [AsParameters] ApiPageRequest paging, string? source, Guid? operationId, string? outcome, string? actorId,
+            string? traceId, DateTimeOffset? from, DateTimeOffset? to, CancellationToken cancellationToken) =>
+        {
+            var query = new OperationQuery(paging.Page, paging.Limit, source, operationId, outcome, actorId, traceId, from, to);
+            var validation = query.Validate();
+            if (validation.IsFailure)
+            {
+                return Results.Problem(title: validation.Error.Message, statusCode: StatusCodes.Status400BadRequest,
+                    extensions: new Dictionary<string, object?> { ["errorCode"] = validation.Error.Code });
+            }
+            var found = await observations.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+            return (IResult)responses.Page(found.Operations, found.Total, paging);
+        }).RequirePermission("/api/auditing/operations", "GET").Produces<ApiPage<OperationSummary>>();
         return endpoints;
     }
 }

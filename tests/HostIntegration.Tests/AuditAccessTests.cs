@@ -26,10 +26,14 @@ public sealed class AuditAccessTests
         using var client = gateway.CreateClient();
         using var anonymous = await client.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        using var anonymousOperations = await client.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousOperations.StatusCode);
         await PlatformSettingsAccessTests.LoginAsync(direct, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         client.DefaultRequestHeaders.Authorization = direct.DefaultRequestHeaders.Authorization;
         using var allowed = await client.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
+        using var operations = await client.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, operations.StatusCode);
         using var deliveries = await client.GetAsync(new Uri("/api/platform/audit-deliveries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, deliveries.StatusCode);
         using var retry = await client.PostAsJsonAsync(new Uri($"/api/platform/audit-deliveries/{Guid.NewGuid()}/retry", UriKind.Relative),
@@ -49,9 +53,11 @@ public sealed class AuditAccessTests
         var created = await CreateAsync(user, "/api/identity/users", new { userName = "investigator", password = "investigator-password" });
         var userId = created.GetProperty("userId").ReadHttpInt64();
         await PlatformSettingsAccessTests.LoginAsync(user, "investigator", "investigator-password");
+        using var forbiddenOperations = await user.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Forbidden, forbiddenOperations.StatusCode);
         var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Audit investigation", sortOrder = 1 });
         var menuId = menu.GetProperty("menuId").ReadHttpInt64();
-        foreach (var path in new[] { "/api/auditing/entries", "/api/platform/audit-deliveries" })
+        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries" })
         {
             _ = await CreateAsync(root, "/api/identity/api-resources", new { path, method = "GET", menuId });
         }
@@ -61,7 +67,7 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
         using var assign = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode);
-        foreach (var path in new[] { "/api/auditing/entries", "/api/platform/audit-deliveries" })
+        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries" })
         {
             using var read = await user.GetAsync(new Uri(path, UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, read.StatusCode);
@@ -73,6 +79,8 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         using var revoked = await user.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+        using var revokedOperations = await user.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedOperations.StatusCode);
     }
 
     private static async Task<System.Text.Json.JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
@@ -102,19 +110,23 @@ public sealed class AuditAccessTests
         {
             using var invalid = await client.GetAsync(new Uri("/api/auditing/entries?" + query, UriKind.Relative));
             Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+            using var invalidOperations = await client.GetAsync(new Uri("/api/auditing/operations?" + query, UriKind.Relative));
+            Assert.Equal(HttpStatusCode.BadRequest, invalidOperations.StatusCode);
         }
     }
 
-    [Fact]
-    public async Task HttpClients_CannotSubmitAuditFacts_EvenWithRootSession()
+    [Theory]
+    [InlineData("/api/auditing/entries")]
+    [InlineData("/api/auditing/operations")]
+    public async Task HttpClients_CannotSubmitAuditRecords_EvenWithRootSession(string path)
     {
         await using var app = new PlatformAppWithRootAccount();
         using var client = app.CreateClient();
         var forged = new { messageId = Guid.NewGuid(), action = "platform.setting.changed", subjectType = "setting", subjectId = "1", actorId = "victim" };
-        using var anonymous = await client.PostAsJsonAsync(new Uri("/api/auditing/entries", UriKind.Relative), forged);
+        using var anonymous = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), forged);
         Assert.Contains(anonymous.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
         await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
-        using var root = await client.PostAsJsonAsync(new Uri("/api/auditing/entries", UriKind.Relative), forged);
+        using var root = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), forged);
         Assert.Contains(root.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
     }
 }

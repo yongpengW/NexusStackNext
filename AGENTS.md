@@ -169,7 +169,8 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 **平台宿主**（`127.0.0.1:5191`）：
 
 - `/health`、`/health/live` —— 进程还能应答（**不查依赖**）
-- `/health/ready` —— 依赖可用（**查**）
+- `/health/ready` —— 处理业务所需的依赖可用（**查**）
+- `/health/logging` —— 来源操作日志、中央审计库与审计消息依赖的独立诊断
 - `/openapi/v1.json` —— 它自己的 OpenAPI 文档（总是开，纯数据）
 - `/swagger` —— API 参考界面（**仅 Development**：它会绕过边缘暴露全部 API 面）
 
@@ -181,7 +182,8 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 - `/gateway/openapi/sources` —— 各来源是否取到、各多少条路径
 - `/swagger` —— API 参考界面（**总是开**：它就在边缘上，这正是要暴露的地方）
 
-`ready` 检查真实依赖：网关查 cluster，五个平台模块在 PostgreSQL 模式下各自查数据库，Files 还查存储可写可删。
+`ready` 检查真实业务依赖：网关查 cluster，Identity / Platform / Files / Scheduling 在 PostgreSQL 模式下查数据库，Files 还查存储可写可删。
+PlatformHost 与 PricingHost 的日志依赖归 `/health/logging`，避免日志探测慢故障让网关摘除可用业务。修改日志采集、就绪分组或告警时先读 `docs/operation-logging.md`。
 
 Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/identity-persistence.md`。
 Platform 也默认 PostgreSQL；配置、迁移、并发写入或重启验证时先读 `docs/platform-settings.md`。

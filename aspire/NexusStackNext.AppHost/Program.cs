@@ -72,6 +72,7 @@ var platform = builder
     .WithEnvironment("ConnectionStrings__Platform", postgres)
     .WithEnvironment("ConnectionStrings__Files", postgres)
     .WithEnvironment("ConnectionStrings__Auditing", postgres)
+    .WithEnvironment("ConnectionStrings__OperationJournal", postgres)
     .WithEnvironment("ConnectionStrings__Scheduling", postgres)
     .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。
@@ -101,6 +102,7 @@ if (!string.IsNullOrWhiteSpace(pricingDatabase))
 {
     var pricing = builder.AddProject<Projects.NexusStackNext_PricingHost>("pricing")
         .WithEnvironment("ConnectionStrings__Pricing", pricingDatabase)
+        .WithEnvironment("ConnectionStrings__OperationJournal", pricingDatabase)
         .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
         .WithEndpoint(5192, 5192, "http", isProxied: false);
     var pricingRedis = Environment.GetEnvironmentVariable("NEXUSSTACK_PRICING_REDIS");

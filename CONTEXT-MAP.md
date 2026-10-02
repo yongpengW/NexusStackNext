@@ -10,8 +10,8 @@
 - [Platform](./src/Services/Platform/CONTEXT.md) — 平台配置：与业务无关、却被所有上下文读取的元数据。
   目前拥有全局设置（`GlobalSetting`）；开放应用配置与区域还在计划里。
 - [Scheduling](./src/Services/Scheduling/CONTEXT.md) — 计划触发：计划的定义与到期时刻；业务任务由所属上下文拥有。
-- [Auditing](./src/Services/Auditing/CONTEXT.md) — 审计与日志：谁在什么时候做了什么（`AuditEntry`，
-  只写不可改）。令牌流转记录还在计划里。
+- [Auditing](./src/Services/Auditing/CONTEXT.md) — 已提交事实与操作调查：不可变 `AuditEntry` 保存已提交事实；
+  `OperationObservation` 已实现 PlatformHost / PricingHost 的来源采集与受权查询，尚未覆盖其它入口。令牌流转事实还在计划里。
 - [Files](./src/Services/Files/CONTEXT.md) — 文件与下载中心：文件的存储、归属与分发。
 - [Pricing](./src/Services/Pricing/CONTEXT.md) — 独立定价样板：定价输入、派生结果与持久化重算，独立宿主和数据库。
 - [Costing](./src/Services/Costing/CONTEXT.md) — 独立成本核算样板：成本组成、计算结果与成本事件，独立宿主和数据库。
@@ -41,6 +41,12 @@
   认证 Actor 与关联信息；状态和 Outbox 同事务，Auditing 的 Inbox 与不可变记录同事务。
   不传设置值或说明，调查查询要求显式权限，HTTP 不接受审计写入。
 
+- **来源宿主 → Auditing**：PlatformHost 与 PricingHost 显式组合 Auditing 拥有的 SourceJournal，
+  以独立连接和事务保存操作 Started / Finished，再交付中央观察存储。journal 是来源宿主中 Auditing 模块的数据，
+  不归 Platform / Pricing 业务上下文；这是操作观察链路，不改变上面的 Platform 已提交事实关系。
+  异步日志依赖的诊断与来源业务就绪分开，日志调查或交付故障不作为摘除仍可执行业务的宿主的依据。
+  两个宿主的真实交付、受权查询与故障隔离已完成核心目标验收；见[操作日志](docs/operation-logging.md)。
+
 - **Costing → Pricing**：通过 `CostCalculatedV1` 传递完整成本快照及来源版本。Costing 的结果与 Outbox 同事务；
   Pricing 的 Inbox、成本投影与重算任务同事务，费率归 Pricing。契约在 Costing.Contracts 中。
 
@@ -60,10 +66,12 @@ Platform → Auditing 与业务样板 Costing → Pricing 已使用真实消息�
 
 以下是**设计意图**，不是现状：
 
+- **其余入口 → Auditing 的 OperationObservation**：Costing / Gateway 的 HTTP 采集与后台执行观察留到后续切片；
+  不以两个已实现宿主的样板代表这些入口已经覆盖。
 - **Identity → Auditing**：Identity 计划发出 `UserLoggedIn`、`LoginFailed`、
   `RefreshTokenIssued`、`RefreshTokenRevoked`（这些**领域事件已经存在**，在
   `IdentityDomainEvents.cs` 里），Auditing 消费后落审计。**消费端还没做。**
-- **其余上下文 → Auditing**：尚未接入；不以通用原始载荷替代上下文自己的最小事实契约。
+- **其余上下文 → Auditing 的 AuditFact**：尚未接入；不以通用 HTTP 观察或原始载荷替代上下文自己的最小已提交事实契约。
 - **Scheduling → 其他业务目标**：除已接入的 Costing 重算外，按目标上下文自己的契约逐项扩展。
 
 **谁把这些做出来，请把对应的条目从这一节移到上面那一节。**
@@ -72,6 +80,8 @@ Platform → Auditing 与业务样板 Costing → Pricing 已使用真实消息�
 
 这些词在不同上下文里含义不同，读到时必须先确认在说哪一个：
 
+- **审计**：业务行的四个元数据字段、操作执行观察与已提交事实是三种证据。Auditing 的 `OperationObservation`
+  不能替代 `AuditFact`，HTTP 202 受理也不能替代 Costing / Pricing 的任务完成。
 - **Token**：Identity 里指登录签发的访问/刷新令牌（`RefreshToken`、`AccessToken`）；
   **Auditing 里计划指令牌的流转记录**——那个类型（曾写作 `TokenLog`）**还没建**。
 - **Permission**：Identity 里指"角色对某个路由+HTTP 方法的授权"，是一个**授权判定**

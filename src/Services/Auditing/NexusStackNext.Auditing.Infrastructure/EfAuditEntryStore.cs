@@ -65,9 +65,10 @@ public static class AuditingPersistenceServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         services.AddDbContext<AuditingDbContext>(options => options.UseNexusStackPostgres(connectionString, AuditingDbContext.SchemaName));
         services.AddScoped<IAuditEntryStore, EfAuditEntryStore>();
+        services.AddScoped<IOperationObservationStore, EfOperationObservationStore>();
         services.AddScoped<AuditIngestion>();
         services.AddHostedService<AuditingDatabaseStartupCheck>();
-        services.AddHealthChecks().AddCheck<AuditingDatabaseHealthCheck>("auditing-database");
+        services.AddHealthChecks().AddCheck<AuditingDatabaseHealthCheck>("auditing-database", tags: [AuditingDiagnostics.HealthTag]);
         return services;
     }
 }

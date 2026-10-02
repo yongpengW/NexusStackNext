@@ -87,6 +87,7 @@ public sealed class CalendarRuntimeTests
                 ["Platform__Storage__Provider"] = "Memory",
                 ["Files__Storage__Provider"] = "Memory",
                 ["Auditing__Storage__Provider"] = "Memory",
+                ["OperationJournal__Storage__Provider"] = "Memory",
                 ["Scheduling__Storage__Provider"] = "Memory",
                 ["Scheduling__Worker__Enabled"] = "false",
                 [OperatingSystem.IsWindows() ? "DOTNET_SYSTEM_GLOBALIZATION_USENLS" : "TZDIR"] = OperatingSystem.IsWindows() ? "1" : emptyZones,

@@ -3,12 +3,22 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
+using NexusStackNext.Auditing.Endpoints;
+using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Infrastructure;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Pricing.Endpoints;
 using NexusStackNext.Pricing.Infrastructure;
+
+if (args is ["migrate-operation-journal"])
+{
+    return await OperationJournalModule.MigrateOperationJournalAsync();
+}
 
 if (args is ["migrate-pricing"])
 {
@@ -38,6 +48,13 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
     builder.Services.AddPricingModule(builder.Configuration);
+    builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "pricing");
+    var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
+    if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
+    {
+        builder.Services.AddNexusStackRabbitMqEventBus(rabbit, OperationJournalServiceCollectionExtensions.OutboxKey,
+            builder.Configuration.GetSection("OperationJournal:Delivery").Get<OutboxDeliveryOptions>());
+    }
     builder.Services.AddApiResponseContract();
     builder.Services.AddOpenApi();
     var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
@@ -65,6 +82,8 @@ try
     builder.Services.AddAuthorizationBuilder().AddPolicy("pricing-operator", policy =>
         policy.RequireAuthenticatedUser().RequireClaim(NexusStackClaims.Root, "true"));
     var app = builder.Build();
+    app.UseRouting();
+    app.UseOperationJournal();
     app.UseExceptionHandler();
     app.UseApiResponseContract();
     app.UseAuthentication();
@@ -73,12 +92,19 @@ try
     app.MapOpenApi();
     app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
-    app.MapHealthChecks("/health/ready");
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag),
+    });
+    app.MapHealthChecks("/health/logging", new HealthCheckOptions
+    {
+        Predicate = static check => check.Tags.Contains(AuditingDiagnostics.HealthTag),
+    });
     await app.RunAsync();
     return 0;
 }
 catch (Exception)
 {
-    Console.Error.WriteLine("Pricing startup failed; check ConnectionStrings:Pricing, migrate-pricing, Jwt and Pricing:Tasks configuration.");
+    Console.Error.WriteLine("Pricing startup failed; check ConnectionStrings:Pricing, migrate-pricing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt and Pricing:Tasks configuration.");
     return 1;
 }

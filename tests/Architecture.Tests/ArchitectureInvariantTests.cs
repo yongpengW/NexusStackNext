@@ -32,6 +32,7 @@ public sealed class ArchitectureInvariantTests
     [
         "NexusStackNext.Auditing.Endpoints",
         "NexusStackNext.Auditing.Application",
+        "NexusStackNext.Auditing.Contracts",
         "NexusStackNext.Auditing.Domain",
         "NexusStackNext.Auditing.Infrastructure",
         "NexusStackNext.BuildingBlocks.Application",
