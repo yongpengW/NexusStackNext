@@ -2,7 +2,10 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -62,8 +65,10 @@ public sealed class PlatformSettingsAccessTests
         Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
     }
 
-    [Fact]
-    public async Task SettingsReader_CanReadGrantedRoutes_ButCannotWrite_AndLogoutRevokesAccess()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SettingsReader_CanReadGrantedRoutes_ButCannotWrite_AndRevocationRejectsExistingToken(bool disableAccount)
     {
         await using var app = new PlatformAppWithRootAccount();
         using var root = app.CreateClient();
@@ -107,8 +112,19 @@ public sealed class PlatformSettingsAccessTests
         using var cleared = await user.GetAsync(new Uri("/api/platform/settings/mail.sender", UriKind.Relative));
         Assert.Equal(JsonValueKind.Null, (await cleared.Content.ReadApiDataAsync()).GetProperty("value").ValueKind);
 
-        using var logout = await user.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
-        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        if (disableAccount)
+        {
+            // 禁用的 HTTP 管理用例另票补齐；此处通过真实仓储安排账号状态，验收仍走设置 HTTP。
+            await using var scope = app.Services.CreateAsyncScope();
+            var account = await scope.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(userId));
+            Assert.NotNull(account);
+            Assert.True(account.Disable(DateTimeOffset.UtcNow).IsSuccess);
+        }
+        else
+        {
+            using var logout = await user.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
+            Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        }
         using var revoked = await user.GetAsync(new Uri("/api/platform/settings/mail.sender", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
         using var rootLogout = await root.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
