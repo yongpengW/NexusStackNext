@@ -160,6 +160,8 @@ public sealed class GatewayApp : WebApplicationFactory<GatewayHostMarker>
     {
         ArgumentNullException.ThrowIfNull(builder);
 
+        builder.UseEnvironment("Testing");
+        builder.UseSetting("OperationJournal:Storage:Provider", "Memory");
         builder.ConfigureServices(services =>
             services.AddHttpClient(nameof(ClusterReachabilityProbe))
                 .ConfigurePrimaryHttpMessageHandler(() => Health));

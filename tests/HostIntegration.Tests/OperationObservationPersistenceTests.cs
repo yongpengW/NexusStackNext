@@ -39,6 +39,18 @@ public sealed class OperationObservationPersistenceTests
             RouteTemplate = "/api/platform/settings/{key}",
             StatusCode = 204,
             DurationMs = 25,
+            Metadata = new OperationDetails
+            {
+                Action = "platform.setting.update",
+                ExecutionRole = "endpoint",
+                Description = "修改全局设置",
+                SubjectType = "Setting",
+                SubjectIdKind = "int64",
+                SubjectId = "9007199254740993",
+                SpanId = "1234567890abcdef",
+                ParentSpanId = "abcdef1234567890",
+                CorrelationId = "settings-change-62",
+            },
         };
         var services = new ServiceCollection();
         services.AddLogging();
@@ -85,6 +97,22 @@ public sealed class OperationObservationPersistenceTests
         {
             Assert.True(await DeliverAsync(replay.ServiceProvider, message));
             Assert.False(await DeliverAsync(replay.ServiceProvider, message with { Outcome = "accepted", StatusCode = 202, ActorId = "cannot-overwrite" }));
+            foreach (var changed in new OperationDetails?[]
+            {
+                null,
+                message.Metadata with { Action = "different.action" },
+                message.Metadata with { Description = "不能覆盖" },
+                message.Metadata with { ExecutionRole = "proxy" },
+                message.Metadata with { SubjectType = "AnotherSubject" },
+                message.Metadata with { SubjectId = "9007199254740994" },
+                message.Metadata with { SubjectIdKind = "guid", SubjectId = "98e26a25-036d-49cb-aaef-2e6197a33ce0" },
+                message.Metadata with { SpanId = "abcdef1234567890" },
+                message.Metadata with { ParentSpanId = "1234567890abcdef" },
+                message.Metadata with { CorrelationId = "different-correlation" },
+            })
+            {
+                Assert.False(await DeliverAsync(replay.ServiceProvider, message with { Metadata = changed }));
+            }
         }
         await using var verification = application.CreateAsyncScope();
         var page = await verification.ServiceProvider.GetRequiredService<IOperationObservationStore>()
@@ -97,6 +125,16 @@ public sealed class OperationObservationPersistenceTests
         Assert.Equal("trusted-actor", saved.ActorId);
         Assert.Equal(occurredAt, saved.FinishedAt);
         Assert.Null(saved.StartedAt);
+        Assert.NotNull(saved.Metadata);
+        Assert.Equal("platform.setting.update", saved.Metadata.Action);
+        Assert.Equal("修改全局设置", saved.Metadata.Description);
+        Assert.Equal("endpoint", saved.Metadata.ExecutionRole);
+        Assert.Equal("Setting", saved.Metadata.SubjectType);
+        Assert.Equal("int64", saved.Metadata.SubjectIdKind);
+        Assert.Equal("9007199254740993", saved.Metadata.SubjectId);
+        Assert.Equal("1234567890abcdef", saved.Metadata.SpanId);
+        Assert.Equal("abcdef1234567890", saved.Metadata.ParentSpanId);
+        Assert.Equal("settings-change-62", saved.Metadata.CorrelationId);
     }
 
     private static Task<bool> DeliverAsync(IServiceProvider services, OperationObservedV1 observation) =>

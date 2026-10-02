@@ -3,12 +3,22 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
+using NexusStackNext.Auditing.Endpoints;
+using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Infrastructure;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Costing.Endpoints;
 using NexusStackNext.Costing.Infrastructure;
+
+if (args is ["migrate-operation-journal"])
+{
+    return await OperationJournalModule.MigrateOperationJournalAsync();
+}
 
 if (args is ["migrate-costing"])
 {
@@ -38,6 +48,20 @@ try
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
     builder.Services.AddCostingModule(builder.Configuration);
+    builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "costing");
+    var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
+    if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
+    {
+        var delivery = builder.Configuration.GetSection("OperationJournal:Delivery").Get<OutboxDeliveryOptions>();
+        if (builder.Configuration.GetValue("Costing:Messaging:Enabled", false))
+        {
+            builder.Services.AddNexusStackOutboxDelivery(OperationJournalServiceCollectionExtensions.OutboxKey, delivery);
+        }
+        else
+        {
+            builder.Services.AddNexusStackRabbitMqEventBus(rabbit, OperationJournalServiceCollectionExtensions.OutboxKey, delivery);
+        }
+    }
     builder.Services.AddApiResponseContract();
     builder.Services.AddOpenApi();
     var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
@@ -65,6 +89,9 @@ try
     builder.Services.AddAuthorizationBuilder().AddPolicy("costing-operator", policy =>
         policy.RequireAuthenticatedUser().RequireClaim(NexusStackClaims.Root, "true"));
     var app = builder.Build();
+    app.UseRouting();
+    app.UseCorrelationId();
+    app.UseOperationJournal();
     app.UseExceptionHandler();
     app.UseApiResponseContract();
     app.UseAuthentication();
@@ -73,12 +100,19 @@ try
     app.MapOpenApi();
     app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
-    app.MapHealthChecks("/health/ready");
+    app.MapHealthChecks("/health/ready", new HealthCheckOptions
+    {
+        Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag),
+    });
+    app.MapHealthChecks("/health/logging", new HealthCheckOptions
+    {
+        Predicate = static check => check.Tags.Contains(AuditingDiagnostics.HealthTag),
+    });
     await app.RunAsync();
     return 0;
 }
 catch (Exception)
 {
-    Console.Error.WriteLine("Costing startup failed; check ConnectionStrings:Costing, migrate-costing, Jwt and Costing:Tasks configuration.");
+    Console.Error.WriteLine("Costing startup failed; check ConnectionStrings:Costing, migrate-costing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt and Costing:Tasks configuration.");
     return 1;
 }

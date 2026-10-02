@@ -45,6 +45,9 @@ public sealed record OperationSummary(Guid OperationId, string Source, string Ki
     string? HttpMethod, string? RouteTemplate, DateTimeOffset? StartedAt, DateTimeOffset? FinishedAt,
     string Outcome, int? StatusCode, long? DurationMs)
 {
+    /// <summary>最终已观察阶段的安全元数据；旧记录可能为空。</summary>
+    public OperationMetadata? Metadata { get; init; }
+
     /// <summary>从同一次执行的不可变观察汇总。</summary>
     /// <param name="observations">相同来源与执行的阶段。</param>
     /// <returns>只陈述已有证据的结果。</returns>
@@ -57,7 +60,8 @@ public sealed record OperationSummary(Guid OperationId, string Source, string Ki
         var latest = finished ?? started ?? throw new ArgumentException("至少需要一条阶段观察。", nameof(observations));
         return new OperationSummary(latest.OperationId.Value, latest.Source, latest.Kind, latest.TraceId, latest.ActorId,
             latest.HttpMethod, latest.RouteTemplate, started?.OccurredAt, finished?.OccurredAt,
-            finished?.Outcome ?? "unconfirmed", finished?.StatusCode, finished?.DurationMs);
+            finished?.Outcome ?? "unconfirmed", finished?.StatusCode, finished?.DurationMs)
+        { Metadata = latest.Metadata };
     }
 }
 

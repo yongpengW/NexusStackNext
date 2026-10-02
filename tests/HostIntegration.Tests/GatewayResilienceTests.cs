@@ -254,6 +254,8 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        builder.UseEnvironment("Testing");
+        builder.UseSetting("OperationJournal:Storage:Provider", "Memory");
         builder.UseSetting("Gateway:RouteTablePath", RouteTablePath);
         builder.UseSetting("Gateway:RateLimit:PermitLimit", RateLimitPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture));
         builder.UseSetting("Gateway:RateLimit:WindowSeconds", "60");

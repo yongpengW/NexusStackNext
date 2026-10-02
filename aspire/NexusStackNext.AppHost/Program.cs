@@ -74,7 +74,6 @@ var platform = builder
     .WithEnvironment("ConnectionStrings__Auditing", postgres)
     .WithEnvironment("ConnectionStrings__OperationJournal", postgres)
     .WithEnvironment("ConnectionStrings__Scheduling", postgres)
-    .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。
     //
     // 这里**不注入 Seq**：本仓的 Serilog 只有 Console sink，而日志模板配了
@@ -87,9 +86,12 @@ var platform = builder
 
 var gateway = builder
     .AddProject<Projects.NexusStackNext_Gateway>("gateway")
+    .WithEnvironment("ConnectionStrings__OperationJournal", postgres)
     .WithEnvironment("Gateway__RouteTablePath", "routes.json")
     .WithEndpoint(5190, 5190, "http", isProxied: false)
     .WaitFor(platform);
+
+var messageSources = new List<IResourceBuilder<ProjectResource>> { platform, gateway };
 
 // 独立业务样板按需启用，默认仍只有平台与网关。先独立执行 migrate-pricing。
 var pricingDatabase = Environment.GetEnvironmentVariable("NEXUSSTACK_PRICING_DB");
@@ -105,6 +107,7 @@ if (!string.IsNullOrWhiteSpace(pricingDatabase))
         .WithEnvironment("ConnectionStrings__OperationJournal", pricingDatabase)
         .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
         .WithEndpoint(5192, 5192, "http", isProxied: false);
+    messageSources.Add(pricing);
     var pricingRedis = Environment.GetEnvironmentVariable("NEXUSSTACK_PRICING_REDIS");
     if (!string.IsNullOrWhiteSpace(pricingRedis))
     {
@@ -119,26 +122,29 @@ if (!string.IsNullOrWhiteSpace(pricingDatabase))
     {
         var costing = builder.AddProject<Projects.NexusStackNext_CostingHost>("costing")
             .WithEnvironment("ConnectionStrings__Costing", costingDatabase)
+            .WithEnvironment("ConnectionStrings__OperationJournal", costingDatabase)
             .WithEnvironment("Costing__Messaging__Enabled", "true")
             .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
             .WithEndpoint(5193, 5193, "http", isProxied: false);
+        messageSources.Add(costing);
         pricing.WithEnvironment("Pricing__Messaging__Enabled", "true");
-        // 凭据从私有配置注入；这里只声明各宿主实际消费的完整连接属性。
-        foreach (var key in new[] { "HostName", "Port", "UserName", "Password", "VirtualHost", "ExchangeName" })
-        {
-            var value = builder.Configuration[$"RabbitMq:{key}"];
-            if (key is "HostName" or "Password" && string.IsNullOrWhiteSpace(value))
-            {
-                throw new InvalidOperationException($"成本协作样板必须配置 RabbitMq:{key}。");
-            }
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                pricing.WithEnvironment($"RabbitMq__{key}", value);
-                costing.WithEnvironment($"RabbitMq__{key}", value);
-            }
-        }
         costing.WaitFor(pricing);
         gateway.WithEnvironment("Gateway__RouteTablePath", "routes.business.json").WaitFor(costing);
+    }
+}
+
+// 所有来源都交付操作观察；完整连接属性同时注入，不只给平台注入主机名。
+foreach (var key in new[] { "HostName", "Port", "UserName", "Password", "VirtualHost", "ExchangeName", "ClientName" })
+{
+    var value = builder.Configuration[$"RabbitMq:{key}"];
+    if (key == "HostName" && string.IsNullOrWhiteSpace(value)) { value = Host(rabbit); }
+    if (key is "HostName" or "Password" && string.IsNullOrWhiteSpace(value))
+    {
+        throw new InvalidOperationException($"操作日志交付必须配置 RabbitMq:{key}。");
+    }
+    if (!string.IsNullOrWhiteSpace(value))
+    {
+        foreach (var source in messageSources) { source.WithEnvironment($"RabbitMq__{key}", value); }
     }
 }
 

@@ -84,7 +84,8 @@ public static class AuditingModule
             var found = await entries.QueryAsync(paging.Page, paging.Limit, cancellationToken).ConfigureAwait(false);
             return (IResult)responses.Page(found.Entries.Select(static entry => new AuditEntryResponse(
                 entry.Id.Value, entry.Fact, entry.RecordedAt)).ToArray(), found.Total, paging);
-        }).RequirePermission("/api/auditing/entries", "GET").Produces<ApiPage<AuditEntryResponse>>();
+        }).RequirePermission("/api/auditing/entries", "GET").Produces<ApiPage<AuditEntryResponse>>()
+            .WithMetadata(new OperationLogSuppression("调查查询不产生新的操作观察，避免查询放大日志。"));
         group.MapGet("/operations", async (IOperationObservationStore observations, ApiResponses responses,
             [AsParameters] ApiPageRequest paging, string? source, Guid? operationId, string? outcome, string? actorId,
             string? traceId, DateTimeOffset? from, DateTimeOffset? to, CancellationToken cancellationToken) =>
@@ -98,7 +99,8 @@ public static class AuditingModule
             }
             var found = await observations.QueryAsync(query, cancellationToken).ConfigureAwait(false);
             return (IResult)responses.Page(found.Operations, found.Total, paging);
-        }).RequirePermission("/api/auditing/operations", "GET").Produces<ApiPage<OperationSummary>>();
+        }).RequirePermission("/api/auditing/operations", "GET").Produces<ApiPage<OperationSummary>>()
+            .WithMetadata(new OperationLogSuppression("调查查询不产生新的操作观察，避免查询放大日志。"));
         return endpoints;
     }
 }

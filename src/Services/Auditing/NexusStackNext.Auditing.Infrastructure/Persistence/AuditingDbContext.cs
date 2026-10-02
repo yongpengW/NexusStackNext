@@ -69,6 +69,18 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
             data.Property(item => item.RouteTemplate).HasColumnName("RouteTemplate").HasMaxLength(500);
             data.Property(item => item.StatusCode).HasColumnName("StatusCode");
             data.Property(item => item.DurationMs).HasColumnName("DurationMs");
+            data.OwnsOne(item => item.Metadata, metadata =>
+            {
+                metadata.Property(item => item.Action).HasColumnName("Action").HasMaxLength(200).IsRequired();
+                metadata.Property(item => item.ExecutionRole).HasColumnName("ExecutionRole").HasMaxLength(16).IsRequired();
+                metadata.Property(item => item.Description).HasColumnName("Description").HasMaxLength(256);
+                metadata.Property(item => item.SubjectType).HasColumnName("SubjectType").HasMaxLength(100);
+                metadata.Property(item => item.SubjectIdKind).HasColumnName("SubjectIdKind").HasMaxLength(16);
+                metadata.Property(item => item.SubjectId).HasColumnName("SubjectId").HasMaxLength(36);
+                metadata.Property(item => item.SpanId).HasColumnName("SpanId").HasMaxLength(16);
+                metadata.Property(item => item.ParentSpanId).HasColumnName("ParentSpanId").HasMaxLength(16);
+                metadata.Property(item => item.CorrelationId).HasColumnName("CorrelationId").HasMaxLength(64);
+            });
             data.HasIndex(item => new { item.Source, item.OperationId, item.Phase }).IsUnique().HasDatabaseName("ux_operation_observations_phase");
             data.HasIndex(item => new { item.OccurredAt, item.Source, item.OperationId }).HasDatabaseName("ix_operation_observations_time");
         });
