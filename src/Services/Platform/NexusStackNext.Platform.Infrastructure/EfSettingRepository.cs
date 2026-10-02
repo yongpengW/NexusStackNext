@@ -81,7 +81,7 @@ public static class PlatformPersistenceServiceCollectionExtensions
             .UseNexusStackPostgres(connectionString, PlatformDbContext.SchemaName)
             .UseNexusStackInterceptors(provider));
         services.AddScoped<ISettingRepository, EfSettingRepository>();
-        services.AddScoped<IOutboxStore, EfOutboxStore<PlatformDbContext>>();
+        services.AddKeyedScoped<IOutboxStore, EfOutboxStore<PlatformDbContext>>(PlatformInfrastructureServiceCollectionExtensions.OutboxKey);
         services.AddScoped<ISettingAuditDelivery, EfSettingAuditDelivery>();
         services.AddScoped<SettingStore>();
         services.AddHostedService<PlatformDatabaseStartupCheck>();

@@ -23,3 +23,7 @@ _Avoid_: 增量调价命令、采购单、跨库实体
 **CostDelivery**:
 已计算结果从本地 Outbox 投递到 broker 的状态。Delivered 表示 broker 确认，不表示下游已经完成定价。
 _Avoid_: 计算完成、业务全链路完成
+
+**ScheduledCostReceipt**:
+Costing 对一个计划发生作出的持久接受或拒绝结论。接受时同时保存本地成本输入快照与任务；重投沿用原结论，不能重新解释原先不存在的目标。
+_Avoid_: 消息 ACK、任务执行成功、Scheduling 的交付状态

@@ -272,16 +272,21 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
     private readonly string _platformConnectionString;
     private readonly string _filesConnectionString;
     private readonly string _auditingConnectionString;
+    private readonly string _schedulingConnectionString;
     private readonly string? _rootPassword;
+    private readonly bool _schedulingWorkerEnabled;
 
     public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null,
-        string? filesConnectionString = null, string? auditingConnectionString = null)
+        string? filesConnectionString = null, string? auditingConnectionString = null, bool schedulingWorkerEnabled = true,
+        string? schedulingConnectionString = null)
     {
         _connectionString = connectionString;
         _platformConnectionString = platformConnectionString ?? connectionString;
         _filesConnectionString = filesConnectionString ?? connectionString;
         _auditingConnectionString = auditingConnectionString ?? connectionString;
+        _schedulingConnectionString = schedulingConnectionString ?? connectionString;
         _rootPassword = rootPassword;
+        _schedulingWorkerEnabled = schedulingWorkerEnabled;
         UseKestrel(0);
     }
 
@@ -294,10 +299,13 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
                 ["Platform:Storage:Provider"] = "Postgres",
                 ["Files:Storage:Provider"] = "Postgres",
                 ["Auditing:Storage:Provider"] = "Postgres",
+                ["Scheduling:Storage:Provider"] = "Postgres",
+                ["Scheduling:Worker:Enabled"] = _schedulingWorkerEnabled.ToString(),
                 ["ConnectionStrings:Identity"] = _connectionString,
                 ["ConnectionStrings:Platform"] = _platformConnectionString,
                 ["ConnectionStrings:Files"] = _filesConnectionString,
                 ["ConnectionStrings:Auditing"] = _auditingConnectionString,
+                ["ConnectionStrings:Scheduling"] = _schedulingConnectionString,
             }));
         return base.CreateHost(builder);
     }
@@ -336,7 +344,8 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Identity migrations applied.", result.Output, StringComparison.Ordinal);
         var platform = await RunMigrationAsync(ConnectionString, "Platform");
-        Assert.Equal(0, platform.ExitCode);
+        var diagnostic = System.Text.RegularExpressions.Regex.Match(platform.Error, @"kind=[A-Za-z0-9]+; cause=[A-Za-z0-9]+").Value;
+        Assert.True(platform.ExitCode == 0, $"Platform migration exit={platform.ExitCode}; {diagnostic}");
         Assert.Contains("Platform migrations applied.", platform.Output, StringComparison.Ordinal);
         var files = await RunMigrationAsync(ConnectionString, "Files");
         Assert.Equal(0, files.ExitCode);
@@ -344,6 +353,9 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         var auditing = await RunMigrationAsync(ConnectionString, "Auditing");
         Assert.Equal(0, auditing.ExitCode);
         Assert.Contains("Auditing migrations applied.", auditing.Output, StringComparison.Ordinal);
+        var scheduling = await RunMigrationAsync(ConnectionString, "Scheduling");
+        Assert.Equal(0, scheduling.ExitCode);
+        Assert.Contains("Scheduling migrations applied.", scheduling.Output, StringComparison.Ordinal);
     }
 
     internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")

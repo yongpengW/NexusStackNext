@@ -11,7 +11,7 @@ public sealed class AggregateVersionTests
         new ScheduledTaskId(1),
         TaskCode.Create("demo.tick").Value,
         TimeSpan.FromSeconds(5),
-        Now).Value;
+        Now, ScheduleTarget.Create("costing.recalculate", Guid.Parse("44444444-4444-4444-4444-444444444444")).Value, "42").Value;
 
     [Fact]
     public void ExecutionAndIntervalChange_Bump()
@@ -19,7 +19,7 @@ public sealed class AggregateVersionTests
         var task = NewTask();
         Assert.Equal(1, task.Version);
 
-        Assert.True(task.MarkExecuted(Now).IsSuccess);
+        Assert.True(task.MarkTriggered(Now).IsSuccess);
         Assert.Equal(2, task.Version);
 
         // 相同的间隔不是改变。

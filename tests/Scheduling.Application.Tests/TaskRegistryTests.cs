@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.Scheduling.Infrastructure;
@@ -19,10 +20,12 @@ public sealed class TaskRegistryTests
 
     private static (TaskRegistry Registry, InMemoryScheduledTaskStore Store, MutableClock Clock) NewRegistry()
     {
-        var store = new InMemoryScheduledTaskStore();
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
         return (new TaskRegistry(store, new SequentialIdGenerator(9000), clock), store, clock);
     }
+
+    private static ScheduleTarget Target => ScheduleTarget.Create("costing.recalculate", Guid.Parse("44444444-4444-4444-4444-444444444444")).Value;
 
     private static TaskCode Code(string value) => TaskCode.Create(value).Value;
     [Fact]
@@ -30,7 +33,7 @@ public sealed class TaskRegistryTests
     {
         var (registry, _, _) = NewRegistry();
 
-        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5));
+        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5), Target, "42");
 
         Assert.True(defined.IsSuccess);
         Assert.Equal("demo.tick", defined.Value.Code.Value);
@@ -44,7 +47,7 @@ public sealed class TaskRegistryTests
     {
         var (registry, _, _) = NewRegistry();
 
-        var defined = await registry.DefineAsync(Code("  DEMO.Tick  "), TimeSpan.FromSeconds(5));
+        var defined = await registry.DefineAsync(Code("  DEMO.Tick  "), TimeSpan.FromSeconds(5), Target, "42");
 
         Assert.Equal("demo.tick", defined.Value.Code.Value);
     }
@@ -53,9 +56,9 @@ public sealed class TaskRegistryTests
     public async Task Define_RejectsADuplicateCode()
     {
         var (registry, _, _) = NewRegistry();
-        await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5));
+        await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5), Target, "42");
 
-        var again = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(9));
+        var again = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(9), Target, "42");
 
         Assert.True(again.IsFailure);
         Assert.Equal("scheduling.task_code.taken", again.Error.Code);
@@ -69,7 +72,7 @@ public sealed class TaskRegistryTests
     {
         var (registry, _, _) = NewRegistry();
 
-        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(seconds));
+        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(seconds), Target, "42");
 
         Assert.True(defined.IsFailure);
         Assert.Equal("scheduling.interval.invalid", defined.Error.Code);
@@ -81,9 +84,9 @@ public sealed class TaskRegistryTests
     {
         // 这条是整组里最重要的一条：留下 NextRunAt 会让任务每轮都被读出来、每轮都被跳过。
         var (registry, store, _) = NewRegistry();
-        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5));
+        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5), Target, "42");
 
-        var paused = await registry.PauseAsync(defined.Value.Id);
+        var paused = await registry.PauseAsync(defined.Value.Id, defined.Value.Version);
 
         Assert.True(paused.IsSuccess);
 
@@ -100,11 +103,11 @@ public sealed class TaskRegistryTests
     {
         // 停用一小时后再启用，不该补跑几十次。
         var (registry, _, clock) = NewRegistry();
-        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(30));
-        await registry.PauseAsync(defined.Value.Id);
+        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(30), Target, "42");
+        await registry.PauseAsync(defined.Value.Id, defined.Value.Version);
 
         clock.UtcNow = Now + TimeSpan.FromHours(1);
-        var resumed = await registry.ResumeAsync(defined.Value.Id);
+        var resumed = await registry.ResumeAsync(defined.Value.Id, 2);
 
         Assert.True(resumed.IsSuccess);
 
@@ -118,8 +121,8 @@ public sealed class TaskRegistryTests
     {
         var (registry, _, _) = NewRegistry();
 
-        var paused = await registry.PauseAsync(new ScheduledTaskId(404));
-        var resumed = await registry.ResumeAsync(new ScheduledTaskId(404));
+        var paused = await registry.PauseAsync(new ScheduledTaskId(404), 1);
+        var resumed = await registry.ResumeAsync(new ScheduledTaskId(404), 1);
 
         Assert.Equal("scheduling.task.not_found", paused.Error.Code);
         Assert.Equal("scheduling.task.not_found", resumed.Error.Code);
@@ -129,7 +132,7 @@ public sealed class TaskRegistryTests
     public async Task Find_ReturnsTheTaskOrNull()
     {
         var (registry, _, _) = NewRegistry();
-        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5));
+        var defined = await registry.DefineAsync(Code("demo.tick"), TimeSpan.FromSeconds(5), Target, "42");
 
         Assert.NotNull(await registry.FindAsync(defined.Value.Id));
         Assert.Null(await registry.FindAsync(new ScheduledTaskId(404)));
@@ -139,9 +142,9 @@ public sealed class TaskRegistryTests
     public async Task List_IsSortedByCode()
     {
         var (registry, _, _) = NewRegistry();
-        await registry.DefineAsync(Code("c.task"), TimeSpan.FromSeconds(5));
-        await registry.DefineAsync(Code("a.task"), TimeSpan.FromSeconds(5));
-        await registry.DefineAsync(Code("b.task"), TimeSpan.FromSeconds(5));
+        await registry.DefineAsync(Code("c.task"), TimeSpan.FromSeconds(5), Target, "42");
+        await registry.DefineAsync(Code("a.task"), TimeSpan.FromSeconds(5), Target, "42");
+        await registry.DefineAsync(Code("b.task"), TimeSpan.FromSeconds(5), Target, "42");
 
         var all = await registry.ListAsync();
 

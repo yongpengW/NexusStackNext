@@ -93,7 +93,7 @@ public sealed class ApiResponseContractTests
         foreach (var code in new[] { "page-a", "page-b" })
         {
             using var created = await client.PostAsJsonAsync(new Uri("/api/scheduling/tasks/", UriKind.Relative),
-                new { code, intervalSeconds = 30, firstRunInSeconds = 3600 });
+                new { code, intervalSeconds = 30, firstRunInSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
             lastId = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
         }

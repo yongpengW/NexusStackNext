@@ -72,6 +72,7 @@ var platform = builder
     .WithEnvironment("ConnectionStrings__Platform", postgres)
     .WithEnvironment("ConnectionStrings__Files", postgres)
     .WithEnvironment("ConnectionStrings__Auditing", postgres)
+    .WithEnvironment("ConnectionStrings__Scheduling", postgres)
     .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。
     //

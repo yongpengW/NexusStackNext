@@ -20,6 +20,9 @@ dotnet run --project src/Hosts/NexusStackNext.PricingHost -- migrate-pricing
 `RabbitMq__VirtualHost`、`RabbitMq__ExchangeName`。显式开启 `Costing__Messaging__Enabled=true`、
 `Pricing__Messaging__Enabled=true`；默认关闭，可独立演示本地计算。
 
+Costing 开启消息后也会订阅 Scheduling 的计划触发；配置、迁移、接受结论和固定间隔语义见[持久调度](durable-scheduling.md)。
+消费组 `Costing__Scheduling__ConsumerName` 默认 `costing-schedules`；独立测试环境应同时隔离交换机和消费组。
+
 ```powershell
 dotnet run --project src/Hosts/NexusStackNext.PricingHost -- --urls http://127.0.0.1:5192
 dotnet run --project src/Hosts/NexusStackNext.CostingHost -- --urls http://127.0.0.1:5193

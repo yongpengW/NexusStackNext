@@ -12,6 +12,7 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
     public DbSet<CostSheet> Sheets => Set<CostSheet>();
     public DbSet<CostCalculationEntry> Tasks => Set<CostCalculationEntry>();
     public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
+    public DbSet<ScheduledCostReceiptEntry> ScheduleReceipts => Set<ScheduledCostReceiptEntry>();
 
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
@@ -31,6 +32,15 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
         task.Property(x => x.PurchaseCost).HasPrecision(18, 4);
         task.Property(x => x.FreightCost).HasPrecision(18, 4);
         task.HasOne<CostSheet>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+        task.Property(x => x.Origin).HasMaxLength(32).HasDefaultValue("manual");
+        var receipt = modelBuilder.Entity<ScheduledCostReceiptEntry>();
+        receipt.ToTable("schedule_receipts");
+        receipt.HasKey(x => x.OccurrenceId);
+        receipt.Property(x => x.PayloadHash).HasMaxLength(64).IsRequired();
+        receipt.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
+        receipt.Property(x => x.Decision).HasMaxLength(16).IsRequired();
+        receipt.Property(x => x.ErrorCode).HasMaxLength(128);
+        receipt.HasOne<CostCalculationEntry>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
     }
 
     public Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken cancellationToken) =>
@@ -39,6 +49,7 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
 
 internal sealed class CostCalculationEntry : DurableTaskRecord
 {
+    public string Origin { get; set; } = "manual";
     public CostId ItemId { get; set; } = null!;
     public long ExpectedVersion { get; set; }
     public decimal PurchaseCost { get; set; }
@@ -54,8 +65,24 @@ internal sealed class CostCalculationEntry : DurableTaskRecord
         AvailableAt = AvailableAt,
         History = History.OrderBy(x => x.Epoch).Select(x => new CostingAttempt(x.Epoch, x.StartedAt, x.FinishedAt, x.Outcome, x.ErrorCode)).ToArray(),
     };
-    public bool Matches(UpdateCostInputs request) => ItemId.Value == request.ItemId
+    public bool Matches(UpdateCostInputs request) => Origin == "manual" && ItemId.Value == request.ItemId
         && ExpectedVersion == request.ExpectedVersion && PurchaseCost == request.PurchaseCost && FreightCost == request.FreightCost;
+}
+
+internal sealed class ScheduledCostReceiptEntry
+{
+    public Guid OccurrenceId { get; set; }
+    public long PlanId { get; set; }
+    public long TriggerSequence { get; set; }
+    public Guid ItemId { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public string Decision { get; set; } = string.Empty;
+    public Guid? TaskId { get; set; }
+    public string? ErrorCode { get; set; }
+    public DateTimeOffset ReceivedAt { get; set; }
+    public string PayloadHash { get; set; } = string.Empty;
+
+    public ScheduledCostReceipt ToView() => new(OccurrenceId, PlanId, TriggerSequence, ItemId, CreatedBy, Decision, TaskId, ErrorCode, ReceivedAt);
 }
 
 /// <summary>迁移工具的显式入口，只从环境读取连接配置。</summary>
@@ -102,6 +129,7 @@ public static class CostingDatabase
             _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.ScheduleReceipts.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

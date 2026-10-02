@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="../../Scheduling/NexusStackNext.Scheduling.Contracts/NexusStackNext.Scheduling.Contracts.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="../NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
     <ProjectReference Include="../NexusStackNext.Costing.Application/NexusStackNext.Costing.Application.csproj" />

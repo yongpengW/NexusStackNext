@@ -332,6 +332,7 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
                 ["Platform:Storage:Provider"] = "Memory",
                 ["Files:Storage:Provider"] = "Memory",
                 ["Auditing:Storage:Provider"] = "Memory",
+                ["Scheduling:Storage:Provider"] = "Memory",
             }));
         return base.CreateHost(builder);
     }

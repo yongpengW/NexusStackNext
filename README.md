@@ -37,7 +37,7 @@ tests/
 | Platform | 写入配置 → 存储 → 经边缘读出 |
 | Auditing | 事件进入 → 幂等去重 → 落库（**只写，没有查询端点**） |
 | Files | 上传 → 字节真的落盘 → 下载 → 删除 |
-| Scheduling | 定义任务 → 调度节拍触发 → 下次时刻推进 |
+| Scheduling | 持久计划 → 原子登记发生与 Outbox → Costing 接受重算 → 可查询交付与恢复 |
 
 另有独立宿主、独立 PostgreSQL 数据库的 **Pricing 业务样板**：成本更新与任务登记原子提交，
 后台重算、租约接管、旧执行拒写、任务查询与人工重试。启动、HTTP 示例及可靠性边界见
@@ -73,18 +73,18 @@ Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟
 - **一个 JWT 签名密钥**（`Jwt:SigningKey`，≥32 字节）——见下。
 - **一个根账号**（`Identity:Root:UserName` / `Identity:Root:Password`）——**推荐**，见下。
 
-**Identity / Platform / Files / Auditing 默认使用 PostgreSQL。** 分别配置 `ConnectionStrings__Identity`、`ConnectionStrings__Platform`、`ConnectionStrings__Files` 与 `ConnectionStrings__Auditing`
-（可指向同一物理库），依次执行 `scripts/migrate-identity.ps1`、`scripts/migrate-platform.ps1`、`scripts/migrate-files.ps1` 和 `scripts/migrate-auditing.ps1`，再启动平台宿主。
+**五个平台模块默认使用 PostgreSQL。** 分别配置 `ConnectionStrings__Identity`、`ConnectionStrings__Platform`、`ConnectionStrings__Files`、`ConnectionStrings__Auditing` 与 `ConnectionStrings__Scheduling`
+（可指向同一物理库），依次执行 `scripts/migrate-identity.ps1`、`scripts/migrate-platform.ps1`、`scripts/migrate-files.ps1`、`scripts/migrate-auditing.ps1` 和 `scripts/migrate-scheduling.ps1`，再启动平台宿主。
 启动会检查数据库及迁移状态，不会自动建表。
 配置与升级步骤见 [Identity 持久化运行](docs/identity-persistence.md)。
 
 全局设置的读写都需要当前有效会话及对应操作权限；授权步骤与兼容性变化见
-[全局设置访问](docs/platform-settings.md)。文件访问与迁移见 [私有文件](docs/private-files.md)，业务审计见 [持久审计](docs/committed-auditing.md)。NS / PoS 的能力对照与后续验收路线见
+[全局设置访问](docs/platform-settings.md)。文件访问与迁移见 [私有文件](docs/private-files.md)，业务审计见 [持久审计](docs/committed-auditing.md)，计划到成本任务的链路见 [持久调度](docs/durable-scheduling.md)。NS / PoS 的能力对照与后续验收路线见
 [能力研究](docs/research/2026-10-02-ns-pos-capability-parity.md)，当前工作状态以 GitHub Issues 为准。
 
 无数据库的开发演示需显式设置 `DOTNET_ENVIRONMENT=Development` 和
-`Identity__Storage__Provider=Memory`、`Platform__Storage__Provider=Memory`、`Files__Storage__Provider=Memory`、`Auditing__Storage__Provider=Memory`；生产环境拒绝内存模式。
-Scheduling 当前使用内存状态，Files 的字节保存在本地磁盘。
+`Identity__Storage__Provider=Memory`、`Platform__Storage__Provider=Memory`、`Files__Storage__Provider=Memory`、`Auditing__Storage__Provider=Memory`、`Scheduling__Storage__Provider=Memory`；生产环境拒绝内存模式。
+Files 的字节保存在本地磁盘，元数据归自己的数据库 schema。
 
 > **但平台宿主需要一个签名密钥才起得来。** 没配 `Jwt:SigningKey` 时它是**启动即失败**：
 > `OptionsValidationException: Jwt:SigningKey 至少需要 32 字节`，进程退出、健康检查无从应答。
@@ -129,8 +129,8 @@ bash scripts/setup-wizard.sh          # 需要 bash（Windows 上 git bash 即�
 
 | 能力 | 端口 | 实现状态 |
 |---|---|---|
-| 持久化（基座） | `IOutboxStore` / `IInboxStore` | ✅ EF Core + **PostgreSQL** 已实现（`identity` schema，见 `docs/adr/0002-postgres-per-context.md`） |
-| 持久化（各上下文） | 各 `I*Repository` | **Identity / Platform** 默认装配 PostgreSQL；Scheduling / Auditing 及 Files 元数据仍在内存 |
+| 持久化（基座） | `IOutboxStore` / `IInboxStore` | ✅ EF Core + **PostgreSQL**，表归各上下文自己的 schema，见 `docs/adr/0002-postgres-per-context.md` |
+| 持久化（各上下文） | 各应用存储端口 | 五个平台模块默认装配 PostgreSQL；Costing / Pricing 使用独立业务数据库 |
 | 消息 | `IEventBus` | ✅ RabbitMQ 已实现（发布确认 + `mandatory`，6 条真 broker 验收） |
 | 配置中心 | —— | ✅ AgileConfig（**读**；写入需要管理 API 凭据，未接） |
 | 缓存 | StackExchange.Redis | Pricing 普通查询已接入；权限缓存仍使用独立的一致性与失效规则 |

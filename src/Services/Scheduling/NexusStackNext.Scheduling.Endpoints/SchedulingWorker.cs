@@ -20,9 +20,9 @@ namespace NexusStackNext.Scheduling.Endpoints;
 /// （这是 CA1848/CA1873 要求的东西，也是它值得要求的原因）。
 /// </para>
 /// </summary>
-/// <param name="runner">单轮执行器。</param>
+/// <param name="scopes">每轮独立作用域。</param>
 /// <param name="logger">日志。</param>
-public sealed partial class SchedulingWorker(ScheduleRunner runner, ILogger<SchedulingWorker> logger) : BackgroundService
+public sealed partial class SchedulingWorker(IServiceScopeFactory scopes, ILogger<SchedulingWorker> logger) : BackgroundService
 {
     /// <summary>扫描节拍。</summary>
     public static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(10);
@@ -30,8 +30,6 @@ public sealed partial class SchedulingWorker(ScheduleRunner runner, ILogger<Sche
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        LogInMemoryStoreWarning();
-
         using var timer = new PeriodicTimer(TickInterval);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -43,7 +41,9 @@ public sealed partial class SchedulingWorker(ScheduleRunner runner, ILogger<Sche
                     break;
                 }
 
-                var result = await runner.RunOnceAsync(stoppingToken).ConfigureAwait(false);
+                await using var scope = scopes.CreateAsyncScope();
+                var result = await scope.ServiceProvider.GetRequiredService<ScheduleRunner>().RunOnceAsync(stoppingToken).ConfigureAwait(false);
+                foreach (var id in result.FailedPlanIds) { LogPlanFailed(id); }
                 if (result.Triggered > 0)
                 {
                     LogTick(result.Examined, result.Triggered, result.Skipped);
@@ -53,18 +53,13 @@ public sealed partial class SchedulingWorker(ScheduleRunner runner, ILogger<Sche
             {
                 break;
             }
-            catch (Exception exception)
+            catch (Exception)
             {
                 // 单轮失败不终止循环：下一轮继续，否则一次瞬时故障会让调度永久停摆。
-                LogTickFailed(exception);
+                LogTickFailed();
             }
         }
     }
-
-    [LoggerMessage(
-        Level = LogLevel.Warning,
-        Message = "Scheduling 当前使用内存存储：进程重启即丢失。持久化尚未接入。")]
-    private partial void LogInMemoryStoreWarning();
 
     [LoggerMessage(
         Level = LogLevel.Information,
@@ -72,5 +67,8 @@ public sealed partial class SchedulingWorker(ScheduleRunner runner, ILogger<Sche
     private partial void LogTick(int examined, int triggered, int skipped);
 
     [LoggerMessage(Level = LogLevel.Error, Message = "调度轮次失败，下一轮继续。")]
-    private partial void LogTickFailed(Exception exception);
+    private partial void LogTickFailed();
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "计划 {PlanId} 登记触发失败，本次未推进；后续轮次重试。")]
+    private partial void LogPlanFailed(long planId);
 }

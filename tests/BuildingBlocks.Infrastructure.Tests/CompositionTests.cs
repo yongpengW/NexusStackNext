@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Infrastructure;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tests;
@@ -76,5 +77,12 @@ public sealed class CompositionTests
             () => services.BuildServiceProvider(HostLikeValidation));
 
         Assert.Contains("IEventBus", failure.InnerException?.InnerException?.Message ?? failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NamedOutboxPolicy_WithoutAnOwner_IsRejectedInsteadOfIgnored()
+    {
+        var services = new ServiceCollection();
+        Assert.Throws<ArgumentException>(() => services.AddNexusStackOutboxDelivery(options: new OutboxDeliveryOptions { MaxAttempts = 1 }));
     }
 }

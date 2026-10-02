@@ -14,8 +14,10 @@ using NexusStackNext.Composition;
 using NexusStackNext.Files.Endpoints;
 using NexusStackNext.Identity.Endpoints;
 using NexusStackNext.Platform.Endpoints;
+using NexusStackNext.Platform.Infrastructure;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
+using NexusStackNext.Scheduling.Infrastructure;
 
 if (args is ["migrate-identity"])
 {
@@ -41,6 +43,12 @@ if (args is ["migrate-auditing"])
     return;
 }
 
+if (args is ["migrate-scheduling"])
+{
+    Environment.ExitCode = await SchedulingDatabaseCommand.RunAsync();
+    return;
+}
+
 // 平台能力的**唯一宿主**。不变量 8：这个进程由什么组成，一眼看得出来——
 // 下面五行就是它的全部内容，没有 InitApplication(moduleKey)，也没有"我是哪个服务"的运行时枚举。
 //
@@ -63,8 +71,7 @@ builder.AddNexusStackServiceDefaults();
 builder.Services.AddNexusStackApplication();
 
 // 依赖 AddNexusStackApplication 注册的 IClock；顺序反了会立刻失败，而不是在运行时。
-builder.Services.AddNexusStackInfrastructure(new IdGeneratorOptions { WorkerId = 101 },
-    builder.Configuration.GetSection("Platform:Delivery").Get<OutboxDeliveryOptions>());
+builder.Services.AddNexusStackInfrastructure(new IdGeneratorOptions { WorkerId = 101 });
 
 // ---------- 事件总线（配了才接）----------
 //
@@ -78,13 +85,16 @@ var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>()
 
 if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
 {
-    builder.Services.AddNexusStackRabbitMqEventBus(rabbit);
+    builder.Services.AddNexusStackRabbitMqEventBus(rabbit, PlatformInfrastructureServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("Platform:Delivery").Get<OutboxDeliveryOptions>());
+    builder.Services.AddNexusStackOutboxDelivery(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("Scheduling:Delivery").Get<OutboxDeliveryOptions>());
 }
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。
 builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
-builder.Services.AddSchedulingModule();
+builder.Services.AddSchedulingModule(builder.Configuration, builder.Environment);
 builder.Services.AddAuditingModule(builder.Configuration, builder.Environment);
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
 

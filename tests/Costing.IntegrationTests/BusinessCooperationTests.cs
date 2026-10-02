@@ -11,6 +11,7 @@ using NexusStackNext.Gateway;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
+using NexusStackNext.Scheduling.Contracts;
 using Npgsql;
 using RabbitMQ.Client;
 
@@ -29,7 +30,7 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-exchange", ClientName = prefix };
         var subscription = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-pricing" };
-        var topology = EventTopology.Create(broker.ExchangeName, [subscription]);
+        var topology = EventTopology.Create(broker.ExchangeName, [subscription, new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = subscription.ConsumerName + "-schedules" }]);
         var routePath = Path.Combine(Path.GetTempPath(), $"nsn-business-routes-{Guid.NewGuid():N}.json");
         try
         {
@@ -110,7 +111,7 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-exchange", ClientName = prefix };
         var subscription = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-pricing" };
-        var topology = EventTopology.Create(broker.ExchangeName, [subscription]);
+        var topology = EventTopology.Create(broker.ExchangeName, [subscription, new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = subscription.ConsumerName + "-schedules" }]);
         try
         {
             await PricingDatabase.MigrateAsync(pricingDatabase.ConnectionString);
@@ -187,7 +188,7 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-exchange", ClientName = prefix };
         var subscription = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-pricing" };
-        var topology = EventTopology.Create(broker.ExchangeName, [subscription]);
+        var topology = EventTopology.Create(broker.ExchangeName, [subscription, new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = subscription.ConsumerName + "-schedules" }]);
         try
         {
             await PricingDatabase.MigrateAsync(pricingDatabase.ConnectionString);
@@ -245,6 +246,7 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
         ["RabbitMq__ExchangeName"] = broker.ExchangeName,
         ["RabbitMq__ClientName"] = broker.ClientName,
         ["Costing__Messaging__Enabled"] = "true",
+        ["Costing__Scheduling__ConsumerName"] = consumerName + "-schedules",
         ["Pricing__Messaging__Enabled"] = "true",
         ["Pricing__Messaging__ConsumerName"] = consumerName,
         ["Costing__Delivery__PollInterval"] = "00:00:00.100",
