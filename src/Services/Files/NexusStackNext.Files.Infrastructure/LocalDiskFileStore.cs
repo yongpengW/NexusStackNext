@@ -171,14 +171,14 @@ public sealed class LocalDiskFileStore : IFileStore, IOrphanFileStore, IDisposab
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!_scan.MoveNext()) { _scan.Dispose(); _scan = null; break; }
-                var lockPath = _scan.Current;
-                var key = Path.GetFileName(lockPath)[..^5];
-                if (!IsManagedKey(key) || File.GetCreationTimeUtc(lockPath) >= olderThan.UtcDateTime) { continue; }
-                FileStream protection;
-                try { protection = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
-                catch (IOException) { continue; } // 正在写入，或已被另一个恢复者清除。
                 try
                 {
+                    var lockPath = _scan.Current;
+                    var key = Path.GetFileName(lockPath)[..^5];
+                    if (!IsManagedKey(key) || File.GetCreationTimeUtc(lockPath) >= olderThan.UtcDateTime) { continue; }
+                    FileStream protection;
+                    try { protection = new FileStream(lockPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+                    catch (IOException) { continue; } // 正在写入，或已被另一个恢复者清除。
                     var retired = false;
                     await using (protection.ConfigureAwait(false))
                     {
@@ -296,7 +296,8 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository
             return Task.FromResult<IReadOnlyList<StoredFile>>(_files.Values
                 .Where(file => file.IsDeleted && file.BytesRemovedAt is null
                     && (file.NextCleanupAttemptAt is null || file.NextCleanupAttemptAt <= now))
-                .OrderBy(file => file.NextCleanupAttemptAt).ThenBy(file => file.Id.Value).Take(limit).Select(file => file.Snapshot()).ToArray());
+                .OrderBy(file => file.NextCleanupAttemptAt != null).ThenBy(file => file.NextCleanupAttemptAt)
+                .ThenBy(file => file.Id.Value).Take(limit).Select(file => file.Snapshot()).ToArray());
         }
     }
 

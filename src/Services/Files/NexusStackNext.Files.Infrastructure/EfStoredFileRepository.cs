@@ -18,7 +18,8 @@ internal sealed class EfStoredFileRepository(FilesDbContext context) : IStoredFi
     public async Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
         await context.Files.AsNoTracking().Where(file => file.IsDeleted && file.BytesRemovedAt == null
             && (file.NextCleanupAttemptAt == null || file.NextCleanupAttemptAt <= now))
-            .OrderBy(file => file.NextCleanupAttemptAt).ThenBy(file => file.Id).Take(limit).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+            .OrderBy(file => file.NextCleanupAttemptAt != null).ThenBy(file => file.NextCleanupAttemptAt)
+            .ThenBy(file => file.Id).Take(limit).ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
     public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default) =>
         context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>

@@ -230,6 +230,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
 
     public string RouteTablePath => Path.Combine(_directory, "routes.json");
     public string SigningKey { get; init; } = GatewayRouteAdminApp.SigningKey;
+    public int RateLimitPermitLimit { get; init; } = 2;
 
     public void UseRoutes(IEnumerable<RouteDefinition> routes)
     {
@@ -254,7 +255,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseSetting("Gateway:RouteTablePath", RouteTablePath);
-        builder.UseSetting("Gateway:RateLimit:PermitLimit", "2");
+        builder.UseSetting("Gateway:RateLimit:PermitLimit", RateLimitPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture));
         builder.UseSetting("Gateway:RateLimit:WindowSeconds", "60");
         builder.UseSetting("Jwt:SigningKey", SigningKey);
         builder.UseSetting("Jwt:Issuer", "nexusstack");

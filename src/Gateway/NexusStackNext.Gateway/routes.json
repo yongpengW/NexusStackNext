@@ -78,6 +78,7 @@
       "routeId": "files-api",
       "clusterId": "platform-host",
       "path": "/api/files/{**catch-all}",
+      "maxRequestBodySize": 67108864,
       "rateLimitPolicy": "gateway.default",
       "requireAuthentication": true
     }

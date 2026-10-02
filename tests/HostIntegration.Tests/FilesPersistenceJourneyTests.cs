@@ -7,7 +7,65 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class FilesPersistenceJourneyTests
 {
     [PostgresFact]
-    public async Task UnremovableOrphan_DoesNotBlockOtherOrphanRecovery()
+    public async Task FirstCleanupAttempt_IsNotStarvedByDueFailingRetries()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nsn-files-pending-fairness-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await using var database = await IdentityJourneyDatabase.CreateAsync();
+            await database.MigrateAsync();
+            long firstId;
+            long nextId;
+            string firstBytes;
+            await using (var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root))
+            {
+                await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "files-root-password");
+                using var firstContent = new ByteArrayContent([1]);
+                using var first = await host.Client.PostAsync(new Uri("/api/files?name=first.bin", UriKind.Relative), firstContent);
+                Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+                firstId = (await first.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+                firstBytes = Assert.Single(Directory.EnumerateFiles(root, "v1-*"), path => Path.GetExtension(path).Length == 0);
+                using var nextContent = new ByteArrayContent([2]);
+                using var next = await host.Client.PostAsync(new Uri("/api/files?name=next.bin", UriKind.Relative), nextContent);
+                Assert.Equal(HttpStatusCode.Created, next.StatusCode);
+                nextId = (await next.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+            }
+            // 构造删除途中退出后的两个持久状态：一个清理始终失败，一个尚未开始首次清理。
+            File.Move(firstBytes, Path.Combine(root, "retained-original"));
+            Directory.CreateDirectory(firstBytes);
+            await using (var connection = new NpgsqlConnection(database.ConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var interrupted = new NpgsqlCommand("""
+                    UPDATE files.stored_files SET "IsDeleted" = true, "Version" = "Version" + 1,
+                        "NextCleanupAttemptAt" = CASE WHEN "Id" = @first THEN NOW() - INTERVAL '1 minute' ELSE NULL END
+                    """, connection);
+                interrupted.Parameters.AddWithValue("first", firstId);
+                Assert.Equal(2, await interrupted.ExecuteNonQueryAsync());
+            }
+            await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root, cleanupBatchSize: 1);
+            await PlatformSettingsAccessTests.LoginAsync(restarted.Client, "journey-root", "files-root-password");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (true)
+            {
+                using var status = await restarted.Client.GetAsync(new Uri($"/api/files/{nextId}/deletion", UriKind.Relative), timeout.Token);
+                Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+                if ((await status.Content.ReadApiDataAsync()).GetProperty("completed").GetBoolean()) { break; }
+                await Task.Delay(50, timeout.Token);
+            }
+            using var failed = await restarted.Client.GetAsync(new Uri($"/api/files/{firstId}/deletion", UriKind.Relative));
+            Assert.False((await failed.Content.ReadApiDataAsync()).GetProperty("completed").GetBoolean());
+        }
+        finally { if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); } }
+    }
+
+    [PostgresFact]
+    public Task UnremovableOrphan_DoesNotBlockOtherOrphanRecovery() => AssertOrphanRecoveryContinuesAsync(false);
+
+    [PostgresFact]
+    public Task UnwritableOrphanProtection_DoesNotBlockOtherOrphanRecovery() => AssertOrphanRecoveryContinuesAsync(true);
+
+    private static async Task AssertOrphanRecoveryContinuesAsync(bool unwritableProtection)
     {
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-orphan-fairness-" + Guid.NewGuid().ToString("N"));
         try
@@ -28,19 +86,27 @@ public sealed class FilesPersistenceJourneyTests
             var original = Assert.Single(Directory.EnumerateFiles(root, "v1-*"), path => Path.GetExtension(path).Length == 0);
             // 用排序靠前的受管句柄制造永久 I/O 故障，原字节留在测试目录供最终清理。
             var blocked = original[..^32] + new string('0', 32);
-            File.Move(original, Path.Combine(root, "retained-original"));
+            File.Move(original, unwritableProtection ? blocked : Path.Combine(root, "retained-original"));
             File.Move(original + ".lock", blocked + ".lock");
-            Directory.CreateDirectory(blocked);
+            if (unwritableProtection) { File.SetAttributes(blocked + ".lock", FileAttributes.ReadOnly); }
+            else { Directory.CreateDirectory(blocked); }
             using var nextContent = new ByteArrayContent([2]);
             using var next = await host.Client.PostAsync(new Uri("/api/files?name=reject.bin", UriKind.Relative), nextContent);
             Assert.Equal(HttpStatusCode.InternalServerError, next.StatusCode);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (Directory.EnumerateFiles(root, "v1-*").Any(path => path != blocked + ".lock"))
+            while (Directory.EnumerateFiles(root, "v1-*").Any(path => path != blocked + ".lock" && path != blocked))
             { await Task.Delay(50, timeout.Token); }
-            Assert.True(Directory.Exists(blocked));
+            Assert.True(unwritableProtection ? File.Exists(blocked) : Directory.Exists(blocked));
             Assert.True(File.Exists(blocked + ".lock"));
         }
-        finally { if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); } }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                foreach (var path in Directory.EnumerateFiles(root, "*.lock")) { File.SetAttributes(path, FileAttributes.Normal); }
+                Directory.Delete(root, recursive: true);
+            }
+        }
     }
 
     [PostgresFact]
@@ -308,6 +374,10 @@ public sealed class FilesPersistenceJourneyTests
                 Directory.Move(root, unavailable);
                 if (emptyReplacementDirectory) { Directory.CreateDirectory(root); }
                 else { await File.WriteAllTextAsync(root, "storage unavailable"); }
+                using var unavailableDownload = await first.Client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailableDownload.StatusCode);
+                var problem = await unavailableDownload.Content.ReadAsStringAsync();
+                Assert.DoesNotContain(Path.GetFileName(root), problem, StringComparison.Ordinal);
                 using var deleted = await first.Client.DeleteAsync(new Uri($"/api/files/{id}", UriKind.Relative));
                 Assert.Equal(HttpStatusCode.Accepted, deleted.StatusCode);
                 Assert.Equal($"/api/files/{id}/deletion", deleted.Headers.Location?.OriginalString);

@@ -20,11 +20,13 @@ public sealed class ApiTransportTests
         await using var platform = new PlatformAppWithRootAccount();
         platform.UseKestrel(0);
         using var direct = platform.CreateClient();
-        await using var gateway = new GatewayHttpApp(direct.BaseAddress!.AbsoluteUri);
-        gateway.UseRoutes([new RouteDefinition
+        await using var gateway = new GatewayHttpApp(direct.BaseAddress!.AbsoluteUri)
         {
-            RouteId = "platform", ClusterId = "backend", Path = "/api/{**path}", RequireAuthentication = false,
-        }]);
+            SigningKey = "integration-test-signing-key-long-enough-for-hs256",
+            RateLimitPermitLimit = 20,
+        };
+        var shipped = GatewayRouteTable.FromJson(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.json"))).Value;
+        gateway.UseRoutes(shipped.Routes.Select(route => route with { ClusterId = "backend" }));
         using var client = gateway.CreateClient();
         client.DefaultRequestHeaders.Add("X-Correlation-Id", "api-contract-probe");
         using var login = await client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative),
@@ -45,7 +47,9 @@ public sealed class ApiTransportTests
         Assert.True(properties.TryGetProperty("traceId", out _));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", data.GetProperty("accessToken").GetString());
 
-        byte[] bytes = [0, 255, 128, 10, 13, 42];
+        var bytes = new byte[31 * 1024 * 1024];
+        bytes[0] = 255;
+        bytes[^1] = 128;
         using var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         using var upload = await client.PostAsync(new Uri("/api/files?name=contract.bin", UriKind.Relative), content);

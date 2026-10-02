@@ -13,7 +13,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
 
     public HttpClient Client { get; }
 
-    private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot)
+    private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize)
     {
         using var reservation = new TcpListener(IPAddress.Loopback, 0);
         reservation.Start();
@@ -36,6 +36,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["Files__Cleanup__IntervalSeconds"] = "1";
         start.Environment["Files__Cleanup__RetryDelaySeconds"] = "1";
         start.Environment["Files__Cleanup__OrphanAgeSeconds"] = "1";
+        start.Environment["Files__Cleanup__BatchSize"] = cleanupBatchSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
         start.Environment["ConnectionStrings__Identity"] = connectionString;
         start.Environment["ConnectionStrings__Platform"] = connectionString;
         start.Environment["ConnectionStrings__Files"] = connectionString;
@@ -50,9 +51,10 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         _errors = _process.StandardError.ReadToEndAsync();
     }
 
-    public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null)
+    public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null,
+        int cleanupBatchSize = 64)
     {
-        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot);
+        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize);
         try
         {
             var elapsed = Stopwatch.StartNew();

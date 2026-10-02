@@ -155,7 +155,7 @@ public static class FilesModule
             response.Headers.XContentTypeOptions = "nosniff";
             response.Headers.CacheControl = "private, no-store";
             return Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
-        }).Produces(200, contentType: "application/octet-stream").ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
+        }).Produces(200, contentType: "application/octet-stream").ProducesApiErrors(400, 401, 403, 404, 500, 503).RequireAuthorization();
 
         // 元数据（不碰字节）。
         fileEndpoints.MapGet("/{id:long}/metadata", async (ApiResponses responses,
@@ -221,6 +221,7 @@ public static class FilesModule
         statusCode: error.Code switch
         {
             "files.not_found" => StatusCodes.Status404NotFound,
+            "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status400BadRequest,

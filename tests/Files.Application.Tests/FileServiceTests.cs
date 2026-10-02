@@ -18,10 +18,10 @@ public sealed class FileServiceTests
     private const string Owner = "file-owner";
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
-    private static (FileService Service, FakeFileStore Store, FakeStoredFileRepository Files) NewService()
+    private static (FileService Service, FakeFileStore Store, InMemoryStoredFileRepository Files) NewService()
     {
         var store = new FakeFileStore();
-        var files = new FakeStoredFileRepository();
+        var files = new InMemoryStoredFileRepository();
         var clock = new FixedClock(Now);
         return (new FileService(store, files, new SequentialIdGenerator(7000), clock, new FileUploadLimits(),
             new FileRecovery(store, files, clock, new FileRecoveryOptions(), store)), store, files);
@@ -70,8 +70,7 @@ public sealed class FileServiceTests
         Assert.True(result.IsSuccess);
         Assert.Equal(5, result.Value.Size);
         Assert.Single(store.Written);
-        Assert.Single(files.Saved);
-        Assert.Equal(result.Value.StorageKey, Assert.Single(files.Saved).StorageKey);
+        Assert.Equal(result.Value.StorageKey, (await files.FindAsync(result.Value.Id))!.StorageKey);
     }
 
     [Fact]
@@ -85,7 +84,7 @@ public sealed class FileServiceTests
         await Assert.ThrowsAsync<IOException>(
             () => service.UploadAsync(FileName.Create("a.txt").Value, "text/plain", Content(), Owner));
 
-        Assert.Empty(files.Saved);
+        Assert.Null(await files.FindAsync(new StoredFileId(7001)));
     }
 
     [Fact]
@@ -107,7 +106,7 @@ public sealed class FileServiceTests
         Assert.True(result.IsFailure);
         Assert.Equal("files.content_type.empty", result.Error.Code);
         Assert.Empty(store.Written);
-        Assert.Empty(files.Saved);
+        Assert.Null(await files.FindAsync(new StoredFileId(7001)));
     }
 
     [Fact]
@@ -175,7 +174,7 @@ public sealed class FileServiceTests
 
         Assert.True(result.IsSuccess);
         Assert.Single(store.Deleted);
-        Assert.True(Assert.Single(files.Saved).IsDeleted);
+        Assert.True((await files.FindDeletedAsync(uploaded.Value.Id))!.IsDeleted);
     }
 
     [Fact]
@@ -290,33 +289,6 @@ internal sealed class FakeFileStore : IFileStore, IOrphanFileStore
         {
             if (await retireUnreferenced(key, cancellationToken)) { await DeleteAsync(key, cancellationToken); }
         }
-    }
-}
-
-/// <summary>元数据仓储替身。<b>查找时过滤已软删</b>——与端口契约一致。</summary>
-internal sealed class FakeStoredFileRepository : IStoredFileRepository
-{
-    private readonly ConcurrentDictionary<long, StoredFile> _files = new();
-
-    public IReadOnlyList<StoredFile> Saved => [.. _files.Values];
-
-    public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file : null);
-
-    public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_files.TryGetValue(id.Value, out var file) && file.IsDeleted ? file : null);
-
-    public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<StoredFile>>(_files.Values.Where(file => file.IsDeleted && file.BytesRemovedAt is null
-            && (file.NextCleanupAttemptAt is null || file.NextCleanupAttemptAt <= now)).Take(limit).ToArray());
-
-    public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default) =>
-        Task.FromResult(!_files.Values.Any(file => file.StorageKey == storageKey));
-
-    public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default)
-    {
-        _files[file.Id.Value] = file;
-        return Task.CompletedTask;
     }
 }
 
