@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
@@ -19,15 +20,38 @@ public static class SchedulingModule
 {
     /// <summary>注册本模块需要的服务，包含它自己的后台服务。</summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="configuration">存储配置。</param>
+    /// <param name="environment">运行环境。</param>
     /// <returns>同一个服务集合，便于串联。</returns>
-    public static IServiceCollection AddSchedulingModule(this IServiceCollection services)
+    public static IServiceCollection AddSchedulingModule(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddSchedulingInMemoryStorage();
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
+        var provider = configuration["Scheduling:Storage:Provider"];
+        if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
+        if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing"))
+            {
+                throw new InvalidOperationException("Scheduling:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
+            }
+            services.AddSchedulingInMemoryStorage();
+        }
+        else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
+        {
+            var connection = configuration.GetConnectionString("Scheduling");
+            if (string.IsNullOrWhiteSpace(connection))
+            {
+                throw new InvalidOperationException("必须配置 ConnectionStrings:Scheduling；开发测试可显式选择 Scheduling:Storage:Provider=Memory。");
+            }
+            services.AddSchedulingPostgresStorage(connection);
+        }
+        else { throw new InvalidOperationException("Scheduling:Storage:Provider 仅支持 Postgres / Memory。"); }
 
         // 真实的后台服务，不是空壳。
-        services.AddHostedService<SchedulingWorker>();
+        if (configuration.GetValue("Scheduling:Worker:Enabled", true)) { services.AddHostedService<SchedulingWorker>(); }
 
         return services;
     }
@@ -49,25 +73,43 @@ public static class SchedulingModule
             at = clock.UtcNow,
         })).AllowAnonymous();
 
-        // **管理面在进程内也要求认证**（与边缘的 `scheduling-management` 一致）。
-        // 此前这四个端点在进程内没有任何授权判定——"边缘是唯一入口"是编排的事实，不是代码的事实。
-        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 500);
+        // 计划管理是后台执行委托：认证之外还须检查操作权限和当前会话。
+        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        tasks.AddEndpointFilter<NexusStackAuthorizationFilter>();
+
+        var occurrences = endpoints.MapGroup("/api/scheduling/occurrences").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        occurrences.AddEndpointFilter<NexusStackAuthorizationFilter>();
+        occurrences.MapPost("/{id:guid}/retry", async (Guid id, RetryOccurrenceRequest request, IScheduledTaskStore store,
+            ApiResponses responses, CancellationToken cancellationToken) =>
+        {
+            var result = await store.RetryOccurrenceAsync(id, request.ExpectedDeadLetteredAt, cancellationToken);
+            return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<ScheduleOccurrenceDelivery>>(202).ProducesApiErrors(415)
+            .RequirePermission("/api/scheduling/occurrences/{id}/retry", "POST");
+
+        tasks.MapGet("/{id:long}/occurrences", async (long id, IScheduledTaskStore store, ApiResponses responses,
+            [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
+        {
+            if (!paging.IsValid || paging.Page > TaskRegistry.MaximumPage || paging.Limit > 100) { return Failure(new Error(ApiPageRequest.InvalidErrorCode, "page 必须在 1 到 1000，触发历史 limit 必须在 1 到 100 之间。")); }
+            var page = await store.ReadOccurrencesAsync(id, paging.Offset, paging.Limit, cancellationToken);
+            return responses.Page(page.Items, page.Total, paging);
+        }).Produces<ApiPage<ScheduleOccurrenceDelivery>>().RequirePermission("/api/scheduling/tasks/{id}/occurrences", "GET");
 
         // 按稳定 ID 分页列出任务。**这是"调度器真的在跑"的可观察证据**：
         // 任务被执行过一次之后，lastRunAt 会被写上、nextRunAt 会向前推进。
-        tasks.MapGet("/", async (ApiResponses responses, TaskRegistry registry, [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
+        tasks.MapGet("/", async (ApiResponses responses, IScheduledTaskStore store, [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
         {
-            if (!paging.IsValid)
+            if (!paging.IsValid || paging.Page > TaskRegistry.MaximumPage)
             {
-                return Failure(new Error(ApiPageRequest.InvalidErrorCode, ApiPageRequest.InvalidErrorMessage));
+                return Failure(new Error(ApiPageRequest.InvalidErrorCode, "page 必须在 1 到 1000，limit 必须在 1 到 200 之间。"));
             }
-            var all = await registry.ListAsync(cancellationToken);
+            var page = await store.ReadPageAsync(paging.Page, paging.Limit, cancellationToken);
 
-            return responses.Page(all.OrderBy(static task => task.Id.Value)
-                .Skip((int)Math.Min(paging.Offset, all.Count)).Take(paging.Limit)
+            return responses.Page(page.Items
                 .Select(static task => new TaskItem(task.Id.Value, task.Code.Value, task.Interval.TotalSeconds,
-                    task.IsEnabled, task.LastRunAt, task.NextRunAt)).ToArray(), all.Count, paging);
-        }).Produces<ApiPage<TaskItem>>();
+                    task.IsEnabled, task.LastRunAt, task.NextRunAt, task.Target.Kind, task.Target.SubjectId,
+                    task.CreatedBy, task.Version)).ToArray(), page.Total, paging);
+        }).Produces<ApiPage<TaskItem>>().RequirePermission("/api/scheduling/tasks", "GET");
 
         // 定义一个任务。首次执行时刻不传就以"现在"起算——
         // 于是定义完，下一个调度节拍就会触发它。
@@ -75,6 +117,7 @@ public static class SchedulingModule
             DefineTaskRequest request,
             TaskRegistry registry,
             IClock clock,
+            ICurrentUser currentUser,
             CancellationToken cancellationToken) =>
         {
             var code = TaskCode.Create(request.Code);
@@ -83,39 +126,52 @@ public static class SchedulingModule
                 return Failure(code.Error);
             }
 
-            if (request.IntervalSeconds <= 0)
+            if (!double.IsFinite(request.IntervalSeconds) || request.IntervalSeconds < ScheduledTask.MinimumInterval.TotalSeconds
+                || request.IntervalSeconds > ScheduledTask.MaximumInterval.TotalSeconds)
             {
-                return Failure(new Error("scheduling.interval.invalid", "执行间隔必须为正。"));
+                return Failure(new Error("scheduling.interval.invalid", "执行间隔必须在 1 秒到 366 天之间。"));
             }
+            if (request.FirstRunInSeconds is { } firstRun && (!double.IsFinite(firstRun) || firstRun < 0
+                || firstRun > ScheduledTask.MaximumInterval.TotalSeconds))
+            {
+                return Failure(new Error("scheduling.first_run.invalid", "首次延迟必须在 0 秒到 366 天之间。"));
+            }
+
+            var target = ScheduleTarget.Create(request.TargetKind, request.TargetId);
+            if (target.IsFailure) { return Failure(target.Error); }
 
             var defined = await registry.DefineAsync(
                 code.Value,
                 TimeSpan.FromSeconds(request.IntervalSeconds),
+                target.Value, currentUser.UserId ?? string.Empty,
                 request.FirstRunInSeconds is { } delay ? clock.UtcNow + TimeSpan.FromSeconds(delay) : null,
                 cancellationToken);
 
             return defined.IsFailure
                 ? Failure(defined.Error)
                 : responses.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new TaskCreatedResponse(defined.Value.Id.Value, defined.Value.Code.Value));
-        }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201);
+        }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201)
+            .RequirePermission("/api/scheduling/tasks", "POST");
 
         tasks.MapPost("/{id:long}/pause", async (
             long id,
+            ChangeEnabledRequest request,
             TaskRegistry registry,
             CancellationToken cancellationToken) =>
         {
-            var paused = await registry.PauseAsync(new ScheduledTaskId(id), cancellationToken);
+            var paused = await registry.PauseAsync(new ScheduledTaskId(id), request.ExpectedVersion, cancellationToken);
             return paused.IsFailure ? Failure(paused.Error) : Results.NoContent();
-        }).Produces(204).ProducesApiErrors(404);
+        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/pause", "POST");
 
         tasks.MapPost("/{id:long}/resume", async (
             long id,
+            ChangeEnabledRequest request,
             TaskRegistry registry,
             CancellationToken cancellationToken) =>
         {
-            var resumed = await registry.ResumeAsync(new ScheduledTaskId(id), cancellationToken);
+            var resumed = await registry.ResumeAsync(new ScheduledTaskId(id), request.ExpectedVersion, cancellationToken);
             return resumed.IsFailure ? Failure(resumed.Error) : Results.NoContent();
-        }).Produces(204).ProducesApiErrors(404);
+        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/resume", "POST");
 
         return endpoints;
     }
@@ -126,9 +182,12 @@ public static class SchedulingModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == "scheduling.task.not_found"
-            ? StatusCodes.Status404NotFound
-            : StatusCodes.Status400BadRequest,
+        statusCode: error.Code switch
+        {
+            "scheduling.task.not_found" => StatusCodes.Status404NotFound,
+            "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
+            _ => StatusCodes.Status400BadRequest,
+        },
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
@@ -136,7 +195,12 @@ public static class SchedulingModule
 /// <param name="Code">任务编码。</param>
 /// <param name="IntervalSeconds">执行间隔（秒）。</param>
 /// <param name="FirstRunInSeconds">首次执行距现在多少秒；不传则以"现在"起算。</param>
-internal sealed record DefineTaskRequest(string Code, double IntervalSeconds, double? FirstRunInSeconds);
+/// <param name="TargetKind">受支持的目标操作。</param>
+/// <param name="TargetId">目标对象标识。</param>
+internal sealed record DefineTaskRequest(string Code, double IntervalSeconds, double? FirstRunInSeconds, string? TargetKind, Guid TargetId);
 
 internal sealed record TaskCreatedResponse(long TaskId, string Code);
-internal sealed record TaskItem(long TaskId, string Code, double IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt, DateTimeOffset? NextRunAt);
+internal sealed record ChangeEnabledRequest(long ExpectedVersion);
+internal sealed record RetryOccurrenceRequest(DateTimeOffset ExpectedDeadLetteredAt);
+internal sealed record TaskItem(long TaskId, string Code, double IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt,
+    DateTimeOffset? NextRunAt, string TargetKind, Guid TargetId, string CreatedBy, long Version);

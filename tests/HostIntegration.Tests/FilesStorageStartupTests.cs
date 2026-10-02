@@ -51,6 +51,8 @@ public sealed class FilesStorageStartupTests
                     ["ConnectionStrings:Platform"] = "Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1",
                     ["Auditing:Storage:Provider"] = "Postgres",
                     ["ConnectionStrings:Auditing"] = "Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1",
+                    ["Scheduling:Storage:Provider"] = "Postgres",
+                    ["ConnectionStrings:Scheduling"] = "Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1",
                     ["Files:Storage:Provider"] = provider,
                     ["ConnectionStrings:Files"] = null,
                 }));

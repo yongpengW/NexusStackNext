@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Time;
@@ -80,10 +82,26 @@ public static class InfrastructureServiceCollectionExtensions
     /// 而不是等到第一条消息要发的时候才发现。</para>
     /// </summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="owner">命名 Outbox；其存储须以相同的 key 显式注册。</param>
+    /// <param name="options">命名 Outbox 自己的投递策略。</param>
     /// <returns>同一个服务集合，便于链式调用。</returns>
-    public static IServiceCollection AddNexusStackOutboxDelivery(this IServiceCollection services)
+    public static IServiceCollection AddNexusStackOutboxDelivery(this IServiceCollection services, string? owner = null, OutboxDeliveryOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        if (owner is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+            var policy = options ?? OutboxDeliveryOptions.Default;
+            policy.Validate();
+            services.AddKeyedScoped<OutboxPublisher>(owner, (provider, _) => new OutboxPublisher(
+                provider.GetRequiredKeyedService<IOutboxStore>(owner), provider.GetRequiredService<IEventBus>(),
+                provider.GetRequiredService<IClock>(), policy));
+            // AddHostedService<T> 会按类型去重；每个上下文需要自己的循环与作用域。
+            services.AddSingleton<IHostedService>(provider => new OutboxDeliveryWorker(provider.GetRequiredService<IServiceScopeFactory>(),
+                policy, provider.GetRequiredService<ILogger<OutboxDeliveryWorker>>(), owner));
+            return services;
+        }
 
         services.TryAddScoped<OutboxPublisher>();
 
@@ -108,16 +126,20 @@ public static class InfrastructureServiceCollectionExtensions
     /// </summary>
     /// <param name="services">服务集合。</param>
     /// <param name="options">RabbitMQ 连接配置。</param>
+    /// <param name="outboxOwner">命名 Outbox；null 使用单生产者宿主的默认绑定。</param>
+    /// <param name="delivery">命名 Outbox 的投递策略。</param>
     /// <returns>同一个服务集合，便于链式调用。</returns>
     public static IServiceCollection AddNexusStackRabbitMqEventBus(
         this IServiceCollection services,
-        RabbitMqOptions options)
+        RabbitMqOptions options,
+        string? outboxOwner = null,
+        OutboxDeliveryOptions? delivery = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
 
         services.AddSingleton<IEventBus>(new RabbitMqEventBus(options));
 
-        return services.AddNexusStackOutboxDelivery();
+        return services.AddNexusStackOutboxDelivery(outboxOwner, delivery);
     }
 }

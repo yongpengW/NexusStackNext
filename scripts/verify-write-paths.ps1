@@ -18,6 +18,7 @@ $env:Identity__Storage__Provider = 'Memory'
 $env:Platform__Storage__Provider = 'Memory'
 $env:Files__Storage__Provider = 'Memory'
 $env:Auditing__Storage__Provider = 'Memory'
+$env:Scheduling__Storage__Provider = 'Memory'
 $env:Jwt__SigningKey = 'writepaths-check-signing-key-long-enough-hs256'
 $env:Jwt__Issuer = 'nexusstack'
 $env:Jwt__Audience = 'nexusstack'
@@ -88,9 +89,11 @@ function Call([string]$method, [string]$url, [string]$body, [string]$token) {
 
         # ---------- Scheduling：定义任务 → 等一个节拍 → 看它有没有被触发 ----------
         $code = 'journey-' + (Get-Random -Maximum 9999)
+        $definition = @{ Code = $code; IntervalSeconds = 30; TargetKind = 'costing.recalculate'; TargetId = [Guid]::NewGuid() } | ConvertTo-Json -Compress
         $define = Call 'POST' 'http://127.0.0.1:5190/api/scheduling/tasks/' `
-            ("{""Code"":""$code"",""IntervalSeconds"":30}") $token
+            $definition $token
         $results.Add("4. 定义调度任务        → $($define.Status)")
+        if ($define.Status -ne '201') { throw '定义调度任务失败，不能继续报告触发验证通过。' }
 
         if ($define.Status -in @('200', '201')) {
             Write-Host '   等一个 10 秒的调度节拍…' -ForegroundColor DarkGray

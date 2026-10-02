@@ -68,6 +68,7 @@ public sealed class ArchitectureInvariantTests
         "NexusStackNext.CostingHost",
         "NexusStackNext.Scheduling.Endpoints",
         "NexusStackNext.Scheduling.Application",
+        "NexusStackNext.Scheduling.Contracts",
         "NexusStackNext.Scheduling.Domain",
         "NexusStackNext.Scheduling.Infrastructure",
         // Aspire 的 AppHost 与 ServiceDefaults。它们住在 aspire/ 而不是 src/，

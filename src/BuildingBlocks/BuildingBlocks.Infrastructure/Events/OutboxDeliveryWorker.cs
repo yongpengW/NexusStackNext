@@ -24,15 +24,18 @@ public sealed partial class OutboxDeliveryWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly OutboxDeliveryOptions _options;
     private readonly ILogger<OutboxDeliveryWorker> _logger;
+    private readonly string? _owner;
 
     /// <summary>创建循环。</summary>
     /// <param name="scopeFactory">作用域工厂——投递器是 Scoped 的。</param>
     /// <param name="options">投递策略。</param>
     /// <param name="logger">日志。</param>
+    /// <param name="owner">命名的上下文 Outbox；null 保留单生产者宿主的默认绑定。</param>
     public OutboxDeliveryWorker(
         IServiceScopeFactory scopeFactory,
         OutboxDeliveryOptions options,
-        ILogger<OutboxDeliveryWorker> logger)
+        ILogger<OutboxDeliveryWorker> logger,
+        string? owner = null)
     {
         ArgumentNullException.ThrowIfNull(scopeFactory);
         ArgumentNullException.ThrowIfNull(options);
@@ -41,6 +44,7 @@ public sealed partial class OutboxDeliveryWorker : BackgroundService
         _scopeFactory = scopeFactory;
         _options = options;
         _logger = logger;
+        _owner = owner;
 
         options.Validate();
     }
@@ -56,7 +60,8 @@ public sealed partial class OutboxDeliveryWorker : BackgroundService
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
 
-                var publisher = scope.ServiceProvider.GetRequiredService<OutboxPublisher>();
+                var publisher = _owner is null ? scope.ServiceProvider.GetRequiredService<OutboxPublisher>()
+                    : scope.ServiceProvider.GetRequiredKeyedService<OutboxPublisher>(_owner);
                 var result = await publisher.PublishPendingAsync(stoppingToken).ConfigureAwait(false);
 
                 // **只在真的有动作时打日志。** 每两秒一条"本轮 0 条"会把日志淹掉，

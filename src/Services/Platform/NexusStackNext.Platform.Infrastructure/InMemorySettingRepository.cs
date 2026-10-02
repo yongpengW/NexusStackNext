@@ -155,6 +155,8 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
 /// <summary>把 Platform 的端口接到内存适配器上。</summary>
 public static class PlatformInfrastructureServiceCollectionExtensions
 {
+    /// <summary>宿主装配时显式选择 Platform 的 Outbox。</summary>
+    public const string OutboxKey = "platform";
     /// <summary>注册内存配置存储与读写服务。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。</summary>
     /// <param name="services">服务集合。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
@@ -164,7 +166,7 @@ public static class PlatformInfrastructureServiceCollectionExtensions
 
         services.AddSingleton<InMemorySettingRepository>();
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
-        services.AddSingleton<IOutboxStore>(provider => provider.GetRequiredService<InMemorySettingRepository>());
+        services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddSingleton<ISettingAuditDelivery>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddScoped<SettingStore>();
 

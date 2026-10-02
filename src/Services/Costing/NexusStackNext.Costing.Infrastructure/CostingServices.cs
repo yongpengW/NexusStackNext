@@ -6,6 +6,7 @@ using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Domain;
+using NexusStackNext.Scheduling.Contracts;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
@@ -35,6 +36,8 @@ public static class CostingServices
         services.AddScoped<ICommandHandler<CompleteCostingWork, bool>, CostingExecution>();
         services.AddScoped<ICommandHandler<FailCostingWork, bool>, CostingExecution>();
         services.AddScoped<ICommandHandler<RetryCostingWork, CostCalculationStatus>, CostingExecution>();
+        services.AddKeyedScoped<IIntegrationEventProcessor, ScheduledCostIngestion>(ScheduleTriggeredV1.Name);
+        services.AddScoped<IQueryHandler<GetScheduledCostReceipt, ScheduledCostReceipt>, ScheduledCostIngestion>();
         return services;
     }
 }
@@ -60,6 +63,10 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
         {
             return existing.Matches(command) ? Result.Success(existing.ToStatus())
                 : Result.Failure<CostCalculationStatus>(new Error("costing.request_conflict", "请求标识已用于不同内容。"));
+        }
+        if (await database.ScheduleReceipts.AnyAsync(x => x.OccurrenceId == command.RequestId, cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<CostCalculationStatus>(new Error("costing.request_conflict", "请求标识已经用于计划触发。"));
         }
 
         await database.Database.ExecuteSqlInterpolatedAsync(

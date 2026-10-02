@@ -115,9 +115,9 @@ Auditing 不需要它——它的端点直接返回 202/200），这是决定而
 那几行是每个模块**自己的 HTTP 契约**，不同模块对"错误码 → 状态码"的映射会不同。
 统一它们等于用一个共用函数锁死五个模块的 HTTP 语义。
 
-每个上下文自带 `CONTEXT.md` 与 `docs/adr/`。当前五个上下文都是**平台能力**（通用/支撑子域）：
+每个上下文自带 `CONTEXT.md` 与 `docs/adr/`。五个平台上下文都是**平台能力**（通用/支撑子域）：
 它们由一个宿主 `src/Hosts/NexusStackNext.PlatformHost` 组装、共用一个数据库（库内按 schema 分开）。
-**未来的业务上下文才各自独立成服务、独立库**——那才是需要按业务边界切分的地方。见 ADR-0013。
+Costing / Pricing 业务样板各自独立成服务、独立库，业务边界见 `docs/costing-pricing-cooperation.md`；平台装配依据见 ADR-0013。
 
 ## Build & test
 
@@ -164,7 +164,7 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 **跑之前先确认那台机器上还有谁。** 这不是测试的错，是环境的事实，
 但测试代码里没有任何地方体现它，所以写在这里。
 
-跑起来只有**两个进程**：平台宿主与网关。
+基础平台运行两个进程：平台宿主与网关；业务样板另启 Costing / Pricing 宿主。
 
 **平台宿主**（`127.0.0.1:5191`）：
 
@@ -181,11 +181,11 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 - `/gateway/openapi/sources` —— 各来源是否取到、各多少条路径
 - `/swagger` —— API 参考界面（**总是开**：它就在边缘上，这正是要暴露的地方）
 
-`ready` 检查真实依赖：网关查 cluster，Identity / Platform 的 PostgreSQL 模式各自查数据库，Files 查存储可写可删。
-Scheduling / Auditing 当前使用内存适配器。
+`ready` 检查真实依赖：网关查 cluster，五个平台模块在 PostgreSQL 模式下各自查数据库，Files 还查存储可写可删。
 
 Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/identity-persistence.md`。
 Platform 也默认 PostgreSQL；配置、迁移、并发写入或重启验证时先读 `docs/platform-settings.md`。
+文件迁移与访问读 `docs/private-files.md`；审计迁移与消息摄入读 `docs/committed-auditing.md`；计划迁移、后台触发或交付恢复读 `docs/durable-scheduling.md`。
 普通宿主启动不迁移，未迁移或数据库不可用会退出；无库演示须显式选择开发/测试 Memory 模式。
 Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，仍按脚本串行运行。
 

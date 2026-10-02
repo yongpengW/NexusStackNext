@@ -3,7 +3,7 @@
 Identity 默认使用 PostgreSQL，数据与迁移历史均在 `identity` schema。
 同一宿主中的 Platform 也需独立连接配置与迁移，见 [全局设置持久化](platform-settings.md)。
 Files 的元数据也需独立连接配置与迁移，见 [私有文件](private-files.md)。
-现有 EF 仓储由实际平台宿主装配；其余平台模块仍有内存状态，本轮不是整个平台的生产验收。
+Auditing 与 Scheduling 的迁移和运行约定分别见 [持久审计](committed-auditing.md) 与 [持久调度](durable-scheduling.md)。五个平台模块各自拥有 schema 和迁移；部署验收仍需使用目标环境进行。
 
 ## 配置与启动
 
@@ -29,9 +29,9 @@ pwsh -File scripts/run-host.ps1 platform
 
 ## 开发与测试
 
-无库演示须显式选择 `Identity__Storage__Provider=Memory` 和 `Platform__Storage__Provider=Memory`，仅 `Development` / `Testing` 环境允许。
+无库演示须为 Identity、Platform、Files、Auditing、Scheduling 分别设置 `<Context>__Storage__Provider=Memory`，仅 `Development` / `Testing` 环境允许。
 未指定或空白 Provider 使用 Postgres；拼错值直接失败。三个手动 HTTP 验证脚本已显式选择开发内存模式。
-Aspire 将 `NEXUSSTACK_DB` 分别注入 `ConnectionStrings__Identity` / `ConnectionStrings__Platform`，启动前仍需单独完成两项迁移。
+Aspire 将 `NEXUSSTACK_DB` 分别注入五个平台模块的 `ConnectionStrings__<Context>`，启动前仍需完成各模块的独立迁移。
 AppHost 启动脚本只接受明确的运行库配置，不再把 `NEXUSSTACK_TEST_POSTGRES` 隐式用作应用数据库。
 
 新增真实 HTTP 测试使用 `NEXUSSTACK_TEST_POSTGRES` 所在服务器上的临时数据库（`nsn_identity_journey_*`），

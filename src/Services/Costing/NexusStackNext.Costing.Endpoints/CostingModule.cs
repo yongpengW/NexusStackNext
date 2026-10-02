@@ -12,6 +12,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Infrastructure;
+using NexusStackNext.Scheduling.Contracts;
 
 namespace NexusStackNext.Costing.Endpoints;
 
@@ -39,6 +40,12 @@ public static class CostingModule
             broker.Validate();
             services.AddSingleton(configuration.GetSection("Costing:Delivery").Get<OutboxDeliveryOptions>() ?? new OutboxDeliveryOptions());
             services.AddNexusStackRabbitMqEventBus(broker);
+            if (configuration.GetValue("Costing:Scheduling:Enabled", true))
+            {
+                var consumer = configuration.GetValue<string>("Costing:Scheduling:ConsumerName") ?? "costing-schedules";
+                ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
+                services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = consumer });
+            }
             services.AddHealthChecks().AddAsyncCheck("costing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: ["ready"]);
@@ -57,6 +64,11 @@ public static class CostingModule
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/costing").RequireAuthorization("costing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+        group.MapGet("/schedule-receipts/{occurrenceId:guid}", async (Guid occurrenceId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetScheduledCostReceipt(occurrenceId), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<ScheduledCostReceipt>>();
         group.MapPost("/cost", async (UpdateCostInputs request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);

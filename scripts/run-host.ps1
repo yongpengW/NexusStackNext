@@ -95,11 +95,12 @@ Jwt__SigningKey=
     if ($Name -eq 'platform') {
         $skeleton += @"
 
-# Identity、Platform、Files 与 Auditing 默认使用 PostgreSQL；可连接同一物理库，各自拥有 schema。
+# 五个平台上下文默认使用 PostgreSQL；可连接同一物理库，各自拥有 schema。
 ConnectionStrings__Identity=
 ConnectionStrings__Platform=
 ConnectionStrings__Files=
 ConnectionStrings__Auditing=
+ConnectionStrings__Scheduling=
 # 首次或升级：pwsh -File scripts/migrate-identity.ps1
 # 然后执行：pwsh -File scripts/migrate-platform.ps1
 # 然后执行：pwsh -File scripts/migrate-files.ps1
@@ -110,6 +111,7 @@ ConnectionStrings__Auditing=
 # Platform__Storage__Provider=Memory
 # Files__Storage__Provider=Memory
 # Auditing__Storage__Provider=Memory
+# Scheduling__Storage__Provider=Memory
 "@
         $skeleton += "`n# 文件存储根目录；留空则用 AppContext.BaseDirectory 下的 file-storage。`n# Files__StorageRoot=`n"
     }

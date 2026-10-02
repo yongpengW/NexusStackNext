@@ -35,6 +35,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["Platform__Storage__Provider"] = "Postgres";
         start.Environment["Files__Storage__Provider"] = "Postgres";
         start.Environment["Auditing__Storage__Provider"] = "Postgres";
+        start.Environment["Scheduling__Storage__Provider"] = "Postgres";
         start.Environment["Files__Cleanup__IntervalSeconds"] = "1";
         start.Environment["Files__Cleanup__RetryDelaySeconds"] = "1";
         start.Environment["Files__Cleanup__OrphanAgeSeconds"] = "1";
@@ -43,6 +44,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["ConnectionStrings__Platform"] = connectionString;
         start.Environment["ConnectionStrings__Files"] = connectionString;
         start.Environment["ConnectionStrings__Auditing"] = connectionString;
+        start.Environment["ConnectionStrings__Scheduling"] = connectionString;
         if (filesRoot is not null) { start.Environment["Files__StorageRoot"] = filesRoot; }
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";
         start.Environment["AgileConfig__AppId"] = string.Empty;

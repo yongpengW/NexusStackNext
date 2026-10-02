@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.TestSupport;
@@ -7,6 +8,20 @@ namespace NexusStackNext.Scheduling.Application.Tests;
 /// <summary>内存任务存储，实现真实语义：保存后状态可见。</summary>
 internal sealed class FakeTaskStore : IScheduledTaskStore
 {
+    public Task<ScheduledTask?> FindAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
+        Task.FromResult(_tasks.GetValueOrDefault(id.Value));
+
+    public Task<ScheduledTaskPage> ReadPageAsync(int page, int limit, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public Task<Result<ScheduleOccurrenceDelivery>> RetryOccurrenceAsync(Guid occurrenceId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
+
+    public Task<Result> RecordOccurrenceAsync(ScheduledTask task, long expectedVersion, ScheduleOccurrence occurrence, CancellationToken cancellationToken = default) =>
+        SaveAsync(task, expectedVersion, cancellationToken);
+
+    public Task<ScheduleOccurrencePage> ReadOccurrencesAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException();
     private readonly Dictionary<long, ScheduledTask> _tasks = [];
 
     public int SaveCount { get; private set; }
@@ -22,12 +37,15 @@ internal sealed class FakeTaskStore : IScheduledTaskStore
             .. _tasks.Values.Where(task => task.IsDue(now)).OrderBy(static t => t.Id.Value).Take(batchSize),
         ]);
 
-    public Task SaveAsync(ScheduledTask task, CancellationToken cancellationToken = default)
+    public Task<Result> AddAsync(ScheduledTask task, CancellationToken cancellationToken = default)
     {
         _tasks[task.Id.Value] = task;
         SaveCount++;
-        return Task.CompletedTask;
+        return Task.FromResult(Result.Success());
     }
+
+    public Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default) =>
+        AddAsync(task, cancellationToken);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ScheduledTask>> ListAsync(CancellationToken cancellationToken = default) =>
@@ -44,18 +62,20 @@ public sealed class SchedulingTests
 
     private static TaskCode Code(string value = "scheduling.heartbeat") => TaskCode.Create(value).Value;
 
+    private static ScheduleTarget Target => ScheduleTarget.Create("costing.recalculate", Guid.Parse("44444444-4444-4444-4444-444444444444")).Value;
+
     private static ScheduledTask NewTask(TimeSpan? interval = null, DateTimeOffset? firstRun = null) =>
         ScheduledTask.Create(
             new ScheduledTaskId(1),
             Code(),
             interval ?? TimeSpan.FromMinutes(1),
-            firstRun ?? Now).Value;
+            firstRun ?? Now, Target, "42").Value;
 
     [Fact]
     public void Create_RejectsNonPositiveInterval()
     {
-        Assert.True(ScheduledTask.Create(new ScheduledTaskId(1), Code(), TimeSpan.Zero, Now).IsFailure);
-        Assert.True(ScheduledTask.Create(new ScheduledTaskId(1), Code(), TimeSpan.FromSeconds(-1), Now).IsFailure);
+        Assert.True(ScheduledTask.Create(new ScheduledTaskId(1), Code(), TimeSpan.Zero, Now, Target, "42").IsFailure);
+        Assert.True(ScheduledTask.Create(new ScheduledTaskId(1), Code(), TimeSpan.FromSeconds(-1), Now, Target, "42").IsFailure);
     }
 
     [Theory]
@@ -131,7 +151,7 @@ public sealed class SchedulingTests
         var store = new FakeTaskStore();
         var clock = new MutableClock(Now);
         var due = NewTask(firstRun: Now);
-        var notYet = ScheduledTask.Create(new ScheduledTaskId(2), Code("scheduling.later"), TimeSpan.FromMinutes(1), Now + TimeSpan.FromHours(1)).Value;
+        var notYet = ScheduledTask.Create(new ScheduledTaskId(2), Code("scheduling.later"), TimeSpan.FromMinutes(1), Now + TimeSpan.FromHours(1), Target, "42").Value;
         store.Add(due);
         store.Add(notYet);
 

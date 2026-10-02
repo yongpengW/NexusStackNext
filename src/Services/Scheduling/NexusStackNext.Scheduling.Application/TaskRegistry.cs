@@ -1,6 +1,7 @@
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Scheduling.Domain.Tasks;
 
 namespace NexusStackNext.Scheduling.Application;
@@ -8,8 +9,7 @@ namespace NexusStackNext.Scheduling.Application;
 /// <summary>
 /// 计划任务的注册表：定义、列出、停用、启用。
 ///
-/// <para><b>它挡在存储前面，做三件存储不该管的事</b>：编码唯一性、标识生成、首次执行时刻的默认值。
-/// 端口因此只需要三个方法，而不是把"查重"和"按名找"也变成存储的职责。</para>
+/// <para>校验业务目标、生成标识并选择首次时刻；编码唯一性与版本竞争由存储原子裁决。</para>
 ///
 /// <para><b>停用会清空下次计划时刻</b>（聚合保证）。这一条很容易写错：
 /// 只把 <c>IsEnabled</c> 置 false 而留着 <c>NextRunAt</c>，
@@ -23,9 +23,20 @@ namespace NexusStackNext.Scheduling.Application;
 /// <param name="clock">时钟。</param>
 public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IClock clock)
 {
+    /// <summary>管理查询的最大页码。</summary>
+    public const int MaximumPage = 1000;
+    /// <summary>每页最多列出的计划数。</summary>
+    public const int MaximumPageSize = 200;
+    /// <summary>调用方已观察的计划版本不再有效。</summary>
+    public static readonly Error Conflict = new("scheduling.version_conflict", "计划已被修改，请读取最新版本。");
+    /// <summary>任务编码已有定义。</summary>
+    public static readonly Error CodeTaken = new("scheduling.task_code.taken", "任务编码已存在。");
+
     /// <summary>定义一个计划任务。</summary>
     /// <param name="code">任务编码，必须唯一。</param>
     /// <param name="interval">执行间隔，必须为正。</param>
+    /// <param name="target">创建后固定的目标。</param>
+    /// <param name="createdBy">已验证的委托人。</param>
     /// <param name="firstRunAt">首次执行时刻；不传则以"现在"起算。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>成功时返回任务；编码已存在或间隔非法则失败。</returns>
@@ -33,32 +44,28 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     public async Task<Result<ScheduledTask>> DefineAsync(
         TaskCode code,
         TimeSpan interval,
+        ScheduleTarget target,
+        string createdBy,
         DateTimeOffset? firstRunAt = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(code);
-
-        var existing = await store.ListAsync(cancellationToken).ConfigureAwait(false);
-        if (existing.Any(task => task.Code.Equals(code)))
-        {
-            return Result.Failure<ScheduledTask>(new Error(
-                "scheduling.task_code.taken",
-                $"任务编码已存在：{code.Value}。"));
-        }
+        ArgumentNullException.ThrowIfNull(target);
+        if (target.Kind != CostingScheduleTarget.Recalculate) { return Result.Failure<ScheduledTask>(ScheduleTarget.Invalid); }
 
         var created = ScheduledTask.Create(
             new ScheduledTaskId(ids.NextId()),
             code,
             interval,
-            firstRunAt ?? clock.UtcNow);
+            firstRunAt ?? clock.UtcNow, target, createdBy);
 
         if (created.IsFailure)
         {
             return created;
         }
 
-        await store.SaveAsync(created.Value, cancellationToken).ConfigureAwait(false);
-        return created;
+        var saved = await store.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
+        return saved.IsSuccess ? created : Result.Failure<ScheduledTask>(saved.Error);
     }
 
     /// <summary>列出全部任务。</summary>
@@ -71,32 +78,34 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     /// <param name="id">任务标识。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>找到时返回任务，否则 <c>null</c>。</returns>
-    public async Task<ScheduledTask?> FindAsync(
+    public Task<ScheduledTask?> FindAsync(
         ScheduledTaskId id,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(id);
 
-        var all = await store.ListAsync(cancellationToken).ConfigureAwait(false);
-        return all.Count == 0 ? null : all.FirstOrDefault(task => task.Id.Equals(id));
+        return store.FindAsync(id, cancellationToken);
     }
 
     /// <summary>停用一个任务。</summary>
     /// <param name="id">任务标识。</param>
+    /// <param name="expectedVersion">调用方观察到的版本。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>成功，或任务不存在。</returns>
-    public Task<Result> PauseAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
-        ChangeEnabledAsync(id, enable: false, cancellationToken);
+    public Task<Result> PauseAsync(ScheduledTaskId id, long expectedVersion, CancellationToken cancellationToken = default) =>
+        ChangeEnabledAsync(id, expectedVersion, enable: false, cancellationToken);
 
     /// <summary>启用一个任务，并从"现在"重新起算下次执行。</summary>
     /// <param name="id">任务标识。</param>
+    /// <param name="expectedVersion">调用方观察到的版本。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>成功，或任务不存在。</returns>
-    public Task<Result> ResumeAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
-        ChangeEnabledAsync(id, enable: true, cancellationToken);
+    public Task<Result> ResumeAsync(ScheduledTaskId id, long expectedVersion, CancellationToken cancellationToken = default) =>
+        ChangeEnabledAsync(id, expectedVersion, enable: true, cancellationToken);
 
     private async Task<Result> ChangeEnabledAsync(
         ScheduledTaskId id,
+        long expectedVersion,
         bool enable,
         CancellationToken cancellationToken)
     {
@@ -105,6 +114,7 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
         {
             return Result.Failure(new Error("scheduling.task.not_found", $"任务不存在：{id.Value}。"));
         }
+        if (task.Version != expectedVersion) { return Result.Failure(Conflict); }
 
         if (enable)
         {
@@ -116,7 +126,11 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
             task.Disable();
         }
 
-        await store.SaveAsync(task, cancellationToken).ConfigureAwait(false);
-        return Result.Success();
+        return await store.SaveAsync(task, expectedVersion, cancellationToken).ConfigureAwait(false);
     }
 }
+
+/// <summary>在所属存储内分页的计划列表。</summary>
+/// <param name="Items">当前页，按稳定计划标识排序。</param>
+/// <param name="Total">总计划数。</param>
+public sealed record ScheduledTaskPage(IReadOnlyList<ScheduledTask> Items, long Total);

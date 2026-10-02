@@ -181,6 +181,13 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("LeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("manual");
+
                     b.Property<decimal>("PurchaseCost")
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
@@ -199,6 +206,52 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.ToTable("tasks", "costing");
                 });
 
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.ScheduledCostReceiptEntry", b =>
+                {
+                    b.Property<Guid>("OccurrenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("PlanId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("TriggerSequence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OccurrenceId");
+
+                    b.HasIndex("TaskId");
+
+                    b.ToTable("schedule_receipts", "costing");
+                });
+
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
                 {
                     b.HasOne("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", null)
@@ -215,6 +268,14 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                         .HasForeignKey("ItemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.ScheduledCostReceiptEntry", b =>
+                {
+                    b.HasOne("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", b =>
