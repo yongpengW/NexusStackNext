@@ -25,6 +25,20 @@ jobs:
     name: 构建与测试
     runs-on: ubuntu-latest
 
+    # 每次运行专属的空库，端口仅绑定 runner 本机。trust 只用于这个临时测试容器。
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     # 最小权限：默认令牌权限很宽，这里显式收窄到这条流水线真正需要的两项。
     # `issues: read` 是给 GitHub 后端的票据检查用的（ADR-0016）——
     # runner 上 gh 是预装的，但没有登录态，靠 GH_TOKEN 顶上。
@@ -49,8 +63,16 @@ jobs:
         run: dotnet build NexusStackNext.slnx --no-restore --configuration Release
 
       - name: 测试
-        # 含 Architecture.Tests —— 把 AGENTS.md 的八条不变量变成会失败的断言。
-        run: dotnet test NexusStackNext.slnx --no-build --configuration Release
+        # 与本机一样串行；真实数据库测试在临时库中执行，不再因缺配置跳过。
+        shell: pwsh
+        run: |
+          $connection = [System.Data.Common.DbConnectionStringBuilder]::new()
+          $connection['Host'] = '127.0.0.1'
+          $connection['Port'] = 5432
+          $connection['Database'] = 'postgres'
+          $connection['Username'] = 'postgres'
+          $env:NEXUSSTACK_TEST_POSTGRES = $connection.ConnectionString
+          ./scripts/run-tests.ps1 -Configuration Release
 
       - name: 断言格式符合 .editorconfig
         # typecheck（构建）→ tests → format：`resolving-merge-conflicts` 要求的三段自动化检查。

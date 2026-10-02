@@ -73,9 +73,9 @@ if (missing.Count > 0)
     return 1;
 }
 
-// ---------- 两个进程 ----------
+// ---------- 默认两个进程，业务样板按需启用 ----------
 //
-// **只有两个。** 五个平台能力（Identity / Platform / Scheduling / Auditing / Files）
+// 五个平台能力（Identity / Platform / Scheduling / Auditing / Files）
 // 由 ADR-0013 合成一个宿主，而不是五个服务——所以本票原文说的
 // "编排 5 个服务 + 网关"已经过时。
 var platform = builder
@@ -93,11 +93,22 @@ var platform = builder
     // 固定端口：网关的路由表指向它，端口漂了路由就断了。
     .WithEndpoint(5191, 5191, "http", isProxied: false);
 
-builder
+var gateway = builder
     .AddProject<Projects.NexusStackNext_Gateway>("gateway")
     .WithEnvironment("Gateway__RouteTablePath", "routes.json")
     .WithEndpoint(5190, 5190, "http", isProxied: false)
     .WaitFor(platform);
+
+// 独立业务样板按需启用，默认仍只有平台与网关。先独立执行 migrate-pricing。
+var pricingDatabase = Environment.GetEnvironmentVariable("NEXUSSTACK_PRICING_DB");
+if (!string.IsNullOrWhiteSpace(pricingDatabase))
+{
+    var pricing = builder.AddProject<Projects.NexusStackNext_PricingHost>("pricing")
+        .WithEnvironment("ConnectionStrings__Pricing", pricingDatabase)
+        .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
+        .WithEndpoint(5192, 5192, "http", isProxied: false);
+    gateway.WithEnvironment("Gateway__RouteTablePath", "routes.pricing.json").WaitFor(pricing);
+}
 
 // 从连接串里取主机名——这里只用来示意，真正解析连接串的是各宿主自己。
 static string Host(string value)

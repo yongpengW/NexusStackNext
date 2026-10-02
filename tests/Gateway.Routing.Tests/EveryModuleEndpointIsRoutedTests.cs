@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace NexusStackNext.Gateway.Routing.Tests;
@@ -40,12 +41,36 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
         ("*", "/api/auditing"),
     ];
 
-    /// <summary>每个端点都要有归宿。</summary>
     [Fact]
-    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal()
+    public void PricingVariant_PreservesTheCompletePlatformConfiguration()
     {
-        var routes = LoadRoutes();
-        var endpoints = ModuleEndpoints();
+        var directory = Path.Combine(RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway");
+        var baseline = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.json")));
+        var variant = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.pricing.json")));
+        Assert.NotNull(baseline);
+        Assert.NotNull(variant);
+        var routes = variant["routes"]!.AsArray();
+        var clusters = variant["clusters"]!.AsArray();
+        var pricingRoute = Assert.Single(routes, node => node!["routeId"]!.GetValue<string>() == "pricing");
+        var pricingCluster = Assert.Single(clusters, node => node!["clusterId"]!.GetValue<string>() == "pricing-host");
+        routes.Remove(pricingRoute);
+        clusters.Remove(pricingCluster);
+        // 对象字段顺序无关；数组顺序保留，尤其不能掩盖 transforms 的顺序变化。
+        Assert.True(JsonNode.DeepEquals(baseline, variant),
+            "Pricing 变体必须完整保留默认平台配置，包括鉴权、限流、超时、transforms 与目标地址。");
+    }
+
+    /// <summary>每个端点都要有归宿。</summary>
+    [Theory]
+    [InlineData("routes.json", false)]
+    [InlineData("routes.pricing.json", true)]
+    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal(string routeFile, bool includePricing)
+    {
+        var routes = LoadRoutes(routeFile);
+        var allEndpoints = ModuleEndpoints();
+        Assert.Contains(allEndpoints, endpoint => endpoint.Module == "PricingModule");
+        // 默认编排不启动 Pricing；启用样板时，必须同时保留全部平台路由。
+        var endpoints = allEndpoints.Where(endpoint => includePricing || endpoint.Module != "PricingModule").ToList();
 
         Assert.NotEmpty(routes);
         Assert.NotEmpty(endpoints);
@@ -146,11 +171,11 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
         return [.. found.Distinct()];
     }
 
-    private static List<RouteEntry> LoadRoutes()
+    private static List<RouteEntry> LoadRoutes(string routeFile)
     {
-        var table = JsonDocument.Parse(
+        using var table = JsonDocument.Parse(
             File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway", "routes.json")));
+                RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway", routeFile)));
 
         return
         [

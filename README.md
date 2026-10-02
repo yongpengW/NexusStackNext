@@ -8,7 +8,7 @@
 
 ## 它长什么样
 
-**每个限界上下文都是同一个四层结构**，五个上下文各一套：
+**每个限界上下文都是同一个四层结构**：五个平台上下文，以及独立运行的 Pricing 业务样板。
 
 ```
 src/
@@ -16,7 +16,7 @@ src/
     Domain/                实体、聚合根、值对象、强类型 ID、领域事件、Result、权限键
     Application/           命令/查询分发、校验管线、事务边界、集成事件契约、授权判定
     Infrastructure/        消息基座（Outbox/Inbox/拓扑/消费策略）、ID 生成
-  Services/<Context>/      每个上下文四层，五个上下文完全一致：
+  Services/<Context>/      每个上下文四层：
     <Context>.Domain/            聚合、不变量、领域事件、值对象
     <Context>.Application/       端口（I*Store / I*Provider）+ 用例服务
     <Context>.Infrastructure/    适配器（PostgreSQL / 内存 / 本地磁盘）
@@ -29,7 +29,7 @@ tests/
   Architecture.Tests/            八条不变量变成断言
 ```
 
-五个上下文各有一条**端到端的真实链路**，且都不依赖外部中间件：
+五个平台上下文各有一条验证链路；Identity 默认 PostgreSQL，其余平台模块仍有内存适配器：
 
 | 上下文 | 链路 |
 |---|---|
@@ -38,6 +38,10 @@ tests/
 | Auditing | 事件进入 → 幂等去重 → 落库（**只写，没有查询端点**） |
 | Files | 上传 → 字节真的落盘 → 下载 → 删除 |
 | Scheduling | 定义任务 → 调度节拍触发 → 下次时刻推进 |
+
+另有独立宿主、独立 PostgreSQL 数据库的 **Pricing 业务样板**：成本更新与任务登记原子提交，
+后台重算、租约接管、旧执行拒写、任务查询与人工重试。启动、HTTP 示例及可靠性边界见
+[定价重算样板](docs/pricing-recalculation.md)。它演示 NSN 的持久化业务任务路径，公式不代表 PoS 生产规则。
 
 每个上下文自带 `CONTEXT.md`（词表，含 `_Avoid_` 反义词）与 `docs/adr/`（上下文级决策）。
 

@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Hosts\NexusStackNext.PlatformHost\NexusStackNext.PlatformHost.csproj" />
+    <ProjectReference Include="../../src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
     <ProjectReference Include="..\..\src\Gateway\NexusStackNext.Gateway\NexusStackNext.Gateway.csproj" />
   </ItemGroup>
 
