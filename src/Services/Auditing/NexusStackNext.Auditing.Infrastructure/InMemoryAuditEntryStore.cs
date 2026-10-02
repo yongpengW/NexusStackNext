@@ -55,6 +55,7 @@ public static class AuditingInfrastructureServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddSingleton<IAuditEntryStore, InMemoryAuditEntryStore>();
+        services.AddSingleton<IOperationObservationStore, InMemoryOperationObservationStore>();
         services.AddScoped<AuditIngestion>();
         return services;
     }

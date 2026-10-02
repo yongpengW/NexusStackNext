@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <ItemGroup>
+    <ProjectReference Include="../../Services/Auditing/NexusStackNext.Auditing.Endpoints/NexusStackNext.Auditing.Endpoints.csproj" />
     <ProjectReference Include="../../Services/Pricing/NexusStackNext.Pricing.Endpoints/NexusStackNext.Pricing.Endpoints.csproj" />
     <ProjectReference Include="../../Composition/NexusStackNext.Composition/NexusStackNext.Composition.csproj" />
     <ProjectReference Include="../../../aspire/NexusStackNext.ServiceDefaults/NexusStackNext.ServiceDefaults.csproj" />

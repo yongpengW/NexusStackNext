@@ -1,4 +1,5 @@
 using System.Reflection;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
@@ -117,13 +118,14 @@ public sealed class InitialMigrationTests
         foreach (var path in projects)
         {
             var assembly = SolutionAssemblies.LoadFromTestOutput(Path.GetFileNameWithoutExtension(path) + ".dll");
+            var context = assembly.GetName().Name!.Split('.')[1];
             // 只枚举公开 Migration 并调用其公开构造函数，不反射私有 DbContext 或存储实现。
             var types = assembly.GetExportedTypes()
                 .Where(candidate => !candidate.IsAbstract && candidate.IsSubclassOf(typeof(Migration)))
+                .Where(candidate => candidate.GetCustomAttribute<DbContextAttribute>()?.ContextType.Name == context + "DbContext")
                 .OrderBy(candidate => Assert.Single(candidate.GetCustomAttributes<MigrationAttribute>()).Id, StringComparer.Ordinal)
                 .ToArray();
             Assert.NotEmpty(types);
-            var context = assembly.GetName().Name!.Split('.')[1];
             // 初始基线必须位于链首；后续合法增量迁移不能被本次重建的验收条件永久禁止。
             var type = Assert.Single(types, candidate => candidate.Name == "Initial" + context);
             Assert.Equal(type, types[0]);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using NexusStackNext.Auditing.Domain.Entries;
+using NexusStackNext.Auditing.Domain.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
 namespace NexusStackNext.Auditing.Infrastructure.Persistence;
@@ -15,6 +16,9 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
 
     /// <summary>不可变审计记录。</summary>
     public DbSet<AuditEntry> Entries => Set<AuditEntry>();
+
+    /// <summary>与已提交事实分开保存的不可变执行观察。</summary>
+    public DbSet<OperationObservation> OperationObservations => Set<OperationObservation>();
 
     /// <inheritdoc />
     protected override void ConfigureModel(ModelBuilder modelBuilder)
@@ -43,6 +47,32 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
             fact.HasIndex(item => new { item.EventName, item.MessageId }).IsUnique();
         });
         entry.Navigation(item => item.Fact).IsRequired();
+
+        var observation = modelBuilder.Entity<OperationObservation>();
+        observation.ToTable("operation_observations");
+        observation.HasKey(item => item.Id);
+        observation.Property(item => item.Id).HasConversion(id => id.Value, value => new OperationObservationId(value))
+            .HasColumnType("uuid").ValueGeneratedNever();
+        observation.Property(item => item.RecordedAt).IsRequired();
+        observation.OwnsOne(item => item.Data, data =>
+        {
+            data.Property(item => item.OperationId).HasConversion(id => id.Value, value => new OperationId(value))
+                .HasColumnName("OperationId").HasColumnType("uuid");
+            data.Property(item => item.Source).HasColumnName("Source").HasMaxLength(64);
+            data.Property(item => item.Kind).HasColumnName("Kind").HasMaxLength(32);
+            data.Property(item => item.Phase).HasColumnName("Phase").HasMaxLength(16);
+            data.Property(item => item.Outcome).HasColumnName("Outcome").HasMaxLength(32);
+            data.Property(item => item.OccurredAt).HasColumnName("OccurredAt");
+            data.Property(item => item.ActorId).HasColumnName("ActorId").HasMaxLength(200);
+            data.Property(item => item.TraceId).HasColumnName("TraceId").HasMaxLength(128);
+            data.Property(item => item.HttpMethod).HasColumnName("HttpMethod").HasMaxLength(16);
+            data.Property(item => item.RouteTemplate).HasColumnName("RouteTemplate").HasMaxLength(500);
+            data.Property(item => item.StatusCode).HasColumnName("StatusCode");
+            data.Property(item => item.DurationMs).HasColumnName("DurationMs");
+            data.HasIndex(item => new { item.Source, item.OperationId, item.Phase }).IsUnique().HasDatabaseName("ux_operation_observations_phase");
+            data.HasIndex(item => new { item.OccurredAt, item.Source, item.OperationId }).HasDatabaseName("ix_operation_observations_time");
+        });
+        observation.Navigation(item => item.Data).IsRequired();
     }
 }
 

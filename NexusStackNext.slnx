@@ -41,6 +41,7 @@
   <Folder Name="/src/Services/" />
 
   <Folder Name="/src/Services/Auditing/">
+    <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Contracts/NexusStackNext.Auditing.Contracts.csproj" />
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Domain/NexusStackNext.Auditing.Domain.csproj" />
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Application/NexusStackNext.Auditing.Application.csproj" />
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Infrastructure/NexusStackNext.Auditing.Infrastructure.csproj" />

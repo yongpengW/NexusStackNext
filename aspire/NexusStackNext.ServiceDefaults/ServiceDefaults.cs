@@ -60,6 +60,7 @@ public static class ServiceDefaults
             .WithMetrics(metrics =>
             {
                 metrics
+                    .AddMeter("NexusStackNext.OperationJournal")
                     .AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation();
 

@@ -101,17 +101,20 @@ ConnectionStrings__Platform=
 ConnectionStrings__Files=
 ConnectionStrings__Auditing=
 ConnectionStrings__Scheduling=
+ConnectionStrings__OperationJournal=
 # 首次或升级：pwsh -File scripts/migrate-identity.ps1
 # 然后执行：pwsh -File scripts/migrate-platform.ps1
 # 然后执行：pwsh -File scripts/migrate-files.ps1
 # 然后执行：pwsh -File scripts/migrate-auditing.ps1
-# 无库演示请显式使用以下五项（会丢失重启前数据）：
+# 然后执行：pwsh -File scripts/migrate-operation-journal.ps1
+# 无库演示请显式使用以下六项（会丢失重启前数据）：
 # DOTNET_ENVIRONMENT=Development
 # Identity__Storage__Provider=Memory
 # Platform__Storage__Provider=Memory
 # Files__Storage__Provider=Memory
 # Auditing__Storage__Provider=Memory
 # Scheduling__Storage__Provider=Memory
+# OperationJournal__Storage__Provider=Memory
 "@
         $skeleton += "`n# 文件存储根目录；留空则用 AppContext.BaseDirectory 下的 file-storage。`n# Files__StorageRoot=`n"
     }

@@ -335,6 +335,7 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
                 ["Platform:Storage:Provider"] = "Memory",
                 ["Files:Storage:Provider"] = "Memory",
                 ["Auditing:Storage:Provider"] = "Memory",
+                ["OperationJournal:Storage:Provider"] = "Memory",
                 ["Scheduling:Storage:Provider"] = "Memory",
                 ["Scheduling:Worker:Enabled"] = SchedulingWorkerEnabled.ToString(),
             }));

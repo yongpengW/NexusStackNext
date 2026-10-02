@@ -94,6 +94,7 @@ internal sealed class BusinessProcess : IAsyncDisposable
         start.Environment[$"ConnectionStrings__{context}"] = connectionString;
         start.Environment["Jwt__SigningKey"] = SigningKey;
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
+        start.Environment["OperationJournal__Storage__Provider"] = "Memory";
         start.Environment["AgileConfig__AppId"] = string.Empty;
         return start;
     }

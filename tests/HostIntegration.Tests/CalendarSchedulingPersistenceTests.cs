@@ -76,6 +76,7 @@ public sealed class CalendarSchedulingPersistenceTests
         }
         long id;
         DateTimeOffset scheduledAt;
+        int blockedBackend;
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "calendar-root-password"))
         {
             await PlatformSettingsAccessTests.LoginAsync(first.Client, "journey-root", "calendar-root-password");
@@ -92,8 +93,9 @@ public sealed class CalendarSchedulingPersistenceTests
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             while (true)
             {
-                await using var blocked = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event = 'advisory'", barrier);
-                if ((long)(await blocked.ExecuteScalarAsync(timeout.Token))! > 0) { break; }
+                await using var blocked = new NpgsqlCommand("SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND @barrier = ANY(pg_blocking_pids(pid)) LIMIT 1", barrier);
+                blocked.Parameters.AddWithValue("barrier", barrier.ProcessID);
+                if (await blocked.ExecuteScalarAsync(timeout.Token) is int backend) { blockedBackend = backend; break; }
                 await Task.Delay(50, timeout.Token);
             }
             var page = await first.Client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
@@ -107,13 +109,42 @@ public sealed class CalendarSchedulingPersistenceTests
             }
             await first.CrashAsync();
         }
+        // 应用退出不保证正在等待锁的 PG backend 已退出。先放行并等其回滚退出，再做需要表锁的 DDL。
+        await using (var release = new NpgsqlCommand("SELECT pg_advisory_unlock(450045)", barrier))
+        {
+            Assert.True((bool)(await release.ExecuteScalarAsync())!);
+        }
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+        {
+            while (true)
+            {
+                await using var remaining = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND pid = @backend)", barrier);
+                remaining.Parameters.AddWithValue("backend", blockedBackend);
+                if (!(bool)(await remaining.ExecuteScalarAsync(timeout.Token))!) { break; }
+                await Task.Delay(50, timeout.Token);
+            }
+        }
         await using (var recover = new NpgsqlCommand("""
             DROP TRIGGER pause_decision ON scheduling.decisions;
             DROP FUNCTION scheduling.pause_decision();
-            SELECT pg_advisory_unlock(450045);
             """, barrier))
         {
             await recover.ExecuteNonQueryAsync();
+        }
+        // 恢复扫描前先证明旧事务没有提交，避免把旧事务迟到的提交误认作重启后的成功恢复。
+        await using (var observer = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password", schedulingWorkerEnabled: false))
+        {
+            using var client = observer.CreateClient();
+            await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "calendar-root-password");
+            var page = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
+            var plan = Assert.Single(page.GetProperty("data").EnumerateArray());
+            Assert.Equal(1, plan.GetProperty("version").ReadHttpInt64());
+            Assert.Equal(scheduledAt, plan.GetProperty("nextRunAt").GetDateTimeOffset());
+            foreach (var history in new[] { "decisions", "occurrences" })
+            {
+                using var response = await client.GetAsync(new Uri($"/api/scheduling/tasks/{id}/{history}", UriKind.Relative));
+                Assert.Empty((await response.Content.ReadApiDataAsync()).EnumerateArray());
+            }
         }
         await using var secondHost = await PlatformHostProcess.StartAsync(database.ConnectionString, "calendar-root-password");
         await PlatformSettingsAccessTests.LoginAsync(secondHost.Client, "journey-root", "calendar-root-password");
