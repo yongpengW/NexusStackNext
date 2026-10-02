@@ -37,6 +37,7 @@ dotnet run --project src/Gateway/NexusStackNext.Gateway -- --urls http://127.0.0
 
 平台宿主按 [Identity 运行文档](identity-persistence.md) 在 5191 启动。三个进程使用相同 JWT 配置。
 启用此路由表后网关就绪检查同时检查平台与 Pricing；默认 `routes.json` 不依赖样板。
+两份文件各自可直接部署；自动检查要求样板完整保留默认平台配置，修改平台策略时须同步两份。
 Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切换网关路由表；仍须预先迁移。
 这些固定端口用于本地开发。生产只发布网关端口，平台与 Pricing 留在内部网络。
 

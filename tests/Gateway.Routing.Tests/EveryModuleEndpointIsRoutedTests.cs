@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace NexusStackNext.Gateway.Routing.Tests;
@@ -39,6 +40,25 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
     [
         ("*", "/api/auditing"),
     ];
+
+    [Fact]
+    public void PricingVariant_PreservesTheCompletePlatformConfiguration()
+    {
+        var directory = Path.Combine(RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway");
+        var baseline = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.json")));
+        var variant = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.pricing.json")));
+        Assert.NotNull(baseline);
+        Assert.NotNull(variant);
+        var routes = variant["routes"]!.AsArray();
+        var clusters = variant["clusters"]!.AsArray();
+        var pricingRoute = Assert.Single(routes, node => node!["routeId"]!.GetValue<string>() == "pricing");
+        var pricingCluster = Assert.Single(clusters, node => node!["clusterId"]!.GetValue<string>() == "pricing-host");
+        routes.Remove(pricingRoute);
+        clusters.Remove(pricingCluster);
+        // 对象字段顺序无关；数组顺序保留，尤其不能掩盖 transforms 的顺序变化。
+        Assert.True(JsonNode.DeepEquals(baseline, variant),
+            "Pricing 变体必须完整保留默认平台配置，包括鉴权、限流、超时、transforms 与目标地址。");
+    }
 
     /// <summary>每个端点都要有归宿。</summary>
     [Theory]
