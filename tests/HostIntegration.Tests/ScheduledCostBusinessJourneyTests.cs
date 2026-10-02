@@ -124,6 +124,7 @@ public sealed class ScheduledCostBusinessJourneyTests
                 offlineCosting = initial.Client.BaseAddress!;
                 await WriteRoutesAsync(routes, platform.Client.BaseAddress!, offlineCosting, pricing.Client.BaseAddress!);
                 await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes);
+                await HttpInt64OpenApiTests.AssertHostDocumentsAsync(platform.Client, initial.Client, pricing.Client, gateway.Client);
                 await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "journey-root", "schedule-root-password");
                 using var submitted = await gateway.Client.PostAsJsonAsync(Relative("/api/costing/cost"),
                     new { requestId = Guid.NewGuid(), itemId, expectedVersion = 0, purchaseCost = 80m, freightCost = 20m });
@@ -140,7 +141,7 @@ public sealed class ScheduledCostBusinessJourneyTests
                 using var scheduledPlan = await gateway.Client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
                     new { code = "scheduled-cost-journey", intervalSeconds = 3600, targetKind = CostingScheduleTarget.Recalculate, targetId = itemId });
                 Assert.Equal(HttpStatusCode.Created, scheduledPlan.StatusCode);
-                var planId = (await scheduledPlan.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+                var planId = (await scheduledPlan.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
                 var history = await WaitAsync(gateway.Client, $"/api/scheduling/tasks/{planId}/occurrences", data =>
                     data.GetArrayLength() == 1 && data[0].GetProperty("deliveryState").GetString() == "Delivered");
                 occurrenceId = history[0].GetProperty("occurrenceId").GetGuid();
@@ -164,24 +165,24 @@ public sealed class ScheduledCostBusinessJourneyTests
             await WaitAsync(recoveredGateway.Client, $"/api/costing/tasks/{occurrenceId}", data => data.GetProperty("state").GetString() == "Succeeded");
             await WaitAsync(recoveredGateway.Client, $"/api/costing/tasks/{occurrenceId}/delivery", data => data.GetProperty("state").GetString() == "Delivered");
             var costAfter = await WaitAsync(recoveredGateway.Client, $"/api/costing/items/{itemId}", _ => true);
-            Assert.Equal(costBefore.GetProperty("version").GetInt64(), costAfter.GetProperty("version").GetInt64());
+            Assert.Equal(costBefore.GetProperty("version").ReadHttpInt64(), costAfter.GetProperty("version").ReadHttpInt64());
             Assert.Equal(100m, costAfter.GetProperty("unitCost").GetDecimal());
             var priceAfter = await WaitAsync(recoveredGateway.Client, $"/api/pricing/items/{itemId}", _ => true);
-            Assert.Equal(priceBefore.GetProperty("version").GetInt64(), priceAfter.GetProperty("version").GetInt64());
+            Assert.Equal(priceBefore.GetProperty("version").ReadHttpInt64(), priceAfter.GetProperty("version").ReadHttpInt64());
             Assert.Equal(100m, priceAfter.GetProperty("breakEvenPrice").GetDecimal());
             // 后续真实成本变更是消费顺序屏障：前一条同输入结果不能偷偷多推进版本。
             using var changed = await recoveredGateway.Client.PostAsJsonAsync(Relative("/api/costing/cost"), new
             {
                 requestId = Guid.NewGuid(),
                 itemId,
-                expectedVersion = costAfter.GetProperty("version").GetInt64(),
+                expectedVersion = costAfter.GetProperty("version").ReadHttpInt64(),
                 purchaseCost = 90m,
                 freightCost = 30m,
             });
             Assert.Equal(HttpStatusCode.Accepted, changed.StatusCode);
             var advanced = await WaitAsync(recoveredGateway.Client, $"/api/pricing/items/{itemId}", data =>
-                data.GetProperty("costingRevision").GetInt64() == 2 && data.GetProperty("breakEvenPrice").GetDecimal() == 120m);
-            Assert.Equal(priceBefore.GetProperty("version").GetInt64() + 2, advanced.GetProperty("version").GetInt64());
+                data.GetProperty("costingRevision").ReadHttpInt64() == 2 && data.GetProperty("breakEvenPrice").GetDecimal() == 120m);
+            Assert.Equal(priceBefore.GetProperty("version").ReadHttpInt64() + 2, advanced.GetProperty("version").ReadHttpInt64());
         }
         finally
         {

@@ -1,5 +1,7 @@
 # 持久计划触发与 Costing 重算
 
+HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符串；请求优先原样回传字符串，精确数字输入继续兼容。见 [HTTP Int64 契约](http-int64-contract.md)。
+
 Scheduling 保存“何时触发、触发哪个业务操作”，Costing 保存成本输入、接受结论和执行任务。首次支持 `costing.recalculate`，目标为已有 CostSheet 的对象标识；计划不携带金额、URL、类名或脚本。
 
 ## 运行与迁移
@@ -37,7 +39,7 @@ Costing 设置 `Costing:Messaging:Enabled=true` 时同时发布成本结果并�
 
 `code` 规范化为小写且唯一。间隔为 1 秒至 366 天，首次延迟为 0 至 366 天；省略首次延迟则从当前时刻开始。目标、操作与委托人在创建时固定；委托人来自已验证会话，HTTP 传入的 actorId 不受信任。
 
-`GET /api/scheduling/tasks?page=1&limit=50` 按稳定标识分页，最大页码 1000，每页最多 200；数据库内直接分页。返回 `version`、目标和下次时刻。暂停与恢复分别调用 `POST /api/scheduling/tasks/{id}/pause`、`/resume`，JSON 为 `{"expectedVersion":1}`；旧版本返回 409，重复暂停保持版本不变。
+`GET /api/scheduling/tasks?page=1&limit=50` 按稳定标识分页，最大页码 1000，每页最多 200；数据库内直接分页。返回 `version`、目标和下次时刻。暂停与恢复分别调用 `POST /api/scheduling/tasks/{id}/pause`、`/resume`，JSON 为 `{"expectedVersion":"1"}`；旧版本返回 409，重复暂停保持版本不变。
 
 管理接口要求当前有效会话及独立的 API 权限：
 

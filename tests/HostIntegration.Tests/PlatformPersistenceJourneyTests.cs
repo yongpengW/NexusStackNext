@@ -58,7 +58,7 @@ public sealed class PlatformPersistenceJourneyTests
         var setting = await read.Content.ReadApiDataAsync();
         Assert.Contains(setting.GetProperty("value").GetString(), new[] { "first", "second" });
         Assert.Equal(setting.GetProperty("value").GetString(), setting.GetProperty("description").GetString());
-        Assert.Equal(3, setting.GetProperty("version").GetInt64());
+        Assert.Equal(3, setting.GetProperty("version").ReadHttpInt64());
     }
 
     [PostgresFact]
@@ -108,7 +108,7 @@ public sealed class PlatformPersistenceJourneyTests
         var unchanged = await read.Content.ReadApiDataAsync();
         Assert.Equal("original", unchanged.GetProperty("value").GetString());
         Assert.Equal("original", unchanged.GetProperty("description").GetString());
-        Assert.Equal(1, unchanged.GetProperty("version").GetInt64());
+        Assert.Equal(1, unchanged.GetProperty("version").ReadHttpInt64());
         using var recovered = await client.PutAsJsonAsync(uri, new { value = "recovered", description = "recovered", expectedVersion = 1 });
         Assert.Equal(HttpStatusCode.NoContent, recovered.StatusCode);
         using var final = await client.GetAsync(uri);
@@ -136,7 +136,7 @@ public sealed class PlatformPersistenceJourneyTests
         var page = await list.Content.ReadFromJsonAsync<JsonElement>();
         var setting = Assert.Single(page.GetProperty("data").EnumerateArray());
         Assert.Equal(setting.GetProperty("value").GetString(), setting.GetProperty("description").GetString());
-        Assert.Equal(1, setting.GetProperty("version").GetInt64());
+        Assert.Equal(1, setting.GetProperty("version").ReadHttpInt64());
     }
 
     [PostgresFact]
@@ -167,7 +167,7 @@ public sealed class PlatformPersistenceJourneyTests
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         var setting = await read.Content.ReadApiDataAsync();
         var value = setting.GetProperty("value").GetString();
-        var version = setting.GetProperty("version").GetInt64();
+        var version = setting.GetProperty("version").ReadHttpInt64();
         Assert.Contains(value, new[] { "first", "second" });
         Assert.Equal(value, setting.GetProperty("description").GetString());
         using var stale = await client.PutAsJsonAsync(uri, new { value = "stale", description = "stale", expectedVersion = 1 });
@@ -179,14 +179,14 @@ public sealed class PlatformPersistenceJourneyTests
         using var noOp = await client.PutAsJsonAsync(uri, new { value, description = value, expectedVersion = version });
         Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode);
         using var unchanged = await client.GetAsync(uri);
-        Assert.Equal(version, (await unchanged.Content.ReadApiDataAsync()).GetProperty("version").GetInt64());
+        Assert.Equal(version, (await unchanged.Content.ReadApiDataAsync()).GetProperty("version").ReadHttpInt64());
         using var clear = await client.DeleteAsync(new Uri(uri + "?expectedVersion=" + version, UriKind.Relative));
         Assert.Equal(HttpStatusCode.NoContent, clear.StatusCode);
         using var cleared = await client.GetAsync(uri);
         var final = await cleared.Content.ReadApiDataAsync();
         Assert.Equal(JsonValueKind.Null, final.GetProperty("value").ValueKind);
         Assert.Equal(value, final.GetProperty("description").GetString());
-        Assert.Equal(version + 1, final.GetProperty("version").GetInt64());
+        Assert.Equal(version + 1, final.GetProperty("version").ReadHttpInt64());
     }
 
     [PostgresFact]

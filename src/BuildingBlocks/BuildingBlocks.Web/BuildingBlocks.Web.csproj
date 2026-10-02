@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <ProjectReference Include="../BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
   </ItemGroup>
 </Project>

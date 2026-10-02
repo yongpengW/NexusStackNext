@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -45,6 +46,7 @@ public sealed class ApiTransportTests
         var properties = document.GetProperty("components").GetProperty("schemas").GetProperty(errorSchema!.Split('/')[^1]).GetProperty("properties");
         Assert.True(properties.TryGetProperty("errorCode", out _));
         Assert.True(properties.TryGetProperty("traceId", out _));
+        HttpInt64OpenApiTests.AssertOutput(properties.GetProperty("timestamp"), nullable: false);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", data.GetProperty("accessToken").GetString());
 
         var bytes = new byte[31 * 1024 * 1024];
@@ -54,7 +56,7 @@ public sealed class ApiTransportTests
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         using var upload = await client.PostAsync(new Uri("/api/files?name=contract.bin", UriKind.Relative), content);
         Assert.Equal(HttpStatusCode.Created, upload.StatusCode);
-        var fileId = (await upload.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+        var fileId = (await upload.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
         using var download = await client.GetAsync(new Uri($"/api/files/{fileId}", UriKind.Relative));
         Assert.Equal(bytes, await download.Content.ReadAsByteArrayAsync());
         Assert.Equal("application/octet-stream", download.Content.Headers.ContentType?.MediaType);
@@ -91,6 +93,9 @@ public sealed class ApiTransportTests
         var problem = await unavailable.Content.ReadFromJsonAsync<JsonElement>();
         Assert.False(problem.GetProperty("success").GetBoolean());
         Assert.Equal((int)unavailable.StatusCode, problem.GetProperty("code").GetInt32());
+        var document = await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
+        HttpInt64OpenApiTests.AssertOutput(document.GetProperty("components").GetProperty("schemas")
+            .GetProperty("EdgeProblem").GetProperty("properties").GetProperty("timestamp"), nullable: false);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("nonroot"));
         using var denied = await client.GetAsync(new Uri("/gateway/routes/probe", UriKind.Relative));

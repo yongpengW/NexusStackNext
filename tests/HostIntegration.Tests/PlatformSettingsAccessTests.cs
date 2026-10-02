@@ -78,19 +78,19 @@ public sealed class PlatformSettingsAccessTests
         Assert.Equal(HttpStatusCode.NoContent, written.StatusCode);
 
         var created = await CreateAsync(user, "/api/identity/users", new { userName = "reader", password = "settings-test-password" });
-        var userId = created.GetProperty("userId").GetInt64();
+        var userId = created.GetProperty("userId").ReadHttpInt64();
         await LoginAsync(user, "reader", "settings-test-password");
         using var denied = await user.GetAsync(new Uri("/api/platform/settings/mail.sender", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
         var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Settings read", sortOrder = 1 });
-        var menuId = menu.GetProperty("menuId").GetInt64();
+        var menuId = menu.GetProperty("menuId").ReadHttpInt64();
         foreach (var path in new[] { "/api/platform/settings", "/api/platform/settings/{key}" })
         {
             _ = await CreateAsync(root, "/api/identity/api-resources", new { path, method = "GET", menuId });
         }
         var role = await CreateAsync(root, "/api/identity/roles", new { code = "settings-reader", name = "Settings reader" });
-        var roleId = role.GetProperty("roleId").GetInt64();
+        var roleId = role.GetProperty("roleId").ReadHttpInt64();
         using var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
         using var assign = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);

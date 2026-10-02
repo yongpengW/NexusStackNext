@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -51,7 +52,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
 
         var menu = await created.Content.ReadApiDataAsync();
-        var menuId = menu.GetProperty("menuId").GetInt64();
+        var menuId = menu.GetProperty("menuId").ReadHttpInt64();
         Assert.True(menuId > 0, "建出来的菜单没有标识。");
 
         // 1b. **跨请求**读回来：内存适配器如果不是单例，这一步会看到一棵空树。
@@ -77,7 +78,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
         Assert.Equal(HttpStatusCode.Created, roleResponse.StatusCode);
 
         var role = await roleResponse.Content.ReadApiDataAsync();
-        var roleId = role.GetProperty("roleId").GetInt64();
+        var roleId = role.GetProperty("roleId").ReadHttpInt64();
 
         using var grantResponse = await rootClient.PostAsync(
             new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative),
@@ -93,7 +94,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
         Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
 
         var user = await registered.Content.ReadApiDataAsync();
-        var userId = user.GetProperty("userId").GetInt64();
+        var userId = user.GetProperty("userId").ReadHttpInt64();
 
         var userToken = await LoginAsync(userClient, "operator", "operator-password-1234");
         Authorize(userClient, userToken);

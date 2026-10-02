@@ -23,12 +23,12 @@ public sealed class FilesPersistenceJourneyTests
                 using var firstContent = new ByteArrayContent([1]);
                 using var first = await host.Client.PostAsync(new Uri("/api/files?name=first.bin", UriKind.Relative), firstContent);
                 Assert.Equal(HttpStatusCode.Created, first.StatusCode);
-                firstId = (await first.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+                firstId = (await first.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
                 firstBytes = Assert.Single(Directory.EnumerateFiles(root, "v1-*"), path => Path.GetExtension(path).Length == 0);
                 using var nextContent = new ByteArrayContent([2]);
                 using var next = await host.Client.PostAsync(new Uri("/api/files?name=next.bin", UriKind.Relative), nextContent);
                 Assert.Equal(HttpStatusCode.Created, next.StatusCode);
-                nextId = (await next.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+                nextId = (await next.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             }
             // 构造删除途中退出后的两个持久状态：一个清理始终失败，一个尚未开始首次清理。
             File.Move(firstBytes, Path.Combine(root, "retained-original"));
@@ -123,7 +123,7 @@ public sealed class FilesPersistenceJourneyTests
             using var content = new ByteArrayContent([1, 2]);
             using var uploaded = await client.PostAsync(new Uri("/api/files?name=concurrent.bin", UriKind.Relative), content);
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             await using var observer = new NpgsqlConnection(database.ConnectionString);
             await observer.OpenAsync();
             await using (var setup = new NpgsqlCommand("""
@@ -197,7 +197,7 @@ public sealed class FilesPersistenceJourneyTests
             liveContent.Complete();
             using var uploaded = await liveUpload;
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             using var initialDownload = await client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, initialDownload.StatusCode);
             Assert.Equal(new byte[] { 1, 2 }, await initialDownload.Content.ReadAsByteArrayAsync());
@@ -369,7 +369,7 @@ public sealed class FilesPersistenceJourneyTests
                 using var content = new ByteArrayContent([0, 128, 255]);
                 using var uploaded = await first.Client.PostAsync(new Uri("/api/files?name=delete.bin", UriKind.Relative), content);
                 Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-                id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+                id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
                 // 只改变本测试的临时目录，模拟存储挂载不可用，保留实际字节供恢复验证。
                 Directory.Move(root, unavailable);
                 if (emptyReplacementDirectory) { Directory.CreateDirectory(root); }
@@ -494,7 +494,7 @@ public sealed class FilesPersistenceJourneyTests
                 using var content = new ByteArrayContent(bytes);
                 using var uploaded = await first.Client.PostAsync(new Uri("/api/files?name=restart.bin", UriKind.Relative), content);
                 Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-                id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+                id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             }
 
             await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root);
@@ -503,7 +503,7 @@ public sealed class FilesPersistenceJourneyTests
             Assert.Equal(HttpStatusCode.OK, metadata.StatusCode);
             var file = await metadata.Content.ReadApiDataAsync();
             Assert.Equal("restart.bin", file.GetProperty("name").GetString());
-            Assert.Equal(6, file.GetProperty("size").GetInt64());
+            Assert.Equal(6, file.GetProperty("size").ReadHttpInt64());
             using var download = await restarted.Client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, download.StatusCode);
             Assert.Equal(bytes, await download.Content.ReadAsByteArrayAsync());

@@ -65,6 +65,11 @@ jobs:
         with:
           global-json-file: global.json
 
+      # HTTP 大整数必须经过真正的 JavaScript JSON.parse / stringify 验证。
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
       - name: 还原
         run: dotnet restore NexusStackNext.slnx
 

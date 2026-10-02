@@ -50,6 +50,8 @@ tests/
 Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟到回填保护，以及有并发预算的故障回源。
 这是最终一致查询缓存；配置、TTL、容量与恢复边界见 [定价查询缓存](docs/pricing-query-cache.md)。
 
+HTTP 的全部 Int64 以字符串返回，保留 NS / PoS 的浏览器精度保护。客户端迁移、OpenAPI 与 Node.js 24 测试要求见 [HTTP Int64 契约](docs/http-int64-contract.md)。
+
 每个上下文自带 `CONTEXT.md`（词表，含 `_Avoid_` 反义词）与 `docs/adr/`（上下文级决策）。
 
 ## 八条架构不变量
