@@ -44,6 +44,14 @@ public abstract class AggregateRoot<TId> : Entity<TId>, IHasDomainEvents
     {
     }
 
+    /// <summary>复制已观察的标识与版本，不复制待发布领域事件。</summary>
+    /// <param name="source">要保留其已观察状态的聚合。</param>
+    protected AggregateRoot(AggregateRoot<TId> source)
+        : base((source ?? throw new ArgumentNullException(nameof(source))).Id)
+    {
+        Version = source.Version;
+    }
+
     /// <summary>
     /// 乐观并发版本号。<b>新建聚合是 1，状态每改变一次 +1。</b>
     /// <para>

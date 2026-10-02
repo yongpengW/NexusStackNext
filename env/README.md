@@ -80,9 +80,12 @@ OptionsValidationException: Jwt:SigningKey 至少需要 32 字节。请在配置
 | `Identity__Root__UserName` | `Identity:Root:UserName` |
 | `Identity__Root__Password` | `Identity:Root:Password` |
 | `ConnectionStrings__Identity` | `ConnectionStrings:Identity`（默认必填） |
+| `ConnectionStrings__Platform` | `ConnectionStrings:Platform`（默认必填，可与 Identity 指向同一物理库） |
+| `Platform__Storage__Provider` | `Platform:Storage:Provider`（默认 Postgres；开发测试可显式用 Memory） |
 | `Identity__Storage__Provider` | `Identity:Storage:Provider`（默认 Postgres；开发测试可显式用 Memory） |
 
 首次启动或升级 Identity：`pwsh -File scripts/migrate-identity.ps1`。
+Platform 独立迁移：`pwsh -File scripts/migrate-platform.ps1`。普通启动只检查，两个上下文都就绪后才开始服务。
 命令从私有 `env/platform.dev` 读取连接配置；也接受部署环境注入，不输出连接串。
 迁移与运行权限、开发演示和重启验证见 [Identity 持久化运行](../docs/identity-persistence.md)。
 

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Platform.Application;
 using NexusStackNext.Platform.Domain.Settings;
 
@@ -12,21 +13,23 @@ namespace NexusStackNext.Platform.Infrastructure;
 /// 前缀会让 <c>identity</c> 命中 <c>identity-temp</c>，而那是个只有到线上才会发现的错。
 /// </para>
 /// <para>
-/// 与 Identity 的内存仓储一样，它保存的是聚合实例本身，不做拷贝：
-/// 同一个进程、同一个对象图。真实持久化不会有这个性质，这条差异写在这里。
+/// 读取返回独立快照，提交按读取版本比较并替换。开发内存模式也不能让先前读取的
+/// 对象被其他请求偷偷改动，或让两个旧版本写入都成功。
 /// </para>
 /// </summary>
 public sealed class InMemorySettingRepository : ISettingRepository
 {
     private readonly ConcurrentDictionary<(string Scope, string Name), GlobalSetting> _settings = new();
+    private readonly Lock _writes = new();
 
     /// <inheritdoc />
     public Task<GlobalSetting?> FindAsync(SettingKey key, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
+        cancellationToken.ThrowIfCancellationRequested();
 
         return Task.FromResult(
-            _settings.TryGetValue((key.Scope, key.Name), out var setting) ? setting : null);
+            _settings.TryGetValue((key.Scope, key.Name), out var setting) ? setting.Snapshot() : null);
     }
 
     /// <inheritdoc />
@@ -35,12 +38,13 @@ public sealed class InMemorySettingRepository : ISettingRepository
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(scope);
+        cancellationToken.ThrowIfCancellationRequested();
 
         IReadOnlyList<GlobalSetting> found =
         [
             .. _settings
                 .Where(pair => string.Equals(pair.Key.Scope, scope, StringComparison.Ordinal))
-                .Select(static pair => pair.Value)
+                .Select(static pair => pair.Value.Snapshot())
                 .OrderBy(static setting => setting.Key.Name, StringComparer.Ordinal)
         ];
 
@@ -48,12 +52,30 @@ public sealed class InMemorySettingRepository : ISettingRepository
     }
 
     /// <inheritdoc />
-    public Task AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default)
+    public Task<Result> AddAsync(GlobalSetting setting, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(setting);
+        cancellationToken.ThrowIfCancellationRequested();
 
-        _settings[(setting.Key.Scope, setting.Key.Name)] = setting;
-        return Task.CompletedTask;
+        return Task.FromResult(_settings.TryAdd((setting.Key.Scope, setting.Key.Name), setting.Snapshot())
+            ? Result.Success() : Result.Failure(SettingStore.Conflict));
+    }
+
+    /// <inheritdoc />
+    public Task<Result> SaveAsync(GlobalSetting setting, long originalVersion, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(setting);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_writes)
+        {
+            var key = (setting.Key.Scope, setting.Key.Name);
+            if (!_settings.TryGetValue(key, out var current) || current.Version != originalVersion)
+            {
+                return Task.FromResult(Result.Failure(SettingStore.Conflict));
+            }
+            _settings[key] = setting.Snapshot();
+            return Task.FromResult(Result.Success());
+        }
     }
 }
 

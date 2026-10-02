@@ -181,10 +181,11 @@ pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --ver
 - `/gateway/openapi/sources` —— 各来源是否取到、各多少条路径
 - `/swagger` —— API 参考界面（**总是开**：它就在边缘上，这正是要暴露的地方）
 
-`ready` 检查真实依赖：网关查 cluster，Identity 的 PostgreSQL 模式查数据库，Files 查存储可写可删。
-Platform / Scheduling / Auditing 当前使用内存适配器。
+`ready` 检查真实依赖：网关查 cluster，Identity / Platform 的 PostgreSQL 模式各自查数据库，Files 查存储可写可删。
+Scheduling / Auditing 当前使用内存适配器。
 
 Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/identity-persistence.md`。
+Platform 也默认 PostgreSQL；配置、迁移、并发写入或重启验证时先读 `docs/platform-settings.md`。
 普通宿主启动不迁移，未迁移或数据库不可用会退出；无库演示须显式选择开发/测试 Memory 模式。
 Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，仍按脚本串行运行。
 
