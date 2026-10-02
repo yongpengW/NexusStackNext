@@ -74,34 +74,42 @@ public sealed record OutboxEntry
         OccurredAt = OccurredAt,
     };
 
-    /// <summary>记录一次失败：递增尝试次数、写入下次尝试时间与原因。</summary>
+    /// <summary>仅 Pending 记录失败；迟到的失败不能覆盖已投递或已停止的结论。</summary>
     /// <param name="failure">失败原因。</param>
     /// <param name="nextAttemptAt">下次尝试时间。</param>
     /// <returns>更新后的记录。</returns>
-    public OutboxEntry RecordFailure(string failure, DateTimeOffset nextAttemptAt) => this with
+    public OutboxEntry RecordFailure(string failure, DateTimeOffset nextAttemptAt) => !IsPending ? this : this with
     {
         AttemptCount = AttemptCount + 1,
         NextAttemptAt = nextAttemptAt,
         LastFailure = failure,
     };
 
-    /// <summary>标记为已投递。</summary>
+    /// <summary>成功确认优先于迟到的失败；重复确认保留第一次成功时刻。</summary>
     /// <param name="now">当前时间。</param>
     /// <returns>更新后的记录。</returns>
-    public OutboxEntry MarkDelivered(DateTimeOffset now) => this with
+    public OutboxEntry MarkDelivered(DateTimeOffset now) => IsDelivered ? this : this with
     {
         DeliveredAt = now,
         LastFailure = null,
+        DeadLetteredAt = null,
+        NextAttemptAt = null,
     };
 
     /// <summary>标记为死信。</summary>
     /// <param name="failure">最终失败原因。</param>
     /// <param name="now">当前时间。</param>
     /// <returns>更新后的记录。</returns>
-    public OutboxEntry MarkDeadLettered(string failure, DateTimeOffset now) => this with
+    public OutboxEntry MarkDeadLettered(string failure, DateTimeOffset now) => !IsPending ? this : this with
     {
         AttemptCount = AttemptCount + 1,
         DeadLetteredAt = now,
         LastFailure = failure,
     };
+
+    /// <summary>停止状态仍匹配时重开预算；保留消息身份与内容。</summary>
+    /// <param name="expectedDeadLetteredAt">调用方观察到的停止时刻。</param>
+    /// <returns>恢复后的记录；条件已过期则为 null。</returns>
+    public OutboxEntry? RetryDelivery(DateTimeOffset expectedDeadLetteredAt) => IsDelivered || DeadLetteredAt != expectedDeadLetteredAt
+        ? null : this with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null };
 }

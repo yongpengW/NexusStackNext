@@ -22,7 +22,7 @@ public sealed class PlatformStorageStartupTests
     {
         var result = await IdentityJourneyDatabase.RunMigrationAsync("Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1", "Platform");
         Assert.Equal(1, result.ExitCode);
-        Assert.True(result.Error.Trim() == "Platform migration failed. Check database access and migration compatibility.");
+        Assert.Matches("^Platform migration failed \\(kind=[A-Za-z0-9]+; cause=[A-Za-z0-9]+\\)\\. Check database access and migration compatibility\\.$", result.Error.Trim());
         Assert.Empty(result.Output);
     }
 

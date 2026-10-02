@@ -20,9 +20,8 @@ public sealed record SettingAuditDelivery(Guid MessageId, string State, int Atte
     /// <param name="expectedDeadLetteredAt">操作者观察到的停止时刻。</param>
     /// <returns>恢复后的待投递项，或状态冲突。</returns>
     public static Result<OutboxEntry> Retry(OutboxEntry? entry, DateTimeOffset expectedDeadLetteredAt) =>
-        entry is null || entry.EventName != SettingCommittedV1.Name || entry.IsDelivered || entry.DeadLetteredAt != expectedDeadLetteredAt
-            ? Result.Failure<OutboxEntry>(Conflict)
-            : Result.Success(entry with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null });
+        entry?.EventName == SettingCommittedV1.Name && entry.RetryDelivery(expectedDeadLetteredAt) is { } retried
+            ? Result.Success(retried) : Result.Failure<OutboxEntry>(Conflict);
 
     /// <summary>从内部 Outbox 裁剪可公开的状态。</summary>
     /// <param name="entry">所属上下文消息。</param>

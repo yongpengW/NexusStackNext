@@ -19,7 +19,7 @@ public sealed class AggregateVersionTests
         var task = NewTask();
         Assert.Equal(1, task.Version);
 
-        Assert.True(task.MarkExecuted(Now).IsSuccess);
+        Assert.True(task.MarkTriggered(Now).IsSuccess);
         Assert.Equal(2, task.Version);
 
         // 相同的间隔不是改变。

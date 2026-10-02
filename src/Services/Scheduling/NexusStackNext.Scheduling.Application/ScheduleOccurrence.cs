@@ -54,9 +54,8 @@ public sealed record ScheduleOccurrenceDelivery(Guid OccurrenceId, long TriggerS
     /// <param name="expectedDeadLetteredAt">调用方观察到的停止时刻。</param>
     /// <returns>同一消息的新投递状态，或冲突。</returns>
     public static Result<OutboxEntry> Retry(OutboxEntry? entry, DateTimeOffset expectedDeadLetteredAt) =>
-        entry is null || entry.EventName != ScheduleTriggeredV1.Name || entry.IsDelivered || entry.DeadLetteredAt != expectedDeadLetteredAt
-            ? Result.Failure<OutboxEntry>(Conflict)
-            : Result.Success(entry with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null });
+        entry?.EventName == ScheduleTriggeredV1.Name && entry.RetryDelivery(expectedDeadLetteredAt) is { } retried
+            ? Result.Success(retried) : Result.Failure<OutboxEntry>(Conflict);
 
     /// <summary>裁剪掉载荷及底层错误。</summary>
     /// <param name="occurrence">触发事实。</param>

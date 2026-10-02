@@ -28,7 +28,8 @@ internal static class PlatformDatabaseCommand
         }
         catch (Exception error) when (error is DbException or InvalidOperationException or ArgumentException)
         {
-            Console.Error.WriteLine("Platform migration failed. Check database access and migration compatibility.");
+            // 只输出异常类型，区分连接/模型故障；不输出消息、连接配置或 SQL。
+            Console.Error.WriteLine($"Platform migration failed (kind={error.GetType().Name}; cause={error.InnerException?.GetType().Name ?? "None"}). Check database access and migration compatibility.");
             return 1;
         }
     }

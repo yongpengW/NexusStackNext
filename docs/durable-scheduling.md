@@ -59,6 +59,8 @@ Costing 设置 `Costing:Messaging:Enabled=true` 时同时发布成本结果并�
 
 Delivered 表示 broker 接管，Accepted 表示 Costing 的本地任务已登记；两者都不表示计算成功。相同输入重算可以成功完成而不改变 Costing / Pricing 版本。
 
+计划列表沿用 `lastRunAt` 字段兼容原 HTTP 契约；它表示上次登记触发的时刻。领域方法和事件使用 Triggered 命名，业务完成必须查询 Costing 的任务状态。
+
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
 
 ## 故障语义与范围

@@ -60,12 +60,12 @@ public sealed class TaskCode : ValueObject
     public override string ToString() => Value;
 }
 
-/// <summary>任务被执行了一次。</summary>
+/// <summary>计划登记了一次触发；业务接受和执行由目标上下文负责。</summary>
 /// <param name="TaskId">任务标识。</param>
 /// <param name="Code">任务编码。</param>
-/// <param name="OccurredAt">执行时刻（UTC）。</param>
+/// <param name="OccurredAt">触发登记时刻（UTC）。</param>
 /// <param name="NextRunAt">下次计划时刻。</param>
-public sealed record ScheduledTaskExecuted(
+public sealed record ScheduledTaskTriggered(
     ScheduledTaskId TaskId,
     string Code,
     DateTimeOffset OccurredAt,
@@ -141,7 +141,7 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
     /// <summary>是否启用。</summary>
     public bool IsEnabled { get; private set; }
 
-    /// <summary>上次执行时刻。</summary>
+    /// <summary>上次触发登记时刻；沿用 LastRunAt 存储与 HTTP 字段，不表示业务完成。</summary>
     public DateTimeOffset? LastRunAt { get; private set; }
 
     /// <summary>下次计划时刻。</summary>
@@ -180,10 +180,10 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
     /// <returns>是否该执行。</returns>
     public bool IsDue(DateTimeOffset now) => IsEnabled && NextRunAt is { } next && next <= now;
 
-    /// <summary>记录一次执行并推进下次计划时刻。</summary>
-    /// <param name="at">实际执行时刻。</param>
+    /// <summary>登记一次触发并推进下次计划时刻。</summary>
+    /// <param name="at">实际登记时刻。</param>
     /// <returns>成功，或任务未启用。</returns>
-    public Result MarkExecuted(DateTimeOffset at)
+    public Result MarkTriggered(DateTimeOffset at)
     {
         if (!IsEnabled)
         {
@@ -193,7 +193,7 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
         LastRunAt = at;
         NextRunAt = at + Interval;
         TriggerSequence++;
-        Raise(new ScheduledTaskExecuted(Id, Code.Value, at, NextRunAt.Value));
+        Raise(new ScheduledTaskTriggered(Id, Code.Value, at, NextRunAt.Value));
         return Changed();
     }
 

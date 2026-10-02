@@ -344,7 +344,8 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         Assert.Equal(0, result.ExitCode);
         Assert.Contains("Identity migrations applied.", result.Output, StringComparison.Ordinal);
         var platform = await RunMigrationAsync(ConnectionString, "Platform");
-        Assert.Equal(0, platform.ExitCode);
+        var diagnostic = System.Text.RegularExpressions.Regex.Match(platform.Error, @"kind=[A-Za-z0-9]+; cause=[A-Za-z0-9]+").Value;
+        Assert.True(platform.ExitCode == 0, $"Platform migration exit={platform.ExitCode}; {diagnostic}");
         Assert.Contains("Platform migrations applied.", platform.Output, StringComparison.Ordinal);
         var files = await RunMigrationAsync(ConnectionString, "Files");
         Assert.Equal(0, files.ExitCode);

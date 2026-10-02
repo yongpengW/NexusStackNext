@@ -1,59 +1,10 @@
-using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
+using NexusStackNext.Scheduling.Infrastructure;
 using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.Scheduling.Application.Tests;
-
-/// <summary>内存任务存储，实现真实语义：保存后状态可见。</summary>
-internal sealed class FakeTaskStore : IScheduledTaskStore
-{
-    public Task<ScheduledTask?> FindAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(_tasks.GetValueOrDefault(id.Value));
-
-    public Task<ScheduledTaskPage> ReadPageAsync(int page, int limit, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
-
-    public Task<Result<ScheduleOccurrenceDelivery>> RetryOccurrenceAsync(Guid occurrenceId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
-
-    public Task<Result> RecordOccurrenceAsync(ScheduledTask task, long expectedVersion, ScheduleOccurrence occurrence, CancellationToken cancellationToken = default) =>
-        SaveAsync(task, expectedVersion, cancellationToken);
-
-    public Task<ScheduleOccurrencePage> ReadOccurrencesAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException();
-    private readonly Dictionary<long, ScheduledTask> _tasks = [];
-
-    public int SaveCount { get; private set; }
-
-    public void Add(ScheduledTask task) => _tasks[task.Id.Value] = task;
-
-    public Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(
-        DateTimeOffset now,
-        int batchSize,
-        CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<ScheduledTask>>(
-        [
-            .. _tasks.Values.Where(task => task.IsDue(now)).OrderBy(static t => t.Id.Value).Take(batchSize),
-        ]);
-
-    public Task<Result> AddAsync(ScheduledTask task, CancellationToken cancellationToken = default)
-    {
-        _tasks[task.Id.Value] = task;
-        SaveCount++;
-        return Task.FromResult(Result.Success());
-    }
-
-    public Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default) =>
-        AddAsync(task, cancellationToken);
-
-    /// <inheritdoc />
-    public Task<IReadOnlyList<ScheduledTask>> ListAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IReadOnlyList<ScheduledTask>>(
-        [
-            .. _tasks.Values.OrderBy(static t => t.Id.Value),
-        ]);
-}
 
 /// <summary>Scheduling：任务到期判定与"每次执行都推进下次时刻"。</summary>
 public sealed class SchedulingTests
@@ -119,59 +70,62 @@ public sealed class SchedulingTests
     }
 
     [Fact]
-    public void MarkExecuted_AdvancesNextRunAtFromTheActualRunTime_NotTheSchedule()
+    public void MarkTriggered_AdvancesNextRunAtFromTheActualRunTime_NotTheSchedule()
     {
         // 迟到不补跑：下次时刻从实际执行时刻起算，否则停机一小时后重启会瞬间涌入几十次补跑。
         var task = NewTask(interval: TimeSpan.FromMinutes(10), firstRun: Now);
         var late = Now + TimeSpan.FromHours(1);
 
-        Assert.True(task.MarkExecuted(late).IsSuccess);
+        Assert.True(task.MarkTriggered(late).IsSuccess);
 
         Assert.Equal(late, task.LastRunAt);
         Assert.Equal(late + TimeSpan.FromMinutes(10), task.NextRunAt);
     }
 
     [Fact]
-    public void MarkExecuted_RaisesEvent_ButDisabledTaskRefuses()
+    public void MarkTriggered_RaisesEvent_ButDisabledTaskRefuses()
     {
         var task = NewTask(firstRun: Now);
         task.ClearDomainEvents();
 
-        Assert.True(task.MarkExecuted(Now).IsSuccess);
-        Assert.IsType<ScheduledTaskExecuted>(Assert.Single(task.DomainEvents));
+        Assert.True(task.MarkTriggered(Now).IsSuccess);
+        Assert.IsType<ScheduledTaskTriggered>(Assert.Single(task.DomainEvents));
 
         task.Disable();
-        Assert.True(task.MarkExecuted(Now).IsFailure);
+        Assert.True(task.MarkTriggered(Now).IsFailure);
     }
 
     [Fact]
     public async Task ScheduleRunner_TriggersOnlyDueTasks_AndLeavesARecord()
     {
         // 参照仓库的 PlanTaskService 是空壳：永远静默跳过，还以 1Hz 空转。
-        var store = new FakeTaskStore();
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
         var due = NewTask(firstRun: Now);
         var notYet = ScheduledTask.Create(new ScheduledTaskId(2), Code("scheduling.later"), TimeSpan.FromMinutes(1), Now + TimeSpan.FromHours(1), Target, "42").Value;
-        store.Add(due);
-        store.Add(notYet);
+        Assert.True((await store.AddAsync(due)).IsSuccess);
+        Assert.True((await store.AddAsync(notYet)).IsSuccess);
 
         var runner = new ScheduleRunner(store, clock);
         var result = await runner.RunOnceAsync();
 
         Assert.Equal(new ScheduleRunResult(1, 1, 0), result);
-        Assert.Equal(1, store.SaveCount);
-
-        // 留下了记录：下次时刻已推进。
-        Assert.Equal(Now, due.LastRunAt);
-        Assert.Equal(Now + TimeSpan.FromMinutes(1), due.NextRunAt);
+        var saved = Assert.IsType<ScheduledTask>(await store.FindAsync(due.Id));
+        Assert.Equal(Now, saved.LastRunAt);
+        Assert.Equal(Now + TimeSpan.FromMinutes(1), saved.NextRunAt);
+        var occurrence = Assert.Single((await store.ReadOccurrencesAsync(due.Id.Value, 0, 100)).Items);
+        Assert.Equal(1, occurrence.TriggerSequence);
+        Assert.Equal("Pending", occurrence.DeliveryState);
+        Assert.Equal(occurrence.OccurrenceId, Assert.Single(await store.ReadPendingAsync(10, Now)).Id);
+        Assert.Empty((await store.ReadOccurrencesAsync(notYet.Id.Value, 0, 100)).Items);
     }
 
     [Fact]
     public async Task ScheduleRunner_SecondRunAtSameInstant_IsNoOp()
     {
-        var store = new FakeTaskStore();
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
-        store.Add(NewTask(firstRun: Now));
+        Assert.True((await store.AddAsync(NewTask(firstRun: Now))).IsSuccess);
         var runner = new ScheduleRunner(store, clock);
 
         var first = await runner.RunOnceAsync();
@@ -184,9 +138,9 @@ public sealed class SchedulingTests
     [Fact]
     public async Task ScheduleRunner_TriggersAgainAfterIntervalElapses()
     {
-        var store = new FakeTaskStore();
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
-        store.Add(NewTask(interval: TimeSpan.FromMinutes(1), firstRun: Now));
+        Assert.True((await store.AddAsync(NewTask(interval: TimeSpan.FromMinutes(1), firstRun: Now))).IsSuccess);
         var runner = new ScheduleRunner(store, clock);
 
         await runner.RunOnceAsync();

@@ -144,13 +144,13 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     }
     /// <inheritdoc />
     public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        UpdateDeliveryAsync(id, entry => entry.IsDelivered ? entry : entry.MarkDelivered(now) with { DeadLetteredAt = null, NextAttemptAt = null }, cancellationToken);
+        UpdateDeliveryAsync(id, entry => entry.MarkDelivered(now), cancellationToken);
     /// <inheritdoc />
     public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
-        UpdateDeliveryAsync(id, entry => entry.IsPending ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
+        UpdateDeliveryAsync(id, entry => entry.RecordFailure(failure, nextAttemptAt), cancellationToken);
     /// <inheritdoc />
     public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        UpdateDeliveryAsync(id, entry => entry.IsPending ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
+        UpdateDeliveryAsync(id, entry => entry.MarkDeadLettered(failure, now), cancellationToken);
 
     private Task UpdateDeliveryAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {

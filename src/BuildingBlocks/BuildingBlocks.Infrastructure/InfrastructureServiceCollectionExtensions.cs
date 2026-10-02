@@ -89,6 +89,10 @@ public static class InfrastructureServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        if (owner is null && options is not null)
+        {
+            throw new ArgumentException("指定 Outbox 策略时必须明确所属上下文。", nameof(owner));
+        }
         if (owner is not null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(owner);
