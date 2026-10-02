@@ -31,6 +31,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.ArgumentList.Add(Client.BaseAddress.ToString());
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment["Identity__Storage__Provider"] = "Postgres";
+        start.Environment["Platform__Storage__Provider"] = "Postgres";
         start.Environment["ConnectionStrings__Identity"] = connectionString;
         start.Environment["ConnectionStrings__Platform"] = connectionString;
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";

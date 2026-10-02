@@ -286,6 +286,7 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
             new Dictionary<string, string?>(StringComparer.Ordinal)
             {
                 ["Identity:Storage:Provider"] = "Postgres",
+                ["Platform:Storage:Provider"] = "Postgres",
                 ["ConnectionStrings:Identity"] = _connectionString,
                 ["ConnectionStrings:Platform"] = _platformConnectionString,
             }));
