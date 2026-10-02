@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -22,7 +23,7 @@ public sealed class PrivateFilesAccessTests
             using var content = new ByteArrayContent([1, 2]);
             using var uploaded = await owner.PostAsync(new Uri("/api/files?name=private.bin", UriKind.Relative), content);
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             foreach (var (method, path) in new[]
             {
                 (HttpMethod.Get, $"/api/files/{id}"),
@@ -62,7 +63,7 @@ public sealed class PrivateFilesAccessTests
             using var content = new ByteArrayContent(new byte[31 * 1024 * 1024]);
             using var uploaded = await client.PostAsync(new Uri("/api/files?name=large.bin", UriKind.Relative), content);
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-            Assert.Equal(31 * 1024 * 1024, (await uploaded.Content.ReadApiDataAsync()).GetProperty("size").GetInt64());
+            Assert.Equal(31 * 1024 * 1024, (await uploaded.Content.ReadApiDataAsync()).GetProperty("size").ReadHttpInt64());
         }
         finally
         {
@@ -169,8 +170,8 @@ public sealed class PrivateFilesAccessTests
             using var accepted = await client.PostAsync(new Uri("/api/files?name=bounded.bin", UriKind.Relative), acceptedContent);
             Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
             var payload = await accepted.Content.ReadApiDataAsync();
-            Assert.Equal(8, payload.GetProperty("size").GetInt64());
-            using var downloaded = await client.GetAsync(new Uri($"/api/files/{payload.GetProperty("fileId").GetInt64()}", UriKind.Relative));
+            Assert.Equal(8, payload.GetProperty("size").ReadHttpInt64());
+            using var downloaded = await client.GetAsync(new Uri($"/api/files/{payload.GetProperty("fileId").ReadHttpInt64()}", UriKind.Relative));
             Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, await downloaded.Content.ReadAsByteArrayAsync());
         }
         finally
@@ -192,7 +193,7 @@ public sealed class PrivateFilesAccessTests
             using var content = new ByteArrayContent([1, 2, 3]);
             using var uploaded = await client.PostAsync(new Uri("/api/files?name=private.bin", UriKind.Relative), content);
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
-            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").GetInt64();
+            var id = (await uploaded.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
             using var logout = await client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
             Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
             foreach (var (method, path) in new[]
@@ -237,7 +238,7 @@ public sealed class PrivateFilesAccessTests
             Assert.Equal(HttpStatusCode.Created, uploaded.StatusCode);
             var payload = await uploaded.Content.ReadApiDataAsync();
             Assert.False(payload.TryGetProperty("storageKey", out _));
-            var id = payload.GetProperty("fileId").GetInt64();
+            var id = payload.GetProperty("fileId").ReadHttpInt64();
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri($"/api/files/{id}{suffix}", UriKind.Relative));
             using var denied = await other.SendAsync(request);
             Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);

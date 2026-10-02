@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.OpenApi;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -14,6 +15,12 @@ public static class ApiResponseExtensions
     public static IServiceCollection AddApiResponseContract(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        services.ConfigureHttpJsonOptions(options => options.SerializerOptions.Converters.Add(new HttpInt64Converter()));
+        services.ConfigureAll<OpenApiOptions>(options =>
+        {
+            options.AddSchemaTransformer<HttpInt64OpenApi>();
+            options.AddDocumentTransformer<HttpInt64OpenApi>();
+        });
         services.AddHttpContextAccessor();
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<ApiResponses>();

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -66,8 +67,8 @@ public sealed class ApiResponseContractTests
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         if (expectedStatus == 200)
         {
-            Assert.Equal(0, body.GetProperty("total").GetInt64());
-            Assert.Equal(0, body.GetProperty("totalPage").GetInt64());
+            Assert.Equal(0, body.GetProperty("total").ReadHttpInt64());
+            Assert.Equal(0, body.GetProperty("totalPage").ReadHttpInt64());
             Assert.Empty(body.GetProperty("data").EnumerateArray());
             if (query.Length == 0)
             {
@@ -95,11 +96,11 @@ public sealed class ApiResponseContractTests
             using var created = await client.PostAsJsonAsync(new Uri("/api/scheduling/tasks/", UriKind.Relative),
                 new { code, intervalSeconds = 30, firstRunInSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-            lastId = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+            lastId = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
         }
         var page = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/?page=2&limit=1", UriKind.Relative));
-        Assert.Equal(2, page.GetProperty("total").GetInt64());
-        Assert.Equal(lastId, Assert.Single(page.GetProperty("data").EnumerateArray()).GetProperty("taskId").GetInt64());
+        Assert.Equal(2, page.GetProperty("total").ReadHttpInt64());
+        Assert.Equal(lastId, Assert.Single(page.GetProperty("data").EnumerateArray()).GetProperty("taskId").ReadHttpInt64());
         using var invalid = await client.GetAsync(new Uri("/api/scheduling/tasks/?limit=201", UriKind.Relative));
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
     }
@@ -157,10 +158,10 @@ public sealed class ApiResponseContractTests
         using var response = await client.GetAsync(new Uri("/api/platform/settings/?scope=paging&page=2&limit=2", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(3, body.GetProperty("total").GetInt64());
+        Assert.Equal(3, body.GetProperty("total").ReadHttpInt64());
         Assert.Equal(2, body.GetProperty("page").GetInt32());
         Assert.Equal(2, body.GetProperty("limit").GetInt32());
-        Assert.Equal(2, body.GetProperty("totalPage").GetInt64());
+        Assert.Equal(2, body.GetProperty("totalPage").ReadHttpInt64());
         Assert.Equal("paging.c", Assert.Single(body.GetProperty("data").EnumerateArray()).GetProperty("key").GetString());
         using var invalid = await client.GetAsync(new Uri("/api/platform/settings/?scope=paging&page=0&limit=2", UriKind.Relative));
         Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
@@ -293,9 +294,9 @@ public sealed class ApiResponseContractTests
         Assert.True(body.GetProperty("success").GetBoolean());
         Assert.Equal(201, body.GetProperty("code").GetInt32());
         Assert.Equal("Success", body.GetProperty("message").GetString());
-        var id = body.GetProperty("data").GetProperty("userId").GetInt64();
+        var id = body.GetProperty("data").GetProperty("userId").ReadHttpInt64();
         Assert.Equal($"/api/identity/users/{id}", response.Headers.Location?.OriginalString);
-        Assert.InRange(body.GetProperty("timestamp").GetInt64(), before, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        Assert.InRange(body.GetProperty("timestamp").ReadHttpInt64(), before, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Assert.Equal(Assert.Single(response.Headers.GetValues("X-TraceId")), body.GetProperty("traceId").GetString());
     }
 }

@@ -219,14 +219,14 @@ public sealed class AuditBusinessJourneyTests
             using var read = await app.Client.GetAsync(uri);
             var unchanged = await read.Content.ReadApiDataAsync();
             Assert.Equal("original", unchanged.GetProperty("value").GetString());
-            Assert.Equal(1, unchanged.GetProperty("version").GetInt64());
+            Assert.Equal(1, unchanged.GetProperty("version").ReadHttpInt64());
             using var changed = await app.Client.PutAsJsonAsync(uri, new { value = "changed", description = "changed", expectedVersion = 1 });
             Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
             using var cleared = await app.Client.DeleteAsync(new Uri(uri + "?expectedVersion=3", UriKind.Relative));
             Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
             var page = await WaitForCountAsync(app.Client, 3);
-            var facts = page.GetProperty("data").EnumerateArray().Select(entry => entry.GetProperty("fact")).OrderBy(fact => fact.GetProperty("subjectVersion").GetInt64()).ToArray();
-            Assert.Equal(new long[] { 1, 3, 4 }, facts.Select(fact => fact.GetProperty("subjectVersion").GetInt64()));
+            var facts = page.GetProperty("data").EnumerateArray().Select(entry => entry.GetProperty("fact")).OrderBy(fact => fact.GetProperty("subjectVersion").ReadHttpInt64()).ToArray();
+            Assert.Equal(new long[] { 1, 3, 4 }, facts.Select(fact => fact.GetProperty("subjectVersion").ReadHttpInt64()));
             Assert.Equal(new[] { "platform.setting.created", "platform.setting.changed", "platform.setting.cleared" }, facts.Select(fact => fact.GetProperty("action").GetString()));
             Assert.DoesNotContain("refused-description", page.GetRawText(), StringComparison.Ordinal);
         }
@@ -263,7 +263,7 @@ public sealed class AuditBusinessJourneyTests
             Assert.Equal("platform", fact.GetProperty("source").GetString());
             Assert.Equal("platform.setting.created", fact.GetProperty("action").GetString());
             Assert.Equal(actor, fact.GetProperty("actorId").GetString());
-            Assert.Equal(1, fact.GetProperty("subjectVersion").GetInt64());
+            Assert.Equal(1, fact.GetProperty("subjectVersion").ReadHttpInt64());
             Assert.False(string.IsNullOrWhiteSpace(fact.GetProperty("traceId").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(fact.GetProperty("correlationId").GetString()));
             Assert.DoesNotContain("private-audit-value", page.GetRawText(), StringComparison.Ordinal);
@@ -295,7 +295,7 @@ public sealed class AuditBusinessJourneyTests
                 using var response = await client.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative), timeout.Token);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 var result = await response.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
-                observed = result.GetProperty("total").GetInt64();
+                observed = result.GetProperty("total").ReadHttpInt64();
                 if (observed == count) { return result.Clone(); }
                 await Task.Delay(100, timeout.Token);
             }

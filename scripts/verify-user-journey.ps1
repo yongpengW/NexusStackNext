@@ -116,7 +116,9 @@ try {
         $fileId = if ($uploadedEnvelope.success -eq $true) { $uploadedEnvelope.data.fileId } else { $null }
 
         if ($fileId) {
+            Assert-ApiInt64 $fileId 'fileId'
             $meta = Call 'GET' "http://127.0.0.1:5190/api/files/$fileId/metadata" $null $token
+            if ($meta.Data.fileId -cne $fileId) { throw '文件 ID 往返后未命中原对象。' }
             $results.Add("5b. 取元数据            → $($meta.Status)")
 
             $dlStatus = & curl.exe -s -o $downloaded -w '%{http_code}' --max-time 20 `
@@ -157,6 +159,7 @@ try {
         $chainStatus = '跳过（拿不到根账号令牌或用户标识）'
 
         if ($rootToken -and $userId) {
+            Assert-ApiInt64 $userId 'userId'
             $menu = Call 'POST' 'http://127.0.0.1:5190/api/identity/menus' `
                 '{"Title":"后台导航","SortOrder":1,"ParentMenuId":null}' $rootToken
             $menuId = $menu.Data.menuId
@@ -168,11 +171,13 @@ try {
             $results.Add("6c. 建角色（根账号）    → $($role.Status)（期望 201）roleId=$roleId")
 
             if ($menuId -and $roleId) {
+                Assert-ApiInt64 $menuId 'menuId'
+                Assert-ApiInt64 $roleId 'roleId'
                 $grant = Call 'POST' "http://127.0.0.1:5190/api/identity/roles/$roleId/menus/$menuId" '{}' $rootToken
                 $results.Add("6d. 菜单授给角色        → $($grant.Status)（期望 204）")
 
                 $resource = Call 'POST' 'http://127.0.0.1:5190/api/identity/api-resources' `
-                    ("{""Path"":""/api/identity/users/{userId}/permissions"",""Method"":""GET"",""MenuId"":$menuId}") $rootToken
+                    (@{ Path = '/api/identity/users/{userId}/permissions'; Method = 'GET'; MenuId = $menuId } | ConvertTo-Json -Compress) $rootToken
                 $results.Add("6e. 登记 api-resource   → $($resource.Status)（期望 201）")
 
                 $beforeGrant = Call 'GET' "http://127.0.0.1:5190/api/identity/users/$userId/permissions" $null $token

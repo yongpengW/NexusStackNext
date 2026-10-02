@@ -62,7 +62,7 @@ public sealed class SchedulingPersistenceJourneyTests
             using var created = await first.Client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
                 new { code = "persistent-cost", intervalSeconds = 3600, firstRunInSeconds = 3600, targetKind = "costing.recalculate", targetId = itemId });
             Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-            id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+            id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
             using var paused = await first.Client.PostAsJsonAsync(Relative($"/api/scheduling/tasks/{id}/pause"), new { expectedVersion = 1 });
             Assert.Equal(HttpStatusCode.NoContent, paused.StatusCode);
             await first.CrashAsync();
@@ -72,10 +72,10 @@ public sealed class SchedulingPersistenceJourneyTests
         {
             await PlatformSettingsAccessTests.LoginAsync(second.Client, "journey-root", "schedule-root-password");
             var plan = await OnlyPlanAsync(second.Client);
-            Assert.Equal(id, plan.GetProperty("taskId").GetInt64());
+            Assert.Equal(id, plan.GetProperty("taskId").ReadHttpInt64());
             Assert.Equal(itemId, plan.GetProperty("targetId").GetGuid());
             Assert.Equal("costing.recalculate", plan.GetProperty("targetKind").GetString());
-            Assert.Equal(2, plan.GetProperty("version").GetInt64());
+            Assert.Equal(2, plan.GetProperty("version").ReadHttpInt64());
             Assert.False(plan.GetProperty("isEnabled").GetBoolean());
             Assert.Equal(JsonValueKind.Null, plan.GetProperty("nextRunAt").ValueKind);
             using var enabled = await second.Client.PostAsJsonAsync(Relative($"/api/scheduling/tasks/{id}/resume"), new { expectedVersion = 2 });
@@ -85,7 +85,7 @@ public sealed class SchedulingPersistenceJourneyTests
         await using var third = await PlatformHostProcess.StartAsync(database.ConnectionString, "schedule-root-password");
         await PlatformSettingsAccessTests.LoginAsync(third.Client, "journey-root", "schedule-root-password");
         var after = await OnlyPlanAsync(third.Client);
-        Assert.Equal(3, after.GetProperty("version").GetInt64());
+        Assert.Equal(3, after.GetProperty("version").ReadHttpInt64());
         Assert.True(after.GetProperty("isEnabled").GetBoolean());
         Assert.Equal(resumed.GetProperty("nextRunAt").GetDateTimeOffset(), after.GetProperty("nextRunAt").GetDateTimeOffset());
     }

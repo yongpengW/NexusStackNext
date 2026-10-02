@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -21,13 +22,13 @@ public sealed class SchedulingAccessTests
         Assert.Equal(HttpStatusCode.Forbidden, ungranted.StatusCode);
 
         var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Read schedules", sortOrder = 1 });
-        var menuId = menu.GetProperty("menuId").GetInt64();
+        var menuId = menu.GetProperty("menuId").ReadHttpInt64();
         _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/scheduling/tasks", method = "GET", menuId });
         var role = await CreateAsync(root, "/api/identity/roles", new { code = "schedule-reader", name = "Schedule reader" });
-        var roleId = role.GetProperty("roleId").GetInt64();
+        var roleId = role.GetProperty("roleId").ReadHttpInt64();
         using var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
-        using var assign = await root.PostAsync(new Uri($"/api/identity/users/{account.GetProperty("userId").GetInt64()}/roles/{roleId}", UriKind.Relative), null);
+        using var assign = await root.PostAsync(new Uri($"/api/identity/users/{account.GetProperty("userId").ReadHttpInt64()}/roles/{roleId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode);
         using var allowed = await user.GetAsync(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);

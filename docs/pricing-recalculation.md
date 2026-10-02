@@ -1,5 +1,7 @@
 # 定价重算样板
 
+HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符串；请求优先原样回传字符串，精确数字输入继续兼容。见 [HTTP Int64 契约](http-int64-contract.md)。
+
 Pricing 是第一个独立业务上下文：自己的宿主、数据库、迁移与任务表。PlatformHost 不装配它。
 首轮规格见 [#26](https://github.com/yongpengW/NexusStackNext/issues/26)，实现切片见
 [#27](https://github.com/yongpengW/NexusStackNext/issues/27)，所有权决定见 [ADR-0019](adr/0019-context-owned-business-tasks.md)。
@@ -53,7 +55,7 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 {
   "requestId": "b2ecc392-f03e-418e-b235-35535be0ac37",
   "itemId": "d092dc07-90d1-451d-8d18-154f76a4637a",
-  "expectedVersion": 0,
+  "expectedVersion": "0",
   "cost": 80,
   "feeRate": 0.2
 }
@@ -70,7 +72,7 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 `GET /items/{itemId}` 返回输入、聚合版本、已计算输入版本和价格；本例完成后价格为 100。
 当 `calculatedRevision < inputRevision` 时，价格尚未对应最新输入，调用方应展示“重算中”。
 
-失败终态允许根操作者 `POST /tasks/{taskId}/retry`，请求体为 `{ "expectedEpoch": 3 }`
+失败终态允许根操作者 `POST /tasks/{taskId}/retry`，请求体为 `{ "expectedEpoch": "3" }`
 （值取自查询结果）。成功返回 202；只有仍为 Failed 且代次匹配才接受，否则 409。
 重试重置当前轮尝试次数，历史与单调递增的执行代次保留。
 接口文档为宿主 `/openapi/v1.json`，网关聚合文档会包含 Pricing。

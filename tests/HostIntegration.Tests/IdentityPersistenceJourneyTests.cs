@@ -34,7 +34,7 @@ public sealed class IdentityPersistenceJourneyTests
         using var denied = await restarted.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
         var fresh = await AuthenticateAsync(restarted.Client, "process-user", "journey-test-password");
-        Assert.Equal(tokens.GetProperty("userId").GetInt64(), fresh.GetProperty("userId").GetInt64());
+        Assert.Equal(tokens.GetProperty("userId").ReadHttpInt64(), fresh.GetProperty("userId").ReadHttpInt64());
     }
 
     [PostgresFact]
@@ -124,13 +124,13 @@ public sealed class IdentityPersistenceJourneyTests
             using var user = app.CreateClient();
             await AuthenticateAsync(root, "journey-root", "original-root-password");
             var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Persistent menu", sortOrder = 1 });
-            menuId = menu.GetProperty("menuId").GetInt64();
+            menuId = menu.GetProperty("menuId").ReadHttpInt64();
             await CreateAsync(root, "/api/identity/api-resources", new { path = Permission, method = "GET", menuId });
             var role = await CreateAsync(root, "/api/identity/roles", new { code = "persistent-reader", name = "Reader" });
-            var roleId = role.GetProperty("roleId").GetInt64();
+            var roleId = role.GetProperty("roleId").ReadHttpInt64();
             using var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
             Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
-            userId = (await CreateAsync(user, "/api/identity/users", credentials)).GetProperty("userId").GetInt64();
+            userId = (await CreateAsync(user, "/api/identity/users", credentials)).GetProperty("userId").ReadHttpInt64();
             await AuthenticateAsync(user, credentials.userName, credentials.password);
             using var denied = await user.GetAsync(new Uri($"/api/identity/users/{userId}/permissions", UriKind.Relative));
             Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
@@ -148,7 +148,7 @@ public sealed class IdentityPersistenceJourneyTests
         await AuthenticateAsync(after, "journey-root", "original-root-password");
         var menus = await after.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
         Assert.Equal(1, menus.GetProperty("data").GetProperty("count").GetInt32());
-        Assert.Equal(menuId, Assert.Single(menus.GetProperty("data").GetProperty("items").EnumerateArray()).GetProperty("menuId").GetInt64());
+        Assert.Equal(menuId, Assert.Single(menus.GetProperty("data").GetProperty("items").EnumerateArray()).GetProperty("menuId").ReadHttpInt64());
     }
 
     private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
@@ -254,7 +254,7 @@ public sealed class IdentityPersistenceJourneyTests
             using var client = app.CreateClient();
             using var registered = await client.PostAsJsonAsync(new Uri("/api/identity/users", UriKind.Relative), credentials);
             Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
-            userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").GetInt64();
+            userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").ReadHttpInt64();
         }
 
         await database.MigrateAsync();
@@ -262,7 +262,7 @@ public sealed class IdentityPersistenceJourneyTests
         using var second = restarted.CreateClient();
         using var login = await second.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-        Assert.Equal(userId, (await login.Content.ReadApiDataAsync()).GetProperty("userId").GetInt64());
+        Assert.Equal(userId, (await login.Content.ReadApiDataAsync()).GetProperty("userId").ReadHttpInt64());
     }
 }
 

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -46,16 +47,16 @@ public sealed class AuditAccessTests
         using var user = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         var created = await CreateAsync(user, "/api/identity/users", new { userName = "investigator", password = "investigator-password" });
-        var userId = created.GetProperty("userId").GetInt64();
+        var userId = created.GetProperty("userId").ReadHttpInt64();
         await PlatformSettingsAccessTests.LoginAsync(user, "investigator", "investigator-password");
         var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Audit investigation", sortOrder = 1 });
-        var menuId = menu.GetProperty("menuId").GetInt64();
+        var menuId = menu.GetProperty("menuId").ReadHttpInt64();
         foreach (var path in new[] { "/api/auditing/entries", "/api/platform/audit-deliveries" })
         {
             _ = await CreateAsync(root, "/api/identity/api-resources", new { path, method = "GET", menuId });
         }
         var role = await CreateAsync(root, "/api/identity/roles", new { code = "audit-reader", name = "Audit reader" });
-        var roleId = role.GetProperty("roleId").GetInt64();
+        var roleId = role.GetProperty("roleId").ReadHttpInt64();
         using var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
         using var assign = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);

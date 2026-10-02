@@ -49,10 +49,10 @@ public sealed class SchedulingOccurrenceTests
         Assert.Equal(1, results.Sum(result => result.Skipped));
         Assert.All(results, result => Assert.Empty(result.FailedPlanIds));
         var occurrence = Assert.Single(await HistoryAsync(client, id));
-        Assert.Equal(1, occurrence.GetProperty("triggerSequence").GetInt64());
+        Assert.Equal(1, occurrence.GetProperty("triggerSequence").ReadHttpInt64());
         var page = await client.GetFromJsonAsync<JsonElement>(Relative("/api/scheduling/tasks/"));
         var plan = Assert.Single(page.GetProperty("data").EnumerateArray());
-        Assert.Equal(2, plan.GetProperty("version").GetInt64());
+        Assert.Equal(2, plan.GetProperty("version").ReadHttpInt64());
     }
 
     [PostgresFact]
@@ -81,8 +81,8 @@ public sealed class SchedulingOccurrenceTests
         Assert.Empty(await HistoryAsync(client, broken));
         Assert.Single(await HistoryAsync(client, healthy));
         var page = await client.GetFromJsonAsync<JsonElement>(Relative("/api/scheduling/tasks/"));
-        var plan = Assert.Single(page.GetProperty("data").EnumerateArray(), item => item.GetProperty("taskId").GetInt64() == broken);
-        Assert.Equal(1, plan.GetProperty("version").GetInt64());
+        var plan = Assert.Single(page.GetProperty("data").EnumerateArray(), item => item.GetProperty("taskId").ReadHttpInt64() == broken);
+        Assert.Equal(1, plan.GetProperty("version").ReadHttpInt64());
         Assert.Equal(JsonValueKind.Null, plan.GetProperty("lastRunAt").ValueKind);
 
         await using (var recover = new NpgsqlCommand("ALTER TABLE scheduling.outbox DROP CONSTRAINT test_reject_plan", connection))
@@ -91,7 +91,7 @@ public sealed class SchedulingOccurrenceTests
         }
         Assert.Equal(1, (await runner.RunOnceAsync()).Triggered);
         var recovered = Assert.Single(await HistoryAsync(client, broken));
-        Assert.Equal(1, recovered.GetProperty("triggerSequence").GetInt64());
+        Assert.Equal(1, recovered.GetProperty("triggerSequence").ReadHttpInt64());
         Assert.Equal("Pending", recovered.GetProperty("deliveryState").GetString());
     }
 
@@ -107,7 +107,7 @@ public sealed class SchedulingOccurrenceTests
         using var created = await client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
             new { code = "record-cost", intervalSeconds = 3600, targetKind = "costing.recalculate", targetId = itemId });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        var id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+        var id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
 
         await using var scope = app.Services.CreateAsyncScope();
         var runner = scope.ServiceProvider.GetRequiredService<ScheduleRunner>();
@@ -117,7 +117,7 @@ public sealed class SchedulingOccurrenceTests
         var page = await history.Content.ReadFromJsonAsync<JsonElement>();
         var occurrence = Assert.Single(page.GetProperty("data").EnumerateArray());
         Assert.NotEqual(Guid.Empty, occurrence.GetProperty("occurrenceId").GetGuid());
-        Assert.Equal(1, occurrence.GetProperty("triggerSequence").GetInt64());
+        Assert.Equal(1, occurrence.GetProperty("triggerSequence").ReadHttpInt64());
         Assert.Equal("Pending", occurrence.GetProperty("deliveryState").GetString());
         Assert.Equal(itemId, occurrence.GetProperty("targetId").GetGuid());
         Assert.Equal(0, occurrence.GetProperty("attemptCount").GetInt32());
@@ -128,7 +128,7 @@ public sealed class SchedulingOccurrenceTests
         using var listed = await client.GetAsync(Relative("/api/scheduling/tasks/"));
         var plans = await listed.Content.ReadFromJsonAsync<JsonElement>();
         var plan = Assert.Single(plans.GetProperty("data").EnumerateArray());
-        Assert.Equal(2, plan.GetProperty("version").GetInt64());
+        Assert.Equal(2, plan.GetProperty("version").ReadHttpInt64());
         Assert.Equal(triggeredAt.AddHours(1), plan.GetProperty("nextRunAt").GetDateTimeOffset());
     }
 
@@ -139,7 +139,7 @@ public sealed class SchedulingOccurrenceTests
         using var created = await client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
             new { code, intervalSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        return (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+        return (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
     }
 
     private static async Task<JsonElement[]> HistoryAsync(HttpClient client, long id)

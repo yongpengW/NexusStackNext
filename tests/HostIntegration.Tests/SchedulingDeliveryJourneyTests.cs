@@ -36,7 +36,7 @@ public sealed class SchedulingDeliveryJourneyTests
                 using var plan = await producer.Client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
                     new { code = "retry-occurrence", intervalSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
                 Assert.Equal(HttpStatusCode.Created, plan.StatusCode);
-                id = (await plan.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+                id = (await plan.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
                 failed = await WaitForDeliveryAsync(producer.Client, id, "DeadLettered");
                 Assert.Equal(1, failed.GetProperty("attemptCount").GetInt32());
                 await producer.CrashAsync();
@@ -56,7 +56,7 @@ public sealed class SchedulingDeliveryJourneyTests
             Assert.Equal(HttpStatusCode.Conflict, repeated.StatusCode);
             var delivered = await WaitForDeliveryAsync(recovered.Client, id, "Delivered");
             Assert.Equal(occurrenceId, delivered.GetProperty("occurrenceId").GetGuid());
-            Assert.Equal(1, delivered.GetProperty("triggerSequence").GetInt64());
+            Assert.Equal(1, delivered.GetProperty("triggerSequence").ReadHttpInt64());
         }
         finally { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
     }
@@ -85,7 +85,7 @@ public sealed class SchedulingDeliveryJourneyTests
                 using var plan = await producer.Client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
                     new { code = "cross-outbox", intervalSeconds = 3600, targetKind = "costing.recalculate", targetId });
                 Assert.Equal(HttpStatusCode.Created, plan.StatusCode);
-                id = (await plan.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+                id = (await plan.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
                 var pending = await WaitForDeliveryAsync(producer.Client, id, "Pending");
                 occurrenceId = pending.GetProperty("occurrenceId").GetGuid();
                 await producer.CrashAsync();

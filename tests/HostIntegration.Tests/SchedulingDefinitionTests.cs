@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -29,7 +30,7 @@ public sealed class SchedulingDefinitionTests
         using var created = await client.PostAsJsonAsync(new Uri("/api/scheduling/tasks/", UriKind.Relative),
             new { code = "conditional-plan", intervalSeconds = 30, firstRunInSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
-        var id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").GetInt64();
+        var id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
         using var stale = await client.PostAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/pause", UriKind.Relative), new { expectedVersion = 0 });
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
         using var pause = await client.PostAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/pause", UriKind.Relative), new { expectedVersion = 1 });
@@ -39,7 +40,7 @@ public sealed class SchedulingDefinitionTests
         var page = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         var paused = Assert.Single(page.GetProperty("data").EnumerateArray());
         Assert.False(paused.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal(2, paused.GetProperty("version").GetInt64());
+        Assert.Equal(2, paused.GetProperty("version").ReadHttpInt64());
         using var staleResume = await client.PostAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/resume", UriKind.Relative), new { expectedVersion = 1 });
         Assert.Equal(HttpStatusCode.Conflict, staleResume.StatusCode);
         using var resume = await client.PostAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/resume", UriKind.Relative), new { expectedVersion = 2 });
@@ -47,7 +48,7 @@ public sealed class SchedulingDefinitionTests
         page = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         var resumed = Assert.Single(page.GetProperty("data").EnumerateArray());
         Assert.True(resumed.GetProperty("isEnabled").GetBoolean());
-        Assert.Equal(3, resumed.GetProperty("version").GetInt64());
+        Assert.Equal(3, resumed.GetProperty("version").ReadHttpInt64());
     }
 
     [Theory]
@@ -98,6 +99,6 @@ public sealed class SchedulingDefinitionTests
         Assert.Equal(itemId, plan.GetProperty("targetId").GetGuid());
         Assert.Equal(new JwtSecurityTokenHandler().ReadJwtToken(client.DefaultRequestHeaders.Authorization!.Parameter).Subject,
             plan.GetProperty("createdBy").GetString());
-        Assert.Equal(1, plan.GetProperty("version").GetInt64());
+        Assert.Equal(1, plan.GetProperty("version").ReadHttpInt64());
     }
 }

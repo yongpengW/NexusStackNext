@@ -58,20 +58,20 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
                 gateway.Authenticate();
                 before = await WaitForAsync(gateway.Client, $"/api/pricing/items/{request.itemId}", data =>
                     data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 100m);
-                Assert.Equal(1, before.GetProperty("costingRevision").GetInt64());
+                Assert.Equal(1, before.GetProperty("costingRevision").ReadHttpInt64());
                 await WaitForAsync(gateway.Client, $"/api/costing/tasks/{request.requestId}/delivery", data => data.GetProperty("state").GetString() == "Delivered");
                 var cost = await WaitForAsync(gateway.Client, $"/api/costing/items/{request.itemId}", _ => true);
                 using var costChanged = await gateway.Client.PostAsJsonAsync(Relative("/api/costing/cost"), new
                 {
                     requestId = Guid.NewGuid(),
                     request.itemId,
-                    expectedVersion = cost.GetProperty("version").GetInt64(),
+                    expectedVersion = cost.GetProperty("version").ReadHttpInt64(),
                     purchaseCost = 90m,
                     freightCost = 10m,
                 });
                 Assert.Equal(HttpStatusCode.Accepted, costChanged.StatusCode);
-                before = await WaitForAsync(gateway.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").GetInt64() == 2);
-                var fee = new { requestId = Guid.NewGuid(), request.itemId, expectedVersion = before.GetProperty("version").GetInt64(), feeRate = 0.2m };
+                before = await WaitForAsync(gateway.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").ReadHttpInt64() == 2);
+                var fee = new { requestId = Guid.NewGuid(), request.itemId, expectedVersion = before.GetProperty("version").ReadHttpInt64(), feeRate = 0.2m };
                 using var changed = await gateway.Client.PostAsJsonAsync(Relative("/api/pricing/fee"), fee);
                 Assert.Equal(HttpStatusCode.Accepted, changed.StatusCode);
                 before = await WaitForAsync(gateway.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("breakEvenPrice").GetDecimal() == 125m);
@@ -86,14 +86,14 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
             // 新版本消息充当队列消费屏障；先验证旧 ID 没有把任务重复创建或回滚结果。
             var next = Envelope(request.itemId, 3, 120m, Guid.NewGuid());
             Assert.True((await bus.PublishAsync(next)).IsSuccess);
-            await WaitForAsync(restarted.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").GetInt64() == 3
+            await WaitForAsync(restarted.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").ReadHttpInt64() == 3
                 && data.GetProperty("breakEvenPrice").GetDecimal() == 150m);
             Assert.True((await bus.PublishAsync(Envelope(request.itemId, 1, 10m, Guid.NewGuid()))).IsSuccess);
             Assert.True((await bus.PublishAsync(Envelope(request.itemId, 4, 120m, Guid.NewGuid()))).IsSuccess);
-            var after = await WaitForAsync(restarted.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").GetInt64() == 4);
+            var after = await WaitForAsync(restarted.Client, $"/api/pricing/items/{request.itemId}", data => data.GetProperty("costingRevision").ReadHttpInt64() == 4);
             Assert.Equal(120m, after.GetProperty("cost").GetDecimal());
             Assert.Equal(0.2m, after.GetProperty("feeRate").GetDecimal());
-            Assert.Equal(before.GetProperty("version").GetInt64() + 3, after.GetProperty("version").GetInt64());
+            Assert.Equal(before.GetProperty("version").ReadHttpInt64() + 3, after.GetProperty("version").ReadHttpInt64());
         }
         finally
         {

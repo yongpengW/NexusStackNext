@@ -4,6 +4,9 @@
 
 状态：已接受（[票据 #24](https://github.com/yongpengW/NexusStackNext/issues/24)）。
 
+后续修订：[ADR-0021](0021-http-int64-decimal-strings.md) 将全部 HTTP Int64 输出改为字符串，
+替代下方历史示例里的数字 timestamp；其余信封与状态码决定继续有效。
+
 ## 背景
 
 NS 的 `RequestAsyncResultFilter` 提供统一成功、错误和分页字段。NSN 原先直接返回各模块的匿名 JSON 与 ProblemDetails，客户端需要分别适配，Identity 还丢失了业务错误码。

@@ -1,7 +1,5 @@
 using System.Globalization;
-using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Schema;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using NexusStackNext.BuildingBlocks.Web;
@@ -106,7 +104,7 @@ public sealed partial class DownstreamOpenApiAggregator(
         var mergedPaths = (JsonObject)merged["paths"]!;
         var mergedSchemas = (JsonObject)merged["components"]!["schemas"]!;
         // 不带来源前缀的独立名字，不会与下面的 sourceName.schemaName 冲突。
-        mergedSchemas[EdgeProblemSchemaName] = JsonSerializerOptions.Web.GetJsonSchemaAsNode(typeof(ApiProblemDetails));
+        mergedSchemas[EdgeProblemSchemaName] = ApiResponseSchemas.ProblemDetails();
         var statuses = new List<OpenApiSourceStatus>();
 
         foreach (var (name, url) in Sources(table))

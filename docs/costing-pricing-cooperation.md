@@ -1,5 +1,7 @@
 # 成本 → 定价参考链路
 
+HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符串；请求优先原样回传字符串，精确数字输入继续兼容。见 [HTTP Int64 契约](http-int64-contract.md)。
+
 [本轮票据](https://github.com/yongpengW/NexusStackNext/issues/28)。演示公式为 Costing 的采购成本加单位运费，
 以及 Pricing 的单位成本除以一减费率。这些公式不代表 PoS 生产规则。
 
