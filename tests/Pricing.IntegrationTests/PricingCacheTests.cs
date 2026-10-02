@@ -46,14 +46,16 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         settings["Pricing__Cache__ConnectionString"] = proxy.ConnectionString;
         var itemId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
+        await using var control = await ConnectionMultiplexer.ConnectAsync(Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_REDIS")!);
+        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
         await using (var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings))
         {
             app.Authenticate();
             using var initial = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId = Guid.NewGuid(), itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m });
             Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
-            await Task.Delay(1000);
-            var quote = await ReadQuoteAsync(app, itemId);
+            await WaitForInvalidationsDrainedAsync(itemId);
+            var quote = await WaitForCachedQuoteAsync(app, itemId, control.GetDatabase(), key, x => x.Cost == 80m);
             proxy.SetOffline(true);
             using var update = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId = taskId, itemId, expectedVersion = quote.Version, cost = 96m, feeRate = 0.2m });
@@ -61,6 +63,24 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
             Assert.Equal(96m, (await ReadQuoteAsync(app, itemId)).Cost);
         }
         proxy.SetOffline(false);
+        var stale = await control.GetDatabase().HashGetAsync(key, "value");
+        Assert.True(stale.HasValue, "恢复前必须仍有旧缓存，不能由 TTL 到期代替可靠失效。");
+        Assert.Equal(80m, JsonSerializer.Deserialize<PriceQuoteView>((string)stale!)!.Cost);
+        // 先禁止计算产生新的失效意图：必须靠停机前那笔提交清掉旧缓存。
+        await using (var replayOnly = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings))
+        {
+            replayOnly.Authenticate();
+            var replayed = await WaitForCachedQuoteAsync(replayOnly, itemId, control.GetDatabase(), key, x => x.Cost == 96m);
+            Assert.Null(replayed.BreakEvenPrice);
+            var pending = await replayOnly.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/pricing/tasks/{taskId}", UriKind.Relative));
+            Assert.Equal("Pending", pending.GetProperty("data").GetProperty("state").GetString());
+            try
+            {
+                await database.SetAvailableAsync(false);
+                Assert.Equal(96m, (await ReadQuoteAsync(replayOnly, itemId)).Cost);
+            }
+            finally { await database.SetAvailableAsync(true); }
+        }
         await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true, settings: settings);
         restarted.Authenticate();
         var result = await WaitForQuoteAsync(restarted, itemId, x => x.Cost == 96m && x.BreakEvenPrice == 120m && x.InputRevision == x.CalculatedRevision);
@@ -96,15 +116,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
             using var update = await fast.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId = Guid.NewGuid(), itemId, expectedVersion = original.Version, cost = 96m, feeRate = 0.2m });
             Assert.Equal(HttpStatusCode.Accepted, update.StatusCode);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            while (true)
-            {
-                await ReadQuoteAsync(fast, itemId);
-                // Redis 观察只定位故障时序：确认新填充已完成，再放行旧网络请求。
-                var payload = await control.GetDatabase().HashGetAsync(key, "value");
-                if (payload.HasValue && JsonSerializer.Deserialize<PriceQuoteView>((string)payload!)!.Cost == 96m) { break; }
-                await Task.Delay(20, timeout.Token);
-            }
+            await WaitForCachedQuoteAsync(fast, itemId, control.GetDatabase(), key, x => x.Cost == 96m);
             Assert.False(oldRead.IsCompleted, "旧回填必须仍在等待，不能让客户端超时代替竞态验证。");
         }
         finally { proxy.ReleaseFill(); }
@@ -142,9 +154,11 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         using var accepted = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
             new { requestId = Guid.NewGuid(), itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
-        // 等待失效意图处理，然后预热；数据库停用是外部故障控制，结果仍经 HTTP 验证。
-        await Task.Delay(1000);
-        Assert.Equal(80m, (await ReadQuoteAsync(first, itemId)).Cost);
+        // 观察预热完成再停库；故障后的业务结论仍从第二进程的 HTTP 读取。
+        await WaitForInvalidationsDrainedAsync(itemId);
+        await using var control = await ConnectionMultiplexer.ConnectAsync(settings["Pricing__Cache__ConnectionString"]);
+        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
+        await WaitForCachedQuoteAsync(first, itemId, control.GetDatabase(), key, x => x.Cost == 80m);
         try
         {
             await database.SetAvailableAsync(false);
@@ -175,6 +189,35 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
             var quote = await ReadQuoteAsync(app, itemId);
             if (matches(quote)) { return quote; }
             await Task.Delay(50, timeout.Token);
+        }
+    }
+
+    private static async Task<PriceQuoteView> WaitForCachedQuoteAsync(BusinessProcess app, Guid itemId,
+        IDatabase cache, RedisKey key, Func<PriceQuoteView, bool> matches)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        while (true)
+        {
+            var quote = await ReadQuoteAsync(app, itemId);
+            // Redis 观察只定位故障时序，不以客户端调用次数代替 HTTP 业务断言。
+            var payload = await cache.HashGetAsync(key, "value");
+            if (matches(quote) && payload.HasValue && matches(JsonSerializer.Deserialize<PriceQuoteView>((string)payload!)!)) { return quote; }
+            await Task.Delay(20, timeout.Token);
+        }
+    }
+
+    private async Task WaitForInvalidationsDrainedAsync(Guid itemId)
+    {
+        // 故障前排空初始创建的失效，避免它碰巧替后续更新清缓存。
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        while (true)
+        {
+            await using var command = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM pricing.cache_invalidations WHERE \"ItemId\" = @id)", connection);
+            command.Parameters.AddWithValue("id", itemId);
+            if (!(bool)(await command.ExecuteScalarAsync(timeout.Token))!) { return; }
+            await Task.Delay(20, timeout.Token);
         }
     }
 
