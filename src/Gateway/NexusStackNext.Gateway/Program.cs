@@ -251,9 +251,7 @@ app.MapHealthChecks("/health/ready");
 
 // 路由表自述：把"网关现在按什么规则转发"变成可查询的事实，而不是只能读配置文件。
 //
-// **注意这里没有 Auditing。** 它是只写上下文：事件从消息总线进入，**不经边缘**。
-// 给它开一条边缘路由等于让任何人都能注入审计记录。
-// "是一个服务"与"在边缘上可达"是两件事——参照仓库从没把这条写下来过。
+// Auditing 仅经边缘公开受权调查 GET，事实写入由消息总线承载。
 //
 // 返回进程已接受的配置。直接编辑磁盘需要重启，不能把未加载的文件冒充运行配置。
 app.MapGet("/gateway/routes", (ApiResponses responses, GatewayRouteConfiguration configuration) =>

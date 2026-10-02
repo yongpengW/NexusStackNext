@@ -128,6 +128,25 @@ public static class PlatformModule
             return cleared.IsFailure ? Failure(cleared.Error) : Results.NoContent();
         }).Produces(204).RequirePermission("/api/platform/settings/{key}", "DELETE");
 
+        var deliveries = endpoints.MapGroup("/api/platform/audit-deliveries").RequireAuthorization()
+            .ProducesApiErrors(400, 401, 403, 409, 500);
+        deliveries.AddEndpointFilter<NexusStackAuthorizationFilter>();
+        deliveries.MapGet("/", async (ISettingAuditDelivery delivery, ApiResponses responses, CancellationToken token,
+            string state = "Pending", int limit = 50) =>
+        {
+            if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
+            {
+                return Failure(new Error("platform.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。"));
+            }
+            return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
+        }).RequirePermission("/api/platform/audit-deliveries", "GET").Produces<ApiResponse<IReadOnlyList<SettingAuditDelivery>>>();
+        deliveries.MapPost("/{messageId:guid}/retry", async (Guid messageId, RetryAuditDeliveryRequest request,
+            ISettingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.RetryAsync(messageId, request.ExpectedDeadLetteredAt, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/platform/audit-deliveries/{messageId}/retry", "POST")
+            .Produces<ApiResponse<SettingAuditDelivery>>().ProducesApiErrors(415);
         return endpoints;
     }
 
@@ -139,7 +158,7 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
+        statusCode: error.Code == SettingStore.Conflict.Code || error.Code == "platform.delivery_conflict" ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
@@ -151,3 +170,4 @@ internal sealed record WriteSettingRequest(string? Value, string? Description, l
 
 internal sealed record SettingResponse(string Key, string Scope, string? Value, DateTimeOffset At, long Version, string? Description);
 internal sealed record SettingItem(string Key, string Name, string? Value, string? Description, long Version);
+internal sealed record RetryAuditDeliveryRequest(DateTimeOffset ExpectedDeadLetteredAt);

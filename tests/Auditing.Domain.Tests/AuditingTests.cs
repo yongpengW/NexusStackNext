@@ -10,17 +10,17 @@ public sealed class AuditingTests
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
     private static Result<AuditEntry> Record(string? action = "identity.user-registered") =>
-        AuditEntry.Record(new AuditEntryId(1), action, "User", "42", "actor-1", "{}", Now);
+        AuditEntry.Record(new AuditEntryId(1), new AuditFact(Guid.Parse("11111111-1111-1111-1111-111111111111"), "identity.user-registered.v1", "identity", action!, "User", "42", 1, "actor-1", Now, "trace-1", "correlation-1"), Now);
 
     [Fact]
     public void Record_KeepsTheFacts()
     {
         var entry = Record().Value;
 
-        Assert.Equal("identity.user-registered", entry.Action);
-        Assert.Equal("User", entry.SubjectType);
-        Assert.Equal("42", entry.SubjectId);
-        Assert.Equal("actor-1", entry.ActorId);
+        Assert.Equal("identity.user-registered", entry.Fact.Action);
+        Assert.Equal("User", entry.Fact.SubjectType);
+        Assert.Equal("42", entry.Fact.SubjectId);
+        Assert.Equal("actor-1", entry.Fact.ActorId);
         Assert.Equal(Now, entry.RecordedAt);
     }
 
@@ -35,7 +35,7 @@ public sealed class AuditingTests
     [Fact]
     public void Record_RejectsMissingSubject()
     {
-        var result = AuditEntry.Record(new AuditEntryId(1), "x", "  ", "42", null, null, Now);
+        var result = AuditEntry.Record(new AuditEntryId(1), new AuditFact(Guid.Parse("11111111-1111-1111-1111-111111111111"), "identity.user-registered.v1", "identity", "x", "  ", "42", 1, null, Now, "trace-1", "correlation-1"), Now);
 
         Assert.True(result.IsFailure);
         Assert.Equal("auditing.subject.empty", result.Error.Code);

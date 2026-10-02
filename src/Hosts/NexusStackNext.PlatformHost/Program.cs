@@ -6,6 +6,7 @@ using NexusStackNext.Auditing.Endpoints;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Infrastructure;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
 using NexusStackNext.BuildingBlocks.Web;
@@ -34,6 +35,12 @@ if (args is ["migrate-files"])
     return;
 }
 
+if (args is ["migrate-auditing"])
+{
+    Environment.ExitCode = await AuditingDatabaseCommand.RunAsync();
+    return;
+}
+
 // 平台能力的**唯一宿主**。不变量 8：这个进程由什么组成，一眼看得出来——
 // 下面五行就是它的全部内容，没有 InitApplication(moduleKey)，也没有"我是哪个服务"的运行时枚举。
 //
@@ -56,7 +63,8 @@ builder.AddNexusStackServiceDefaults();
 builder.Services.AddNexusStackApplication();
 
 // 依赖 AddNexusStackApplication 注册的 IClock；顺序反了会立刻失败，而不是在运行时。
-builder.Services.AddNexusStackInfrastructure(new IdGeneratorOptions { WorkerId = 101 });
+builder.Services.AddNexusStackInfrastructure(new IdGeneratorOptions { WorkerId = 101 },
+    builder.Configuration.GetSection("Platform:Delivery").Get<OutboxDeliveryOptions>());
 
 // ---------- 事件总线（配了才接）----------
 //
@@ -77,7 +85,7 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
 builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule();
-builder.Services.AddAuditingModule();
+builder.Services.AddAuditingModule(builder.Configuration, builder.Environment);
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
 
 // ---------- 认证（ADR-0003：网关验签、上下文授权）----------
@@ -153,8 +161,8 @@ if (app.Environment.IsDevelopment())
 }
 
 // 存活 = 进程还能应答 HTTP；就绪 = 依赖可用。
-// Identity / Platform 的 PostgreSQL 模式各自检查数据库，Files 检查存储可写可删。
-// Scheduling / Auditing 当前使用内存适配器。
+// Identity / Platform / Auditing 的 PostgreSQL 模式各自检查数据库，Files 检查数据库和存储。
+// Scheduling 当前使用内存适配器。
 app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = static _ => false });
 app.MapHealthChecks("/health/ready");
@@ -163,10 +171,9 @@ app.MapHealthChecks("/health/ready");
 // 所以它们并到一个进程里**不需要改任何路由**——网关的路由表也只改目标地址。
 //
 // **授权由模块自己声明**，宿主不必记得替每个模块挂一遍。两种机制，按需要选：
-//   · Identity / Platform 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
+//   · Identity / Platform / Auditing 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
 //     并比对预计算集合，还要查会话版本（撤销），那是 RBAC 的落点；
-//   · 其余三个模块用框架的 `RequireAuthorization()` / `AllowAnonymous()`——它们还没有
-//     登记权限键，需要表达的只是"令牌有效"与"这个端点有意公开"。
+//   · Files 通过同一过滤器检查有效会话，再判断归属；Scheduling 声明自己的端点授权要求。
 // 两者都是**进程内的**判定：直连后端也绕不过去。（"边缘是唯一入口"是编排的事实，
 // 不是代码的事实——见 AGENTS.md 的部署不变量。）
 app.MapIdentityEndpoints();

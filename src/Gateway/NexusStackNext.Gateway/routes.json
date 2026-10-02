@@ -1,6 +1,23 @@
 {
   "routes": [
     {
+      "routeId": "platform-audit-retry",
+      "clusterId": "platform-host",
+      "path": "/api/platform/audit-deliveries/{messageId}/retry",
+      "methods": [ "POST" ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
+      "routeId": "auditing-investigation",
+      "clusterId": "platform-host",
+      "path": "/api/auditing/entries",
+      "methods": [ "GET" ],
+      "timeout": "00:00:05",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
       "routeId": "platform-read",
       "clusterId": "platform-host",
       "path": "/api/platform/{**catch-all}",

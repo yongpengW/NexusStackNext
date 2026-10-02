@@ -30,7 +30,16 @@ public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore whe
     public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
         UpdateAsync(id, entry => entry.IsPending ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
 
-    private async Task UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    private Task UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    {
+        // 使用重试策略的上下文必须把“开事务至提交”整体交给策略；否则首次确认即抛异常，
+        // 每轮都会重复发送第一条而无法继续后面的消息。
+        return context.Database.CurrentTransaction is not null
+            ? UpdateInTransactionAsync(id, update, cancellationToken)
+            : context.Database.CreateExecutionStrategy().ExecuteAsync(() => UpdateInTransactionAsync(id, update, cancellationToken));
+    }
+
+    private async Task UpdateInTransactionAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         // 锁住最新状态再经跟踪器保存：既不丢并发更新，也不绕过 SaveChanges 拦截器。
         await using var transaction = context.Database.CurrentTransaction is null

@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Services/Auditing/NexusStackNext.Auditing.Infrastructure/NexusStackNext.Auditing.Infrastructure.csproj" />
+  </ItemGroup>
 
   <PropertyGroup>
     <RootNamespace>NexusStackNext.Auditing.Application.Tests</RootNamespace>

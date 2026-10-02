@@ -271,14 +271,16 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
     private readonly string _connectionString;
     private readonly string _platformConnectionString;
     private readonly string _filesConnectionString;
+    private readonly string _auditingConnectionString;
     private readonly string? _rootPassword;
 
     public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null,
-        string? filesConnectionString = null)
+        string? filesConnectionString = null, string? auditingConnectionString = null)
     {
         _connectionString = connectionString;
         _platformConnectionString = platformConnectionString ?? connectionString;
         _filesConnectionString = filesConnectionString ?? connectionString;
+        _auditingConnectionString = auditingConnectionString ?? connectionString;
         _rootPassword = rootPassword;
         UseKestrel(0);
     }
@@ -291,9 +293,11 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
                 ["Identity:Storage:Provider"] = "Postgres",
                 ["Platform:Storage:Provider"] = "Postgres",
                 ["Files:Storage:Provider"] = "Postgres",
+                ["Auditing:Storage:Provider"] = "Postgres",
                 ["ConnectionStrings:Identity"] = _connectionString,
                 ["ConnectionStrings:Platform"] = _platformConnectionString,
                 ["ConnectionStrings:Files"] = _filesConnectionString,
+                ["ConnectionStrings:Auditing"] = _auditingConnectionString,
             }));
         return base.CreateHost(builder);
     }
@@ -337,6 +341,9 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         var files = await RunMigrationAsync(ConnectionString, "Files");
         Assert.Equal(0, files.ExitCode);
         Assert.Contains("Files migrations applied.", files.Output, StringComparison.Ordinal);
+        var auditing = await RunMigrationAsync(ConnectionString, "Auditing");
+        Assert.Equal(0, auditing.ExitCode);
+        Assert.Contains("Auditing migrations applied.", auditing.Output, StringComparison.Ordinal);
     }
 
     internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")

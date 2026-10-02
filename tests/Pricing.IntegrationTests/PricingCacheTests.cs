@@ -165,11 +165,19 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         try
         {
             await database.SetAvailableAsync(false);
+            // 缓存命中必须在后台失效轮询遇到数据库故障之后仍可用。
+            await Task.Delay(TimeSpan.FromSeconds(2));
             Assert.True(await control.GetDatabase().HashExistsAsync(key, "value"), "停库时必须仍有可供共享的缓存。");
             Assert.Equal(80m, (await ReadQuoteAsync(first, itemId)).Cost);
             Assert.Equal(80m, (await ReadQuoteAsync(second, itemId)).Cost);
         }
         finally { await database.SetAvailableAsync(true); }
+        // 故障后后台轮询仍须工作，后续提交不能一直读旧缓存。
+        var current = await ReadQuoteAsync(first, itemId);
+        using var changed = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
+            new { requestId = Guid.NewGuid(), itemId, expectedVersion = current.Version, cost = 96m, feeRate = 0.2m });
+        Assert.Equal(HttpStatusCode.Accepted, changed.StatusCode);
+        Assert.Equal(96m, (await WaitForQuoteAsync(second, itemId, quote => quote.Cost == 96m)).Cost);
     }
 
     private static Dictionary<string, string> RedisSettings() => new()

@@ -1,3 +1,5 @@
+using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Platform.Application;
 using NexusStackNext.Platform.Domain.Settings;
 using NexusStackNext.Platform.Infrastructure;
@@ -14,14 +16,30 @@ namespace NexusStackNext.Platform.Application.Tests;
 /// </summary>
 public sealed class SettingStoreTests
 {
+    [Fact]
+    public async Task DescribingAlreadyEmptySetting_RecordsChangeInsteadOfClearingAgain()
+    {
+        var store = NewStore(out var repository);
+        var key = Key("mail.sender");
+        await store.WriteAsync(key, null, "first-description");
+        await store.WriteAsync(key, null, "changed-description");
+        var pending = await repository.ReadPendingAsync(10, Now);
+        var serializer = new SystemTextJsonIntegrationEventSerializer();
+        var facts = pending.Select(entry => serializer.Deserialize<NexusStackNext.Platform.Contracts.SettingCommittedV1>(entry.Payload)).ToArray();
+        Assert.Equal(2, facts.Length);
+        Assert.Equal("created", Assert.Single(facts, fact => fact.Version == 1).Operation);
+        Assert.Equal("changed", Assert.Single(facts, fact => fact.Version == 2).Operation);
+        Assert.DoesNotContain("changed-description", string.Join('\n', pending.Select(entry => entry.Payload)), StringComparison.Ordinal);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
     private static SettingKey Key(string value) => SettingKey.Create(value).Value;
 
     private static SettingStore NewStore(out InMemorySettingRepository repository)
     {
-        repository = new InMemorySettingRepository();
-        return new SettingStore(repository, new SequentialIdGenerator(1000), new FixedClock(Now));
+        repository = new InMemorySettingRepository(new SystemTextJsonIntegrationEventSerializer());
+        return new SettingStore(repository, new SequentialIdGenerator(1000), new FixedClock(Now), new AnonymousCurrentUser());
     }
 
     [Fact]

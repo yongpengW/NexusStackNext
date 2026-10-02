@@ -33,6 +33,10 @@
 
 ### 已经成立的
 
+- **Platform → Auditing**：`Platform.Contracts` 的 `SettingCommittedV1` 只传设置标识、提交版本、
+  认证 Actor 与关联信息；状态和 Outbox 同事务，Auditing 的 Inbox 与不可变记录同事务。
+  不传设置值或说明，调查查询要求显式权限，HTTP 不接受审计写入。
+
 - **Costing → Pricing**：通过 `CostCalculatedV1` 传递完整成本快照及来源版本。Costing 的结果与 Outbox 同事务；
   Pricing 的 Inbox、成本投影与重算任务同事务，费率归 Pricing。契约在 Costing.Contracts 中。
 
@@ -47,15 +51,15 @@
 
 ### 还没建的（**不要照着它 grep**）
 
-五个平台上下文的跨上下文事件链路尚未接入。业务样板 Costing → Pricing 已使用真实消息协作，
-各自的数据与执行任务仍由所属服务持有。
+Platform → Auditing 与业务样板 Costing → Pricing 已使用真实消息协作，其余事件生产者按真实需求逐个接入。
+各自的数据与执行任务仍由所属上下文持有。
 
 以下是**设计意图**，不是现状：
 
 - **Identity → Auditing**：Identity 计划发出 `UserLoggedIn`、`LoginFailed`、
   `RefreshTokenIssued`、`RefreshTokenRevoked`（这些**领域事件已经存在**，在
   `IdentityDomainEvents.cs` 里），Auditing 消费后落审计。**消费端还没做。**
-- **所有上下文 → Auditing**：计划有一个统一的 `OperationPerformed` 事件。**不存在。**
+- **其余上下文 → Auditing**：尚未接入；不以通用原始载荷替代上下文自己的最小事实契约。
 - **Scheduling → 其他上下文**：计划发出 `TaskDue` 一类的集成事件，由目标上下文自己决定要不要响应——
   否则 Scheduling 会变成上帝服务。**不存在。**
 

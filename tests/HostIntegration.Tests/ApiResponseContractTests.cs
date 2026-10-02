@@ -2,6 +2,11 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -162,19 +167,27 @@ public sealed class ApiResponseContractTests
     }
 
     [Fact]
-    public async Task AcceptedAuditAndDuplicate_AreBothSuccess_WithoutLosingTheirHttpMeaning()
+    public async Task AcceptedAndOk_AreBothSuccess_WithoutLosingTheirHttpMeaning()
     {
-        await using var app = new PlatformApp();
-        using var client = app.CreateClient();
-        var message = new { messageId = Guid.NewGuid(), action = "probe.created", subjectType = "probe", subjectId = "1", detail = "{}" };
+        // 审计 HTTP 摄取已退役；响应适配器的 202/200 义务仍通过真实 HTTP 验证。
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Logging.ClearProviders();
+        builder.Services.AddApiResponseContract();
+        await using var app = builder.Build();
+        app.UseApiResponseContract();
+        app.MapGet("/accepted", (ApiResponses responses) => responses.Accepted(new { outcome = "Accepted" }));
+        app.MapGet("/ok", (ApiResponses responses) => responses.Ok(new { outcome = "Ok" }));
+        await app.StartAsync();
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
         foreach (var expected in new[] { HttpStatusCode.Accepted, HttpStatusCode.OK })
         {
-            using var response = await client.PostAsJsonAsync(new Uri("/api/auditing/entries", UriKind.Relative), message);
+            using var response = await client.GetAsync(new Uri(expected == HttpStatusCode.Accepted ? "/accepted" : "/ok", UriKind.Relative));
             Assert.Equal(expected, response.StatusCode);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.True(body.GetProperty("success").GetBoolean());
             Assert.Equal((int)expected, body.GetProperty("code").GetInt32());
-            Assert.Equal(expected == HttpStatusCode.Accepted ? "Accepted" : "Duplicate", body.GetProperty("data").GetProperty("outcome").GetString());
+            Assert.Equal(expected == HttpStatusCode.Accepted ? "Accepted" : "Ok", body.GetProperty("data").GetProperty("outcome").GetString());
         }
     }
 

@@ -1,5 +1,7 @@
 # Auditing 是只写上下文
 
+> 状态：已由 [ADR-0002](0002-committed-facts-and-controlled-investigation.md) 取代。下文保留历史取舍，不再描述当前 HTTP 契约。
+
 `AuditEntry` 是**追加写、永不修改**的。因此 Auditing 没有对外的业务查询端点。
 
 访问 `GET /api/auditing/entries` 得到 **405**（不是 404）——那条路径上现在有写入口
