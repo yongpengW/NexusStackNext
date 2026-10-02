@@ -6,17 +6,146 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Application.Transactions;
+using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Infrastructure;
 using NexusStackNext.Identity.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.Identity.IntegrationTests;
 
 [Collection(IdentityDatabaseGroup.Name)]
 public sealed class CommandTransactionTests(IdentityDatabaseFixture fixture)
 {
+    [PostgresFact]
+    public async Task UserAudit_TracksCommittedChanges_PreservesCreationAndIgnoresNoOpsAndRollbacks()
+    {
+        await fixture.ResetAsync();
+        var createdAt = new DateTimeOffset(2026, 10, 2, 10, 0, 0, TimeSpan.Zero);
+        var clock = new MutableClock(createdAt);
+        var actor = new MutableCurrentUser("creator");
+        var gate = new CommitGate { RejectCommit = true };
+        gate.Release.TrySetResult();
+        await using var provider = IdentityTestHost.Build(fixture.Database.ConnectionString, services =>
+        {
+            services.AddSingleton<IClock>(clock);
+            services.AddSingleton<ICurrentUser>(actor);
+            services.ConfigureDbContext<IdentityDbContext>(options => options.AddInterceptors(gate));
+        });
+        var user = await SendAsync(provider, new CreateUserCommand("audit-user", "a-strong-password"));
+        var firstRole = await SendAsync(provider, new CreateRoleCommand("audit-first", "First"));
+        var secondRole = await SendAsync(provider, new CreateRoleCommand("audit-second", "Second"));
+        Assert.True(user.IsSuccess);
+        Assert.True(firstRole.IsSuccess);
+        Assert.True(secondRole.IsSuccess);
+        var created = await ReadAuditAsync(user.Value);
+        Assert.Equal(new EntityAuditSnapshot(createdAt, "creator", null, null, 1), created);
+
+        actor.UserId = "editor";
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.True((await SendAsync(provider, new AssignRoleCommand(user.Value, firstRole.Value))).IsSuccess);
+        var modified = await ReadAuditAsync(user.Value);
+        Assert.Equal(new EntityAuditSnapshot(createdAt, "creator", clock.UtcNow, "editor", 2), modified);
+
+        actor.UserId = "no-op-caller";
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.True((await SendAsync(provider, new AssignRoleCommand(user.Value, firstRole.Value))).IsSuccess);
+        Assert.Equal(modified, await ReadAuditAsync(user.Value));
+
+        actor.UserId = "rolled-back-caller";
+        clock.Advance(TimeSpan.FromHours(1));
+        gate.Arm();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => SendAsync(provider, new AssignRoleCommand(user.Value, secondRole.Value)));
+        Assert.Equal(modified, await ReadAuditAsync(user.Value));
+        await using var verify = fixture.NewContext();
+        var reloaded = await new EfUserRepository(verify).FindAsync(new UserId(user.Value));
+        Assert.NotNull(reloaded);
+        Assert.Equal(firstRole.Value, Assert.Single(reloaded.RoleIds).Value);
+    }
+
+    [PostgresFact]
+    public async Task PermissionRootAudit_PersistsRoleResourceAndTree_AndTracksOwnedChangesOnly()
+    {
+        await fixture.ResetAsync();
+        var createdAt = new DateTimeOffset(2026, 10, 2, 10, 0, 0, TimeSpan.Zero);
+        var clock = new MutableClock(createdAt);
+        var actor = new MutableCurrentUser("permission-creator") { IsRoot = true };
+        await using var provider = IdentityTestHost.Build(fixture.Database.ConnectionString, services =>
+        {
+            services.AddSingleton<IClock>(clock);
+            services.AddSingleton<ICurrentUser>(actor);
+        });
+        var role = await SendAsync(provider, new CreateRoleCommand("audited-role", "Audited role"));
+        var menu = await SendAsync(provider, new CreateMenuCommand("Audited root", 1, null));
+        Assert.True(role.IsSuccess);
+        Assert.True(menu.IsSuccess);
+        var resource = await SendAsync(provider, new CreateApiResourceCommand("/audit/permission-root", "GET", menu.Value.MenuId));
+        Assert.True(resource.IsSuccess);
+
+        var initial = await ReadPermissionAuditsAsync(provider, role.Value, menu.Value.MenuId, resource.Value.ApiResourceId);
+        var newlyCreated = new EntityAuditSnapshot(createdAt, "permission-creator", null, null, 1);
+        Assert.Equal(newlyCreated, initial.Role);
+        Assert.Equal(newlyCreated, initial.Resource);
+        // 新建树和第一个根节点在同一次创建中保存，仍然没有修改审计。
+        Assert.Equal(newlyCreated with { Version = 2 }, initial.Tree);
+
+        actor.UserId = "permission-editor";
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.True((await SendAsync(provider, new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId))).IsSuccess);
+        var child = await SendAsync(provider, new CreateMenuCommand("Audited child", 1, menu.Value.MenuId));
+        Assert.True(child.IsSuccess);
+        var modified = await ReadPermissionAuditsAsync(provider, role.Value, menu.Value.MenuId, resource.Value.ApiResourceId);
+        var edited = newlyCreated with { UpdatedAt = clock.UtcNow, UpdatedBy = actor.UserId, Version = 2 };
+        Assert.Equal(edited, modified.Role);
+        Assert.Equal(edited with { Version = 3 }, modified.Tree);
+        Assert.Equal(initial.Resource, modified.Resource);
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var tree = await scope.ServiceProvider.GetRequiredService<IMenuTreeRepository>().FindAsync();
+            Assert.NotNull(tree);
+            Assert.Equal(menu.Value.MenuId, tree.Find(new MenuId(child.Value.MenuId))?.ParentId?.Value);
+        }
+
+        actor.UserId = "permission-no-op";
+        clock.Advance(TimeSpan.FromHours(1));
+        Assert.True((await SendAsync(provider, new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId))).IsSuccess);
+        Assert.Equal(modified, await ReadPermissionAuditsAsync(provider, role.Value, menu.Value.MenuId, resource.Value.ApiResourceId));
+    }
+
+    private static async Task<(EntityAuditSnapshot Role, EntityAuditSnapshot Resource, EntityAuditSnapshot Tree)> ReadPermissionAuditsAsync(
+        ServiceProvider provider, long roleId, long menuId, long resourceId)
+    {
+        await using var scope = provider.CreateAsyncScope();
+        var roles = await scope.ServiceProvider.GetRequiredService<IRoleRepository>().FindManyAsync([new RoleId(roleId)]);
+        var role = Assert.Single(roles);
+        var resources = await scope.ServiceProvider.GetRequiredService<IApiResourceRepository>()
+            .FindByMenuIdsAsync(new HashSet<MenuId> { new(menuId) });
+        var resource = Assert.Single(resources);
+        Assert.Equal(resourceId, resource.Id.Value);
+        var tree = await scope.ServiceProvider.GetRequiredService<IMenuTreeRepository>().FindAsync();
+        Assert.NotNull(tree);
+        return (AuditOf(role), AuditOf(resource), AuditOf(tree));
+    }
+
+    private static EntityAuditSnapshot AuditOf<TId>(AuditedAggregateRoot<TId> root) where TId : notnull =>
+        new(root.CreatedAt, root.CreatedBy, root.UpdatedAt, root.UpdatedBy, root.Version);
+
+    private async Task<EntityAuditSnapshot> ReadAuditAsync(long id)
+    {
+        await using var context = fixture.NewContext();
+        var user = await new EfUserRepository(context).FindAsync(new UserId(id));
+        Assert.NotNull(user);
+        var audit = Assert.IsAssignableFrom<IAuditedEntity>(user);
+        return new(audit.CreatedAt, audit.CreatedBy, audit.UpdatedAt, audit.UpdatedBy, user.Version);
+    }
+
+    private sealed record EntityAuditSnapshot(DateTimeOffset CreatedAt, string? CreatedBy, DateTimeOffset? UpdatedAt, string? UpdatedBy, long Version);
+
     [PostgresFact]
     public async Task ReplayRejection_PersistsRevocation_ForTheNextRequest()
     {

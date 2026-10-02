@@ -17,7 +17,7 @@ dotnet NexusStackNext.PlatformHost.dll migrate-scheduling
 
 普通启动检查迁移和数据库，未准备好直接退出；运行期数据库掉线使 `/health/ready` 返回 503，`/health/live` 仍可响应。开发无库演示可以显式选择 `Scheduling__Storage__Provider=Memory`，生产拒绝此模式。原内存计划不会自动导入。
 
-升级会为原固定间隔行补入 `RuleKind=Interval`、`scheduleRevision=1`，保留 Interval、NextRunAt、聚合版本与发生序号；新日历列可空，并新增决定表及故障退避字段。旧发生记录不伪造历史规则，仍从 occurrences 查询。先停旧宿主、备份并执行迁移，再启动新宿主；存在日历计划时向旧固定间隔版本降级会明确拒绝，需另作数据处置。启动与就绪检查会读取计划、决定、发生和 Outbox 的所需列，不能只凭迁移历史判断可用。
+2026-10-02 开发阶段确认没有历史数据后，七个上下文的迁移统一重置。`InitialScheduling` 直接创建完整的固定间隔、日历规则、决定、发生、故障退避与计划审计字段，不再支持旧固定间隔迁移链的升级或降级。已有开发 schema 需要清理后重新初始化，不能只清空迁移历史并保留旧表；只处置确认可重建的 NSN schema，不能删除共用数据库中配置中心或其他系统的数据。重复执行当前迁移不会改写已保存的计划、版本或审计信息。启动与就绪检查会读取计划、决定、发生和 Outbox 的所需列，不能只凭迁移历史判断可用。
 
 Costing 的新增接受记录与任务来源列需要先执行它自己的 `migrate-costing`，见[成本与定价协作](costing-pricing-cooperation.md)。本轮只在隔离的测试数据库执行迁移。
 

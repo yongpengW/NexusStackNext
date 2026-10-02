@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -25,7 +26,7 @@ public static class CostingServices
         var policy = options ?? new CostingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
-        services.AddScoped(_ => CostingDatabase.CreateContext(connectionString));
+        services.AddScoped(provider => CostingDatabase.CreateContext(connectionString, provider));
         services.AddScoped<IOutboxStore, EfOutboxStore<CostingDbContext>>();
         services.AddScoped<IQueryHandler<GetCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();
         services.AddScoped<ICommandHandler<RetryCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();
@@ -117,6 +118,7 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
         var sheet = await database.Sheets.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken).ConfigureAwait(false);
         return sheet is null ? Result.Failure<CostSheetView>(new Error("costing.not_found", "成本核算对象不存在。"))
             : Result.Success(new CostSheetView(sheet.Id.Value, sheet.Version, sheet.PurchaseCost, sheet.FreightCost,
-                sheet.InputRevision, sheet.CalculatedRevision, sheet.UnitCost));
+                sheet.InputRevision, sheet.CalculatedRevision, sheet.UnitCost)
+            { Audit = EntityAuditMetadata.From(sheet) });
     }
 }

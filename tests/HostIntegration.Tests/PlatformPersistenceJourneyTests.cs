@@ -9,6 +9,47 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class PlatformPersistenceJourneyTests
 {
     [PostgresFact]
+    public async Task SettingAudit_ReportsPersistedActorAndTime_AndNoOpPreservesMetadata()
+    {
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateAsync();
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
+        using var client = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
+        var uri = new Uri("/api/platform/settings/audit.sender", UriKind.Relative);
+        var before = DateTimeOffset.UtcNow;
+        using var create = await client.PutAsJsonAsync(uri, new
+        {
+            value = "original",
+            expectedVersion = 0,
+            audit = new { createdBy = "forged", createdAt = "2000-01-01T00:00:00Z" },
+        });
+        Assert.Equal(HttpStatusCode.NoContent, create.StatusCode);
+        using var initialRead = await client.GetAsync(uri);
+        var initial = (await initialRead.Content.ReadApiDataAsync()).GetProperty("audit");
+        Assert.InRange(initial.GetProperty("createdAt").GetDateTimeOffset(), before, DateTimeOffset.UtcNow);
+        Assert.False(string.IsNullOrEmpty(initial.GetProperty("createdBy").GetString()));
+        Assert.NotEqual("forged", initial.GetProperty("createdBy").GetString());
+        Assert.Equal(JsonValueKind.Null, initial.GetProperty("updatedAt").ValueKind);
+        Assert.Equal(JsonValueKind.Null, initial.GetProperty("updatedBy").ValueKind);
+        using var edit = await client.PutAsJsonAsync(uri, new { value = "changed", expectedVersion = 1 });
+        Assert.Equal(HttpStatusCode.NoContent, edit.StatusCode);
+        using var editedRead = await client.GetAsync(uri);
+        var edited = (await editedRead.Content.ReadApiDataAsync()).GetProperty("audit");
+        Assert.Equal(initial.GetProperty("createdAt").GetString(), edited.GetProperty("createdAt").GetString());
+        Assert.Equal(initial.GetProperty("createdBy").GetString(), edited.GetProperty("createdBy").GetString());
+        Assert.Equal(edited.GetProperty("createdBy").GetString(), edited.GetProperty("updatedBy").GetString());
+        Assert.InRange(edited.GetProperty("updatedAt").GetDateTimeOffset(), before, DateTimeOffset.UtcNow);
+        using var noOp = await client.PutAsJsonAsync(uri, new { value = "changed", expectedVersion = 2 });
+        Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode);
+        using var unchangedRead = await client.GetAsync(uri);
+        Assert.Equal(edited.GetRawText(), (await unchangedRead.Content.ReadApiDataAsync()).GetProperty("audit").GetRawText());
+        using var listing = await client.GetAsync(new Uri("/api/platform/settings/?scope=audit", UriKind.Relative));
+        var item = Assert.Single((await listing.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").EnumerateArray());
+        Assert.Equal(edited.GetRawText(), item.GetProperty("audit").GetRawText());
+    }
+
+    [PostgresFact]
     public async Task OverlappingWrites_WithoutClientVersions_StillRejectDatabaseConflicts()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();

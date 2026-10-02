@@ -153,7 +153,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
 
                 var id = Guid.NewGuid();
                 var occurrence = trigger ? new ScheduleOccurrence(id, task.Id.Value, task.TriggerSequence, scheduledAt, now,
-                    task.Target.Kind, task.Target.SubjectId, task.CreatedBy) : null;
+                    task.Target.Kind, task.Target.SubjectId, task.DelegatedBy) : null;
                 var decision = new ScheduleDecision(id, task.Id.Value, task.Version, task.ScheduleRevision, task.Rule,
                     !trigger ? "Skipped" : misfire ? "Coalesced" : "Triggered", scheduledAt, now, next.Value, occurrence?.OccurrenceId);
                 var saved = await store.RecordDecisionAsync(task, expectedVersion, decision, occurrence, cancellationToken).ConfigureAwait(false);

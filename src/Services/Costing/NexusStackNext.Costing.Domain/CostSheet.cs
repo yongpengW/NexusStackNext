@@ -11,7 +11,7 @@ public sealed record CostId : StronglyTypedId<Guid>
 }
 
 /// <summary>用于演示异步派生结果的成本核算聚合；不代表 PoS 正式计费模型。</summary>
-public sealed class CostSheet : AggregateRoot<CostId>
+public sealed class CostSheet : AuditedAggregateRoot<CostId>
 {
     private CostSheet(CostId id) : base(id) { }
 

@@ -1,14 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
-using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
-using NexusStackNext.Scheduling.Infrastructure.Persistence;
 using NexusStackNext.TestSupport;
 using Npgsql;
 
@@ -352,40 +347,39 @@ public sealed class CalendarSchedulingPersistenceTests
     }
 
     [PostgresFact]
-    public async Task Upgrade_PreservesAnExistingIntervalPlanAndItsObservedVersion()
+    public async Task RepeatedInitialMigration_PreservesIntervalPlanVersionAndAudit()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await database.MigrateAsync();
-        await using (var context = new SchedulingDbContext(new DbContextOptionsBuilder<SchedulingDbContext>()
-            .UseNexusStackPostgres(database.ConnectionString, SchedulingDbContext.SchemaName).Options))
+        // 开发期无历史数据，旧 DurableOccurrences 升级路径随迁移重置退役。
+        // 保留“迁移不能改写既有计划”的义务，通过当前 HTTP 契约准备和观察数据。
+        JsonElement before;
+        await using (var first = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password", schedulingWorkerEnabled: false))
         {
-            // 在专属空库布置上一个公开迁移版本；升级后的观察只经 HTTP。
-            await context.GetService<IMigrator>().MigrateAsync("20261002084531_DurableOccurrences");
+            using var firstClient = first.CreateClient();
+            await PlatformSettingsAccessTests.LoginAsync(firstClient, "journey-root", "calendar-root-password");
+            using var created = await firstClient.PostAsJsonAsync(new Uri("/api/scheduling/tasks/", UriKind.Relative),
+                new { code = "initial-interval", intervalSeconds = 30, firstRunInSeconds = 3600, targetKind = "costing.recalculate", targetId = Guid.NewGuid() });
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            var id = (await created.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
+            using var paused = await firstClient.PostAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/pause", UriKind.Relative), new { expectedVersion = 1 });
+            Assert.Equal(HttpStatusCode.NoContent, paused.StatusCode);
+            var firstPage = await firstClient.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
+            before = Assert.Single(firstPage.GetProperty("data").EnumerateArray()).Clone();
+            Assert.Equal(2, before.GetProperty("version").ReadHttpInt64());
+            Assert.Equal("Interval", before.GetProperty("rule").GetProperty("kind").GetString());
+            Assert.Equal(30, before.GetProperty("intervalSeconds").GetDouble());
+            Assert.NotEqual(default, before.GetProperty("audit").GetProperty("createdAt").GetDateTimeOffset());
+            Assert.Equal(JsonValueKind.String, before.GetProperty("audit").GetProperty("updatedAt").ValueKind);
         }
-        await using (var connection = new NpgsqlConnection(database.ConnectionString))
-        {
-            await connection.OpenAsync();
-            await using var command = new NpgsqlCommand("""
-                INSERT INTO scheduling.plans
-                    ("Id", "Code", "Interval", "IsEnabled", "LastRunAt", "NextRunAt", "Version", "TargetKind", "TargetId", "CreatedBy", "TriggerSequence")
-                VALUES (9007199254740993, 'pre-calendar', interval '30 seconds', true, '2026-10-01T00:00:00Z',
-                    '2026-10-01T00:00:30Z', 9, 'costing.recalculate', '44444444-4444-4444-4444-444444444444', 'legacy-actor', 7)
-                """, connection);
-            await command.ExecuteNonQueryAsync();
-        }
+        Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Scheduling")).ExitCode);
         Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Scheduling")).ExitCode);
         await using var app = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "calendar-root-password");
         var page = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         var plan = Assert.Single(page.GetProperty("data").EnumerateArray());
-        Assert.Equal(9007199254740993, plan.GetProperty("taskId").ReadHttpInt64());
-        Assert.Equal(9, plan.GetProperty("version").ReadHttpInt64());
-        Assert.Equal(1, plan.GetProperty("scheduleRevision").ReadHttpInt64());
-        Assert.Equal("Interval", plan.GetProperty("rule").GetProperty("kind").GetString());
-        Assert.Equal(30, plan.GetProperty("intervalSeconds").GetDouble());
-        Assert.Equal("2026-10-01T00:00:30+00:00", plan.GetProperty("nextRunAt").GetString());
-        Assert.Equal("legacy-actor", plan.GetProperty("createdBy").GetString());
+        Assert.Equal(before.ToString(), plan.ToString());
     }
 
     [PostgresFact]

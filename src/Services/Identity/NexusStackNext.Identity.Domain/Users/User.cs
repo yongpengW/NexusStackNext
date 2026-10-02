@@ -44,7 +44,7 @@ public sealed record LockoutPolicy(int Threshold, TimeSpan Duration)
 /// 领域层不依赖 <c>IClock</c>，于是"这次登录发生在什么时候"在测试里完全可控。
 /// </para>
 /// </summary>
-public sealed class User : AggregateRoot<UserId>
+public sealed class User : AuditedAggregateRoot<UserId>
 {
     private readonly HashSet<RoleId> _roleIds = [];
 

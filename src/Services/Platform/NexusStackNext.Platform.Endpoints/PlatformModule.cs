@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
@@ -74,7 +75,7 @@ public static class PlatformModule
 
             var setting = await store.GetAsync(parsed.Value, cancellationToken);
             return responses.Ok(new SettingResponse(parsed.Value.Value, parsed.Value.Scope, setting?.Value, clock.UtcNow,
-                setting?.Version ?? 0, setting?.Description));
+                setting?.Version ?? 0, setting?.Description, setting is null ? null : EntityAuditMetadata.From(setting)));
         }).Produces<ApiResponse<SettingResponse>>().RequirePermission("/api/platform/settings/{key}", "GET");
 
         // 分页列出一个分组下的配置。**按段比较，不做前缀匹配**。
@@ -94,7 +95,7 @@ public static class PlatformModule
 
             return responses.Page(found.OrderBy(static setting => setting.Key.Value, StringComparer.Ordinal)
                 .Skip((int)Math.Min(paging.Offset, found.Count)).Take(paging.Limit)
-                .Select(static setting => new SettingItem(setting.Key.Value, setting.Key.Name, setting.Value, setting.Description, setting.Version)).ToArray(), found.Count, paging);
+                .Select(static setting => new SettingItem(setting.Key.Value, setting.Key.Name, setting.Value, setting.Description, setting.Version, EntityAuditMetadata.From(setting))).ToArray(), found.Count, paging);
         }).Produces<ApiPage<SettingItem>>().RequirePermission("/api/platform/settings", "GET");
 
         // 写一个配置值。键不存在就创建——调用方不需要先问"注册过没有"（那之间有竞态）。
@@ -168,6 +169,6 @@ public static class PlatformModule
 /// <param name="ExpectedVersion">条件写版本；省略时执行无客户端版本条件的赋值。</param>
 internal sealed record WriteSettingRequest(string? Value, string? Description, long? ExpectedVersion = null);
 
-internal sealed record SettingResponse(string Key, string Scope, string? Value, DateTimeOffset At, long Version, string? Description);
-internal sealed record SettingItem(string Key, string Name, string? Value, string? Description, long Version);
+internal sealed record SettingResponse(string Key, string Scope, string? Value, DateTimeOffset At, long Version, string? Description, EntityAuditMetadata? Audit);
+internal sealed record SettingItem(string Key, string Name, string? Value, string? Description, long Version, EntityAuditMetadata? Audit);
 internal sealed record RetryAuditDeliveryRequest(DateTimeOffset ExpectedDeadLetteredAt);

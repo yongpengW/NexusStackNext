@@ -104,7 +104,7 @@ public sealed record GlobalSettingChanged(SettingId SettingId, string Key, strin
 /// </para>
 /// <para><b>同值写入不发事件</b>：空操作触发缓存失效会让整个系统无谓抖动。</para>
 /// </summary>
-public sealed class GlobalSetting : AggregateRoot<SettingId>
+public sealed class GlobalSetting : AuditedAggregateRoot<SettingId>
 {
     private GlobalSetting(GlobalSetting source)
         : base(source)

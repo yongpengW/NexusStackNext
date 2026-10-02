@@ -47,7 +47,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         var itemId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         await using var control = await ConnectionMultiplexer.ConnectAsync(Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_REDIS")!);
-        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
+        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v2:" + itemId.ToString("N");
         await using (var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings))
         {
             app.Authenticate();
@@ -56,6 +56,9 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
             Assert.Equal(HttpStatusCode.Accepted, initial.StatusCode);
             await WaitForInvalidationsDrainedAsync(itemId);
             var quote = await WaitForCachedQuoteAsync(app, itemId, control.GetDatabase(), key, x => x.Cost == 80m);
+            Assert.NotNull(quote.Audit);
+            Assert.Equal("test-operator", quote.Audit.CreatedBy);
+            Assert.Null(quote.Audit.UpdatedAt);
             proxy.SetOffline(true);
             using var update = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId = taskId, itemId, expectedVersion = quote.Version, cost = 96m, feeRate = 0.2m });
@@ -72,12 +75,16 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
             replayOnly.Authenticate();
             var replayed = await WaitForCachedQuoteAsync(replayOnly, itemId, control.GetDatabase(), key, x => x.Cost == 96m);
             Assert.Null(replayed.BreakEvenPrice);
+            Assert.NotNull(replayed.Audit);
+            Assert.Equal("test-operator", replayed.Audit.CreatedBy);
+            Assert.Equal("test-operator", replayed.Audit.UpdatedBy);
+            Assert.NotNull(replayed.Audit.UpdatedAt);
             var pending = await replayOnly.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/pricing/tasks/{taskId}", UriKind.Relative));
             Assert.Equal("Pending", pending.GetProperty("data").GetProperty("state").GetString());
             try
             {
                 await database.SetAvailableAsync(false);
-                Assert.Equal(96m, (await ReadQuoteAsync(replayOnly, itemId)).Cost);
+                Assert.Equal(replayed, await ReadQuoteAsync(replayOnly, itemId));
             }
             finally { await database.SetAvailableAsync(true); }
         }
@@ -105,7 +112,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         var original = await ReadQuoteAsync(fast, itemId);
         await using var control = await ConnectionMultiplexer.ConnectAsync(settings["Pricing__Cache__ConnectionString"]);
-        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
+        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v2:" + itemId.ToString("N");
         // 仅清本次测试自己的键，模拟缓存丢失；不清空共享 Redis。
         await control.GetDatabase().KeyDeleteAsync(key);
         proxy.PauseNextFill();
@@ -136,7 +143,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
         Assert.Equal(80m, (await ReadQuoteAsync(app, itemId)).Cost);
         await using var control = await ConnectionMultiplexer.ConnectAsync(settings["Pricing__Cache__ConnectionString"]);
-        await control.GetDatabase().KeyDeleteAsync(settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N"));
+        await control.GetDatabase().KeyDeleteAsync(settings["Pricing__Cache__Namespace"] + ":pricing:quote:v2:" + itemId.ToString("N"));
         Assert.Equal(80m, (await ReadQuoteAsync(app, itemId)).Cost);
         var task = await app.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/pricing/tasks/{taskId}", UriKind.Relative));
         Assert.Equal("Pending", task.GetProperty("data").GetProperty("state").GetString());
@@ -157,7 +164,7 @@ public sealed class PricingCacheTests(PricingDatabaseFixture database) : IClassF
         // 观察预热完成再停库；故障后的业务结论仍从第二进程的 HTTP 读取。
         await WaitForInvalidationsDrainedAsync(itemId);
         await using var control = await ConnectionMultiplexer.ConnectAsync(settings["Pricing__Cache__ConnectionString"]);
-        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v1:" + itemId.ToString("N");
+        var key = settings["Pricing__Cache__Namespace"] + ":pricing:quote:v2:" + itemId.ToString("N");
         await WaitForCachedQuoteAsync(first, itemId, control.GetDatabase(), key, x => x.Cost == 80m);
         // 预热后才启动读者，避免它持有已被另一实例确认、但尚未执行的重复失效。
         await using var second = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);

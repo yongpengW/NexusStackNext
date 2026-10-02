@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 
 namespace NexusStackNext.Costing.Application;
@@ -79,4 +80,8 @@ public sealed record GetCostSheet(Guid ItemId) : IQuery<CostSheetView>;
 /// <param name="CalculatedRevision">已计算版本。</param>
 /// <param name="UnitCost">最近演示单位成本。</param>
 public sealed record CostSheetView(Guid ItemId, long Version, decimal PurchaseCost, decimal FreightCost,
-    long InputRevision, long CalculatedRevision, decimal? UnitCost);
+    long InputRevision, long CalculatedRevision, decimal? UnitCost)
+{
+    /// <summary>当前持久化行的创建和最近修改信息。</summary>
+    public EntityAuditMetadata? Audit { get; init; }
+}

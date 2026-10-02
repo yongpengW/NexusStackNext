@@ -103,7 +103,7 @@ public sealed class MenuNode : Entity<MenuId>
 /// 前导通配符让索引失效。
 /// </para>
 /// </summary>
-public sealed class MenuTree : AggregateRoot<MenuTreeId>
+public sealed class MenuTree : AuditedAggregateRoot<MenuTreeId>
 {
     /// <summary>允许的最大层级（路径深度）。</summary>
     public const int MaxDepth = 8;

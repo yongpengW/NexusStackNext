@@ -99,7 +99,7 @@ public sealed class RoleName : ValueObject
 /// 空操作触发事件会导致缓存无谓失效，而参照仓库的失效路径本就最长有 10 小时窗口（review/04）。
 /// </para>
 /// </summary>
-public sealed class Role : AggregateRoot<RoleId>
+public sealed class Role : AuditedAggregateRoot<RoleId>
 {
     private readonly HashSet<MenuId> _grantedMenuIds = [];
 

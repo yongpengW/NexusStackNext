@@ -64,14 +64,14 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
     {
         await using var app = CreateApplication();
         var itemId = Guid.NewGuid();
-        long originalVersion;
+        CostSheetView original;
         await using (var setup = app.CreateAsyncScope())
         {
             var sender = setup.ServiceProvider.GetRequiredService<ISender>();
             Assert.True((await sender.SendAsync(new UpdateCostInputs(Guid.NewGuid(), itemId, 0, 80m, 20m))).IsSuccess);
             var initial = (await sender.SendAsync(new ClaimCostingWork())).Value!;
             Assert.True((await sender.SendAsync(new CompleteCostingWork(initial.TaskId, initial.Epoch))).Value);
-            originalVersion = (await sender.QueryAsync(new GetCostSheet(itemId))).Value.Version;
+            original = (await sender.QueryAsync(new GetCostSheet(itemId))).Value;
         }
         var triggered = Trigger(itemId);
         var accepted = await Task.WhenAll(Enumerable.Range(0, 3).Select(async _ =>
@@ -93,7 +93,11 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
         Assert.Null((await query.SendAsync(new ClaimCostingWork())).Value);
         var cost = (await query.QueryAsync(new GetCostSheet(itemId))).Value;
         Assert.Equal(100m, cost.UnitCost);
-        Assert.Equal(originalVersion, cost.Version);
+        Assert.Equal(original.Version, cost.Version);
+        Assert.NotNull(cost.Audit);
+        Assert.Equal(original.Audit, cost.Audit);
+        Assert.Null(cost.Audit.CreatedBy);
+        Assert.Null(cost.Audit.UpdatedBy);
         Assert.Equal(1, cost.InputRevision);
         Assert.Equal("Succeeded", (await query.QueryAsync(new GetCostCalculation(triggered.EventId))).Value.State);
     }

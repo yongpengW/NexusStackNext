@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.TestSupport;
 
@@ -8,17 +7,6 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.IntegrationTests;
 /// <summary>审计拦截器（ADR-0008 的落点）在真库上验证。</summary>
 public sealed class AuditTests
 {
-    /// <summary>会记下"谁做的"的探针发起者。</summary>
-    private sealed class StubCurrentUser(string? userId) : ICurrentUser
-    {
-        public string? UserId { get; set; } = userId;
-
-        /// <inheritdoc />
-        public bool IsRoot => false;
-
-        /// <inheritdoc />
-        public long? SessionVersion => null;
-    }
 
     /// <summary>
     /// 创建时写 <c>CreatedAt</c>，修改时写 <c>UpdatedAt</c>，而 <c>CreatedAt</c> **不跟着漂**。
@@ -33,7 +21,7 @@ public sealed class AuditTests
         await using var database = await PostgresTestDatabase.CreateAsync();
 
         var clock = new MutableClock(new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero));
-        var user = new StubCurrentUser("leo");
+        var user = new MutableCurrentUser("leo");
 
         await using var context = await ProbeDatabase.CreateAsync(database, clock, user);
 
@@ -76,7 +64,7 @@ public sealed class AuditTests
         await using var database = await PostgresTestDatabase.CreateAsync();
 
         var clock = new MutableClock(new DateTimeOffset(2026, 6, 7, 8, 9, 10, TimeSpan.Zero));
-        var user = new StubCurrentUser("creator");
+        var user = new MutableCurrentUser("creator");
 
         await using var context = await ProbeDatabase.CreateAsync(database, clock, user);
 

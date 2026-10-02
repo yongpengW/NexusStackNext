@@ -89,7 +89,7 @@ public sealed record ScheduledTaskTriggered(
 /// 固定间隔从实际登记时刻起算；日历规则由应用层计算下一发生，避免无界补跑。
 /// </para>
 /// </summary>
-public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
+public sealed class ScheduledTask : AuditedAggregateRoot<ScheduledTaskId>
 {
     /// <summary>固定间隔的最小值。</summary>
     public static readonly TimeSpan MinimumInterval = TimeSpan.FromSeconds(1);
@@ -102,7 +102,7 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
     {
         Code = source.Code;
         Target = source.Target;
-        CreatedBy = source.CreatedBy;
+        DelegatedBy = source.DelegatedBy;
         Rule = source.Rule;
         ScheduleRevision = source.ScheduleRevision;
         IsEnabled = source.IsEnabled;
@@ -127,7 +127,7 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
         NextRunAt = firstRunAt;
         IsEnabled = true;
         Target = target;
-        CreatedBy = createdBy;
+        DelegatedBy = createdBy;
     }
 
     /// <summary>任务编码。</summary>
@@ -137,7 +137,7 @@ public sealed class ScheduledTask : AggregateRoot<ScheduledTaskId>
     public ScheduleTarget Target { get; private set; } = null!;
 
     /// <summary>授权创建该后台委托的操作者标识。</summary>
-    public string CreatedBy { get; private set; } = string.Empty;
+    public string DelegatedBy { get; private set; } = string.Empty;
 
     /// <summary>不可变的当前计划规则。</summary>
     public ScheduleRule Rule { get; private set; } = null!;

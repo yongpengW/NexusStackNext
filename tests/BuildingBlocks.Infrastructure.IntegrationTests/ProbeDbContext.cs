@@ -58,12 +58,22 @@ internal sealed class ProbeAggregate : AggregateRoot<long>, ISoftDelete, IAudite
     /// <inheritdoc />
     public string? UpdatedBy { get; set; }
 
-    /// <summary>软删除。<b>不</b>调用 <c>Changed()</c>——软删改的是过滤可见性，不是聚合的可观察状态。</summary>
-    public void SoftDelete() => IsDeleted = true;
+    /// <summary>软删除改变可观察状态，因此推进版本。</summary>
+    public void SoftDelete()
+    {
+        if (IsDeleted) { return; }
+        IsDeleted = true;
+        BumpVersion();
+    }
 
     /// <summary>改个名字，用来验证"修改时写 UpdatedAt、不动 CreatedAt"。</summary>
     /// <param name="name">新名字。</param>
-    public void Rename(string name) => Name = name;
+    public void Rename(string name)
+    {
+        if (Name == name) { return; }
+        Name = name;
+        BumpVersion();
+    }
 }
 
 /// <summary>探针领域事件。</summary>

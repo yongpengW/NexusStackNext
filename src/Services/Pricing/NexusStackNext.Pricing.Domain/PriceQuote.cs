@@ -11,7 +11,7 @@ public sealed record PriceId : StronglyTypedId<Guid>
 }
 
 /// <summary>用于演示异步派生结果的定价聚合；不代表 PoS 正式计费模型。</summary>
-public sealed class PriceQuote : AggregateRoot<PriceId>
+public sealed class PriceQuote : AuditedAggregateRoot<PriceId>
 {
     private PriceQuote(PriceId id) : base(id) { }
 

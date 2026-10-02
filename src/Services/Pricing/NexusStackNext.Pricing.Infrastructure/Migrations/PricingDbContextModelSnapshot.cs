@@ -136,12 +136,26 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<long>("CostingRevision")
                         .HasColumnType("bigint");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<decimal>("FeeRate")
                         .HasPrecision(5, 4)
                         .HasColumnType("numeric(5,4)");
 
                     b.Property<long>("InputRevision")
                         .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<long>("Version")
                         .IsConcurrencyToken()

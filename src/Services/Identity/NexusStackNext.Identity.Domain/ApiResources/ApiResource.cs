@@ -15,7 +15,7 @@ namespace NexusStackNext.Identity.Domain.ApiResources;
 /// <para>把格式收在值对象里，是为了让大小写与边界只有一处定义——散在各处迟早会不一致，
 /// 而不一致的后果是"某些权限静默失效"。</para>
 /// </summary>
-public sealed class ApiResource : AggregateRoot<ApiResourceId>
+public sealed class ApiResource : AuditedAggregateRoot<ApiResourceId>
 {
     private static readonly HashSet<string> AllowedMethods =
         new(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"], StringComparer.Ordinal);
