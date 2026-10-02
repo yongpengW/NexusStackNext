@@ -82,6 +82,11 @@ public static class RouteTableValidator
                     $"路由 {route.RouteId} 的超时必须为正。"));
             }
 
+            if (route.MaxRequestBodySize is <= 0)
+            {
+                problems.Add(new Error("gateway.route.body_limit_invalid", $"路由 {route.RouteId} 的请求体上限必须为正。"));
+            }
+
             // 写了策略名却写成空白，等于"以为限流开了、其实没开"。
             if (route.RateLimitPolicy is not null && string.IsNullOrWhiteSpace(route.RateLimitPolicy))
             {

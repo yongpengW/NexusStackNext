@@ -70,6 +70,7 @@ var platform = builder
     .AddProject<Projects.NexusStackNext_PlatformHost>("platform")
     .WithEnvironment("ConnectionStrings__Identity", postgres)
     .WithEnvironment("ConnectionStrings__Platform", postgres)
+    .WithEnvironment("ConnectionStrings__Files", postgres)
     .WithEnvironment("RabbitMQ__HostName", Host(rabbit))
     // OTLP 端点：**配了就导出，没配就只是不导出**（ServiceDefaults 的取舍，ADR-0005）。
     //

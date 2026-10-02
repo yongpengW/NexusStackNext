@@ -73,17 +73,17 @@ Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟
 - **一个 JWT 签名密钥**（`Jwt:SigningKey`，≥32 字节）——见下。
 - **一个根账号**（`Identity:Root:UserName` / `Identity:Root:Password`）——**推荐**，见下。
 
-**Identity / Platform 默认使用 PostgreSQL。** 分别配置 `ConnectionStrings__Identity` 与 `ConnectionStrings__Platform`
-（可指向同一物理库），依次执行 `scripts/migrate-identity.ps1` 和 `scripts/migrate-platform.ps1`，再启动平台宿主。
+**Identity / Platform / Files 默认使用 PostgreSQL。** 分别配置 `ConnectionStrings__Identity`、`ConnectionStrings__Platform` 与 `ConnectionStrings__Files`
+（可指向同一物理库），依次执行 `scripts/migrate-identity.ps1`、`scripts/migrate-platform.ps1` 和 `scripts/migrate-files.ps1`，再启动平台宿主。
 启动会检查数据库及迁移状态，不会自动建表。
 配置与升级步骤见 [Identity 持久化运行](docs/identity-persistence.md)。
 
 全局设置的读写都需要当前有效会话及对应操作权限；授权步骤与兼容性变化见
-[全局设置访问](docs/platform-settings.md)。NS / PoS 的能力对照与后续验收路线见
+[全局设置访问](docs/platform-settings.md)。文件访问与迁移见 [私有文件](docs/private-files.md)。NS / PoS 的能力对照与后续验收路线见
 [能力研究](docs/research/2026-10-02-ns-pos-capability-parity.md)，当前工作状态以 GitHub Issues 为准。
 
 无数据库的开发演示需显式设置 `DOTNET_ENVIRONMENT=Development` 和
-`Identity__Storage__Provider=Memory`、`Platform__Storage__Provider=Memory`；生产环境拒绝内存模式。
+`Identity__Storage__Provider=Memory`、`Platform__Storage__Provider=Memory`、`Files__Storage__Provider=Memory`；生产环境拒绝内存模式。
 Scheduling、Auditing 和 Files 元数据仍有内存状态，Files 的字节保存在本地磁盘。
 
 > **但平台宿主需要一个签名密钥才起得来。** 没配 `Jwt:SigningKey` 时它是**启动即失败**：

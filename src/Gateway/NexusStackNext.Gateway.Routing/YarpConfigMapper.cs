@@ -35,6 +35,7 @@ public static class YarpConfigMapper
         nameof(RouteDefinition.Methods),
         nameof(RouteDefinition.Transforms),
         nameof(RouteDefinition.Timeout),
+        nameof(RouteDefinition.MaxRequestBodySize),
         nameof(RouteDefinition.RequireAuthentication),
         nameof(RouteDefinition.RateLimitPolicy),
     };
@@ -97,6 +98,7 @@ public static class YarpConfigMapper
         Transforms = route.Transforms.Count == 0 ? null : route.Transforms,
 
         Timeout = route.Timeout,
+        MaxRequestBodySize = route.MaxRequestBodySize,
 
         // 需要认证的路由挂上策略名。宿主在**没有配置认证处理器**时，策略必然失败
         // （用户未认证）——这就是 fail-closed：认证形态未定之前，受保护的路由不会变成公开的。

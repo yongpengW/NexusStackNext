@@ -27,9 +27,12 @@ public sealed class FileStorageHealthCheck(IFileStore store) : IHealthCheck
 
         try
         {
-            key = await store
+            await using (var write = await store
                 .WriteAsync(new MemoryStream(Probe), "application/octet-stream", cancellationToken)
-                .ConfigureAwait(false);
+                .ConfigureAwait(false))
+            {
+                key = write.StorageKey;
+            }
 
             await store.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
 

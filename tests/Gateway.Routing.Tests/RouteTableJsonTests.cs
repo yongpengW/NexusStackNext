@@ -26,6 +26,7 @@ public sealed class RouteTableJsonTests
             new Dictionary<string, string>(StringComparer.Ordinal) { ["RequestHeader"] = "X-Forwarded-For", ["Append"] = "true" },
         ],
         Timeout = TimeSpan.FromSeconds(10),
+        MaxRequestBodySize = 12345,
         RateLimitPolicy = YarpConfigMapper.DefaultRateLimitPolicy,
         RequireAuthentication = false,
     };
@@ -62,6 +63,7 @@ public sealed class RouteTableJsonTests
         Assert.Equal("X-Forwarded-For", route.Transforms[1]["RequestHeader"]);
         Assert.Equal("true", route.Transforms[1]["Append"]);
         Assert.Equal(TimeSpan.FromSeconds(10), route.Timeout);
+        Assert.Equal(12345, route.MaxRequestBodySize);
         Assert.Equal(YarpConfigMapper.DefaultRateLimitPolicy, route.RateLimitPolicy);
         Assert.Equal(["GET", "POST"], route.Methods);
         Assert.False(route.RequireAuthentication);

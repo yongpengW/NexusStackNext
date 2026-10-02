@@ -58,7 +58,8 @@ public sealed class FileStoreSeamTests
     public async Task UrlProvider_IsUsableWithoutTouchingTheStoreInterface()
     {
         var store = new ObjectStore();
-        var key = await store.WriteAsync(new MemoryStream([1, 2, 3]), "application/octet-stream");
+        await using var write = await store.WriteAsync(new MemoryStream([1, 2, 3]), "application/octet-stream");
+        var key = write.StorageKey;
 
         var url = await store.GetReadUrlAsync(key, TimeSpan.FromMinutes(5));
 
@@ -70,7 +71,11 @@ public sealed class FileStoreSeamTests
     {
         var payload = new byte[] { 9, 8, 7 };
 
-        var key = await store.WriteAsync(new MemoryStream(payload), "application/octet-stream");
+        string key;
+        await using (var write = await store.WriteAsync(new MemoryStream(payload), "application/octet-stream"))
+        {
+            key = write.StorageKey;
+        }
         Assert.False(string.IsNullOrWhiteSpace(key));
 
         await using (var read = await store.OpenReadAsync(key))
@@ -91,14 +96,14 @@ public sealed class FileStoreSeamTests
     {
         private readonly Dictionary<string, byte[]> _files = new(StringComparer.Ordinal);
 
-        public Task<string> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
+        public Task<FileWrite> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
         {
             using var buffer = new MemoryStream();
             content.CopyTo(buffer);
 
             var key = $"local/{_files.Count}";
             _files[key] = buffer.ToArray();
-            return Task.FromResult(key);
+            return Task.FromResult(new FileWrite(key, Stream.Null));
         }
 
         public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default) =>
@@ -118,14 +123,14 @@ public sealed class FileStoreSeamTests
     {
         private readonly Dictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
 
-        public Task<string> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
+        public Task<FileWrite> WriteAsync(Stream content, string contentType, CancellationToken cancellationToken = default)
         {
             using var buffer = new MemoryStream();
             content.CopyTo(buffer);
 
             var key = $"remote/{Guid.NewGuid():n}";
             _objects[key] = buffer.ToArray();
-            return Task.FromResult(key);
+            return Task.FromResult(new FileWrite(key, Stream.Null));
         }
 
         public Task<Stream> OpenReadAsync(string storageKey, CancellationToken cancellationToken = default) =>

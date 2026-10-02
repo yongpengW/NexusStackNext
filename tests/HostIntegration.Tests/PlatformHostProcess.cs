@@ -13,7 +13,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
 
     public HttpClient Client { get; }
 
-    private PlatformHostProcess(string connectionString, string? rootPassword)
+    private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize)
     {
         using var reservation = new TcpListener(IPAddress.Loopback, 0);
         reservation.Start();
@@ -32,8 +32,15 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment["Identity__Storage__Provider"] = "Postgres";
         start.Environment["Platform__Storage__Provider"] = "Postgres";
+        start.Environment["Files__Storage__Provider"] = "Postgres";
+        start.Environment["Files__Cleanup__IntervalSeconds"] = "1";
+        start.Environment["Files__Cleanup__RetryDelaySeconds"] = "1";
+        start.Environment["Files__Cleanup__OrphanAgeSeconds"] = "1";
+        start.Environment["Files__Cleanup__BatchSize"] = cleanupBatchSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
         start.Environment["ConnectionStrings__Identity"] = connectionString;
         start.Environment["ConnectionStrings__Platform"] = connectionString;
+        start.Environment["ConnectionStrings__Files"] = connectionString;
+        if (filesRoot is not null) { start.Environment["Files__StorageRoot"] = filesRoot; }
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";
         start.Environment["AgileConfig__AppId"] = string.Empty;
         start.Environment["RabbitMQ__HostName"] = string.Empty;
@@ -44,9 +51,10 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         _errors = _process.StandardError.ReadToEndAsync();
     }
 
-    public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null)
+    public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null,
+        int cleanupBatchSize = 64)
     {
-        var host = new PlatformHostProcess(connectionString, rootPassword);
+        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize);
         try
         {
             var elapsed = Stopwatch.StartNew();
@@ -75,7 +83,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
+    public async Task CrashAsync()
     {
         if (!_process.HasExited)
         {
@@ -85,6 +93,11 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
 
         _ = await _output;
         _ = await _errors;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await CrashAsync();
         Client.Dispose();
         _process.Dispose();
     }

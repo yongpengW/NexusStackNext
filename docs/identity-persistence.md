@@ -2,6 +2,7 @@
 
 Identity 默认使用 PostgreSQL，数据与迁移历史均在 `identity` schema。
 同一宿主中的 Platform 也需独立连接配置与迁移，见 [全局设置持久化](platform-settings.md)。
+Files 的元数据也需独立连接配置与迁移，见 [私有文件](private-files.md)。
 现有 EF 仓储由实际平台宿主装配；其余平台模块仍有内存状态，本轮不是整个平台的生产验收。
 
 ## 配置与启动

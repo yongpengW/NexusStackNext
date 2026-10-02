@@ -270,12 +270,15 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
 {
     private readonly string _connectionString;
     private readonly string _platformConnectionString;
+    private readonly string _filesConnectionString;
     private readonly string? _rootPassword;
 
-    public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null)
+    public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null,
+        string? filesConnectionString = null)
     {
         _connectionString = connectionString;
         _platformConnectionString = platformConnectionString ?? connectionString;
+        _filesConnectionString = filesConnectionString ?? connectionString;
         _rootPassword = rootPassword;
         UseKestrel(0);
     }
@@ -287,8 +290,10 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
             {
                 ["Identity:Storage:Provider"] = "Postgres",
                 ["Platform:Storage:Provider"] = "Postgres",
+                ["Files:Storage:Provider"] = "Postgres",
                 ["ConnectionStrings:Identity"] = _connectionString,
                 ["ConnectionStrings:Platform"] = _platformConnectionString,
+                ["ConnectionStrings:Files"] = _filesConnectionString,
             }));
         return base.CreateHost(builder);
     }
@@ -329,6 +334,9 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         var platform = await RunMigrationAsync(ConnectionString, "Platform");
         Assert.Equal(0, platform.ExitCode);
         Assert.Contains("Platform migrations applied.", platform.Output, StringComparison.Ordinal);
+        var files = await RunMigrationAsync(ConnectionString, "Files");
+        Assert.Equal(0, files.ExitCode);
+        Assert.Contains("Files migrations applied.", files.Output, StringComparison.Ordinal);
     }
 
     internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")

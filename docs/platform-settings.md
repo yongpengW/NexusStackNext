@@ -45,7 +45,7 @@ Platform 默认使用 PostgreSQL，配置 `ConnectionStrings__Platform`（配置
 缺连接配置、未应用迁移或数据库不可用会阻止启动。运行期 `/health/ready` 检查 Platform 表能否读取，
 `/health/live` 只检查进程。日志中的迁移和启动诊断不输出原始连接异常。
 内存演示须显式选择 `Platform__Storage__Provider=Memory`，仅允许 Development / Testing；
-无库平台宿主还须显式设置 `Identity__Storage__Provider=Memory`。
+无库平台宿主还须显式设置 `Identity__Storage__Provider=Memory` 与 `Files__Storage__Provider=Memory`。
 
 ## 写入与并发
 

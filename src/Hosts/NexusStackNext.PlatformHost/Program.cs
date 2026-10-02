@@ -28,6 +28,12 @@ if (args is ["migrate-platform"])
     return;
 }
 
+if (args is ["migrate-files"])
+{
+    Environment.ExitCode = await FilesDatabaseCommand.RunAsync();
+    return;
+}
+
 // 平台能力的**唯一宿主**。不变量 8：这个进程由什么组成，一眼看得出来——
 // 下面五行就是它的全部内容，没有 InitApplication(moduleKey)，也没有"我是哪个服务"的运行时枚举。
 //
@@ -72,7 +78,7 @@ builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule();
 builder.Services.AddAuditingModule();
-builder.Services.AddFilesModule(builder.Configuration);
+builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
 
 // ---------- 认证（ADR-0003：网关验签、上下文授权）----------
 //

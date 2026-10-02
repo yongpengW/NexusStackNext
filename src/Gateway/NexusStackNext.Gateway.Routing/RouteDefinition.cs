@@ -74,6 +74,9 @@ public sealed record RouteDefinition
     /// <summary>该路由的请求超时。</summary>
     public TimeSpan? Timeout { get; init; }
 
+    /// <summary>该路由允许的请求体字节上限；未配置时沿用网关服务器限制，配置时必须为正数。</summary>
+    public long? MaxRequestBodySize { get; init; }
+
     /// <summary>
     /// 限流策略名；<c>null</c> 表示不限制。
     /// <para>策略名必须在宿主里注册过——引用一个不存在的策略会让网关在启动时拒绝启动，
