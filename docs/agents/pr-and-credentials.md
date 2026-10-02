@@ -19,8 +19,12 @@ gh run view --log-failed     # 红了先读原文，别猜
 
 ## CI 与本地是同一套，但**本地绿不是终态**
 
-`.github/workflows/ci.yml` 跑的就是那三段（`dotnet build` → `dotnet test` → `check-format.ps1`），
+`.github/workflows/ci.yml` 跑的就是那三段（`dotnet build` → `run-tests.ps1 -Configuration Release` → `check-format.ps1`），
 **再加三条断言**：模板生成物不含凭据、跟踪器与规范一致、模板能生成可构建的工程。
+
+2026-10-02 起，CI 提供运行专属的 PostgreSQL 容器，数据库测试串行执行；连接配置由步骤内构造并
+通过环境传给测试脚本，不需要 secret。RabbitMQ 仍未配置到 CI，相应真 broker 测试会跳过；
+本机配置 `env/test.dev` 后可一并运行。不能把 CI 通过解释成 broker 旅程也经过验证。
 
 所以"本地全绿"是**必要条件**，不是替代品：平台差异（路径分隔符、大小写敏感、换行、区域设置、
 可用工具）只会在这里现形。它真的现形过一次——检查脚本里三处路径正则写死了 Windows 反斜杠，

@@ -58,6 +58,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Hosts\NexusStackNext.PlatformHost\NexusStackNext.PlatformHost.csproj" />
+    <ProjectReference Include="../../src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
+    <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
+    <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
+    <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Infrastructure/NexusStackNext.Pricing.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Endpoints/NexusStackNext.Pricing.Endpoints.csproj" />
   </ItemGroup>
 
 </Project>

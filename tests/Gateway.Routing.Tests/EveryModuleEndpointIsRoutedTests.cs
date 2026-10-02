@@ -41,11 +41,16 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
     ];
 
     /// <summary>每个端点都要有归宿。</summary>
-    [Fact]
-    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal()
+    [Theory]
+    [InlineData("routes.json", false)]
+    [InlineData("routes.pricing.json", true)]
+    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal(string routeFile, bool includePricing)
     {
-        var routes = LoadRoutes();
-        var endpoints = ModuleEndpoints();
+        var routes = LoadRoutes(routeFile);
+        var allEndpoints = ModuleEndpoints();
+        Assert.Contains(allEndpoints, endpoint => endpoint.Module == "PricingModule");
+        // 默认编排不启动 Pricing；启用样板时，必须同时保留全部平台路由。
+        var endpoints = allEndpoints.Where(endpoint => includePricing || endpoint.Module != "PricingModule").ToList();
 
         Assert.NotEmpty(routes);
         Assert.NotEmpty(endpoints);
@@ -146,11 +151,11 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
         return [.. found.Distinct()];
     }
 
-    private static List<RouteEntry> LoadRoutes()
+    private static List<RouteEntry> LoadRoutes(string routeFile)
     {
-        var table = JsonDocument.Parse(
+        using var table = JsonDocument.Parse(
             File.ReadAllText(Path.Combine(
-                RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway", "routes.json")));
+                RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway", routeFile)));
 
         return
         [

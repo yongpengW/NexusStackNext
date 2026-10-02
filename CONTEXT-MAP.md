@@ -1,6 +1,6 @@
 # Context Map
 
-五个限界上下文 + 一个不持有数据的边缘。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
+五个平台限界上下文 + 一个独立业务参考上下文 + 一个不持有数据的边缘。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
 本文件只定义**边界**与**关系**。
 
 ## Contexts
@@ -9,10 +9,11 @@
   拥有用户、角色、权限、菜单、令牌。
 - [Platform](./src/Services/Platform/CONTEXT.md) — 平台配置：与业务无关、却被所有上下文读取的元数据。
   目前拥有全局设置（`GlobalSetting`）；开放应用配置与区域还在计划里。
-- [Scheduling](./src/Services/Scheduling/CONTEXT.md) — 任务编排：异步任务与计划任务的定义、触发与生命周期。
+- [Scheduling](./src/Services/Scheduling/CONTEXT.md) — 计划触发：计划的定义与到期时刻；业务任务由所属上下文拥有。
 - [Auditing](./src/Services/Auditing/CONTEXT.md) — 审计与日志：谁在什么时候做了什么（`AuditEntry`，
   只写不可改）。令牌流转记录还在计划里。
 - [Files](./src/Services/Files/CONTEXT.md) — 文件与下载中心：文件的存储、归属与分发。
+- [Pricing](./src/Services/Pricing/CONTEXT.md) — 独立定价样板：定价输入、派生结果与持久化重算，独立宿主和数据库。
 
 **Gateway** — `src/Gateway/` — 不是上下文。它不持有数据、不持有不变量，只做路由、边缘鉴权、
 限流与关联 ID。任何落到网关的业务判断都是设计错误。
@@ -42,7 +43,7 @@
 
 ### 还没建的（**不要照着它 grep**）
 
-当前**没有任何上下文之间发生异步通信**：五个上下文各自在自己的进程里被同一个宿主组装，
+当前**没有任何上下文之间发生异步通信**：五个平台上下文由同一个宿主组装，Pricing 由独立宿主组装，
 彼此通过端口与 `ICurrentUser` 协作。事件总线（RabbitMQ）与发件箱**已经建好并验过**
 （6 条真 broker 验收 + 投递循环），但**还没有生产者**——所以发件箱永远是空的。
 

@@ -18,7 +18,10 @@
 param(
     [switch] $Init,
 
-    [string] $Filter
+    [string] $Filter,
+
+    [ValidateSet('Debug', 'Release')]
+    [string] $Configuration = 'Debug'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,14 +69,14 @@ NEXUSSTACK_TEST_POSTGRES=Host=;Port=5432;Database=nexusstack_platform;Username=;
 }
 
 # ---------- 注入环境变量 ----------
-if (-not (Test-Path $envFile)) {
+if (-not (Test-Path $envFile) -and [string]::IsNullOrWhiteSpace($env:NEXUSSTACK_TEST_POSTGRES)) {
     Write-Host "找不到 $envFile" -ForegroundColor Red
     Write-Host ''
     Write-Host '先生成它：pwsh -File scripts/run-tests.ps1 -Init' -ForegroundColor Yellow
     exit 1
 }
 
-foreach ($line in (Get-Content $envFile -Encoding UTF8)) {
+foreach ($line in $(if (Test-Path $envFile) { Get-Content $envFile -Encoding UTF8 } else { @() })) {
     $trimmed = $line.Trim()
     if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
 
@@ -110,7 +113,7 @@ Write-Host '  注意：这台库可能同时被配置中心等别的服务使用
 Write-Host '  测试会逐个项目**串行**跑；如果你还要跑第二份，先等这一份结束。' -ForegroundColor Yellow
 
 # ---------- 全局互斥：同时只允许一份全量在跑 ----------
-$lockFile = Join-Path $env:TEMP 'nexusstack-run-tests.lock'
+$lockFile = Join-Path ([System.IO.Path]::GetTempPath()) 'nexusstack-run-tests.lock'
 if (Test-Path $lockFile) {
     $age = (Get-Date) - (Get-Item $lockFile).LastWriteTime
     if ($age.TotalMinutes -lt 120) {
@@ -138,7 +141,7 @@ $env:MSBUILDDISABLENODEREUSE = '1'
 # ---------- 先构建 ----------
 Write-Host ''
 Write-Host '构建…' -ForegroundColor Cyan
-& dotnet build $solution --nologo -v q
+& dotnet build $solution --configuration $Configuration --nologo -v q
 if ($LASTEXITCODE -ne 0) {
     Write-Host '构建失败，测试不跑。' -ForegroundColor Red
     exit $LASTEXITCODE
@@ -181,7 +184,7 @@ foreach ($project in $testProjects) {
     Write-Host ''
     Write-Host "▶ $name" -ForegroundColor Cyan
 
-    $dotnetArgs = @('test', $project.FullName, '--nologo', '--no-build', '-nodeReuse:false')
+    $dotnetArgs = @('test', $project.FullName, '--configuration', $Configuration, '--nologo', '--no-build', '-nodeReuse:false')
     if ($Filter) {
         $dotnetArgs += @('--filter', $Filter)
     }

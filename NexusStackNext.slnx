@@ -1,4 +1,5 @@
 <Solution>
+  <Folder Name="/src/" />
 
   <!-- 分组镜像磁盘布局。扁平列表在 VS 里是 37 个项目排成一行，没法看。 -->
 
@@ -22,6 +23,12 @@
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Infrastructure/NexusStackNext.Platform.Infrastructure.csproj" />
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Endpoints/NexusStackNext.Platform.Endpoints.csproj" />
   </Folder>
+  <Folder Name="/src/Services/Pricing/">
+    <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
+    <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
+    <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Endpoints/NexusStackNext.Pricing.Endpoints.csproj" />
+    <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Infrastructure/NexusStackNext.Pricing.Infrastructure.csproj" />
+  </Folder>
 
   <Folder Name="/src/Services/Scheduling/">
     <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Domain/NexusStackNext.Scheduling.Domain.csproj" />
@@ -29,6 +36,7 @@
     <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Infrastructure/NexusStackNext.Scheduling.Infrastructure.csproj" />
     <Project Path="src/Services/Scheduling/NexusStackNext.Scheduling.Endpoints/NexusStackNext.Scheduling.Endpoints.csproj" />
   </Folder>
+  <Folder Name="/src/Services/" />
 
   <Folder Name="/src/Services/Auditing/">
     <Project Path="src/Services/Auditing/NexusStackNext.Auditing.Domain/NexusStackNext.Auditing.Domain.csproj" />
@@ -46,6 +54,7 @@
 
   <Folder Name="/src/Hosts/">
     <Project Path="src/Hosts/NexusStackNext.PlatformHost/NexusStackNext.PlatformHost.csproj" />
+    <Project Path="src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
   </Folder>
 
   <Folder Name="/src/Composition/">
@@ -75,6 +84,7 @@
     <Project Path="tests/Auditing.Application.Tests/Auditing.Application.Tests.csproj" />
     <Project Path="tests/Files.Application.Tests/Files.Application.Tests.csproj" />
     <Project Path="tests/Scheduling.Application.Tests/Scheduling.Application.Tests.csproj" />
+    <Project Path="tests/Pricing.IntegrationTests/Pricing.IntegrationTests.csproj" />
     <Project Path="tests/RabbitMq.IntegrationTests/RabbitMq.IntegrationTests.csproj" />
   <Project Path="tests/TestSupport/TestSupport.csproj" />
     <Project Path="tests/Platform.Domain.Tests/Platform.Domain.Tests.csproj" />

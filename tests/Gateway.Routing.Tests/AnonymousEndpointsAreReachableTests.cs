@@ -42,11 +42,13 @@ public sealed class AnonymousEndpointsAreReachableTests
     ];
 
     /// <summary>每个必须匿名的端点，都要有一条精确路径的匿名路由。</summary>
-    [Fact]
-    public void EveryEndpointThatMustBeAnonymous_HasAnAnonymousRoute()
+    [Theory]
+    [InlineData("routes.json")]
+    [InlineData("routes.pricing.json")]
+    public void EveryEndpointThatMustBeAnonymous_HasAnAnonymousRoute(string routeFile)
     {
-        var path = FindRouteTable();
-        var table = JsonDocument.Parse(File.ReadAllText(path));
+        var path = FindRouteTable(routeFile);
+        using var table = JsonDocument.Parse(File.ReadAllText(path));
 
         var routes = table.RootElement.GetProperty("routes").EnumerateArray().ToList();
         Assert.NotEmpty(routes);
@@ -90,14 +92,14 @@ public sealed class AnonymousEndpointsAreReachableTests
     }
 
     /// <summary>从测试输出目录往上找到仓库根，再定位网关的路由表。</summary>
-    private static string FindRouteTable()
+    private static string FindRouteTable(string routeFile)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
 
         while (directory is not null)
         {
             var candidate = Path.Combine(
-                directory.FullName, "src", "Gateway", "NexusStackNext.Gateway", "routes.json");
+                directory.FullName, "src", "Gateway", "NexusStackNext.Gateway", routeFile);
 
             if (File.Exists(candidate))
             {
@@ -108,6 +110,6 @@ public sealed class AnonymousEndpointsAreReachableTests
         }
 
         throw new FileNotFoundException(
-            $"从 {AppContext.BaseDirectory} 往上找不到 src/Gateway/NexusStackNext.Gateway/routes.json。");
+            $"从 {AppContext.BaseDirectory} 往上找不到 src/Gateway/NexusStackNext.Gateway/{routeFile}。");
     }
 }

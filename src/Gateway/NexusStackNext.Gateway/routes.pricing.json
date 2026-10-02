@@ -1,0 +1,132 @@
+{
+  "routes": [
+    {
+      "routeId": "platform-read",
+      "clusterId": "platform-host",
+      "path": "/api/platform/{**catch-all}",
+      "methods": [
+        "GET"
+      ],
+      "transforms": [
+        {
+          "ResponseHeader": "X-Gateway",
+          "Set": "nexusstack"
+        }
+      ],
+      "timeout": "00:00:05",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "platform-write",
+      "clusterId": "platform-host",
+      "path": "/api/platform/{**catch-all}",
+      "methods": [
+        "PUT",
+        "DELETE"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
+      "routeId": "identity-info",
+      "clusterId": "platform-host",
+      "path": "/api/identity",
+      "methods": [
+        "GET"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "identity-management",
+      "clusterId": "platform-host",
+      "path": "/api/identity/{**catch-all}",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
+      "routeId": "identity-login",
+      "clusterId": "platform-host",
+      "path": "/api/identity/login",
+      "methods": [
+        "POST"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "identity-refresh",
+      "clusterId": "platform-host",
+      "path": "/api/identity/refresh",
+      "methods": [
+        "POST"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "identity-self-register",
+      "clusterId": "platform-host",
+      "path": "/api/identity/users",
+      "methods": [
+        "POST"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "scheduling-info",
+      "clusterId": "platform-host",
+      "path": "/api/scheduling",
+      "methods": [
+        "GET"
+      ],
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": false
+    },
+    {
+      "routeId": "scheduling-management",
+      "clusterId": "platform-host",
+      "path": "/api/scheduling/{**catch-all}",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
+      "routeId": "files-api",
+      "clusterId": "platform-host",
+      "path": "/api/files/{**catch-all}",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
+      "routeId": "pricing",
+      "clusterId": "pricing-host",
+      "path": "/api/pricing/{**catch-all}",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    }
+  ],
+  "clusters": [
+    {
+      "clusterId": "platform-host",
+      "destinations": [
+        {
+          "name": "primary",
+          "address": "http://127.0.0.1:5191"
+        }
+      ],
+      "requestTimeout": "00:00:10"
+    },
+    {
+      "clusterId": "pricing-host",
+      "destinations": [
+        {
+          "name": "primary",
+          "address": "http://127.0.0.1:5192"
+        }
+      ],
+      "requestTimeout": "00:00:10"
+    }
+  ]
+}
