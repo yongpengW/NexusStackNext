@@ -70,6 +70,18 @@ public sealed class OperationObservationIngestion(IOperationObservationStore obs
         {
             Metadata = message.Metadata is { } metadata ? new OperationMetadata(metadata.Action, metadata.ExecutionRole,
                 metadata.Description, metadata.SubjectType, metadata.SubjectIdKind, metadata.SubjectId,
-                metadata.SpanId, metadata.ParentSpanId, metadata.CorrelationId) : null,
+                metadata.SpanId, metadata.ParentSpanId, metadata.CorrelationId)
+            {
+                RootOperationId = metadata.RootOperationId,
+                RootSource = metadata.RootSource,
+                ParentOperationId = metadata.ParentOperationId,
+                ParentSource = metadata.ParentSource,
+                InitiatorId = metadata.InitiatorId,
+                TaskId = metadata.TaskId,
+                TaskEpoch = metadata.TaskEpoch,
+                SchedulePlanId = metadata.SchedulePlanId,
+                ScheduleExpectedVersion = metadata.ScheduleExpectedVersion,
+                ScheduleDecisionId = metadata.ScheduleDecisionId,
+            } : null,
         }, recordedAt);
 }

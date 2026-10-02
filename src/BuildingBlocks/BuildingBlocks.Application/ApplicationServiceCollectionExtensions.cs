@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Application.Validation;
 
@@ -23,6 +24,9 @@ public static class ApplicationServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.TryAddSingleton<IClock, SystemClock>();
+        services.TryAddScoped<ICommandExecution, DirectCommandExecution>();
+        services.TryAddSingleton<IExecutionContext, EmptyExecutionContext>();
+        services.TryAddSingleton<IBackgroundExecutionObservation, UnobservedBackgroundExecution>();
         services.TryAddScoped<ISender, Sender>();
         return services;
     }

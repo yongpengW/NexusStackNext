@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security.Claims;
-using NexusStackNext.Auditing.Application;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
+using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Web;
 
@@ -33,6 +35,12 @@ public static class OperationJournalModule
             throw new InvalidOperationException("OperationJournal:WriteTimeout 必须在 50 毫秒到 5 秒之间。");
         }
         services.AddSingleton(new OperationCaptureOptions(source, timeout));
+        services.TryAddSingleton<OperationExecutionContext>();
+        services.AddScoped<OperationObservationWriter>();
+        services.AddScoped<ObservedCommandExecution>();
+        services.Replace(ServiceDescriptor.Scoped<ICommandExecution>(provider => provider.GetRequiredService<ObservedCommandExecution>()));
+        services.Replace(ServiceDescriptor.Scoped<IExecutionContext>(provider => provider.GetRequiredService<ObservedCommandExecution>()));
+        services.Replace(ServiceDescriptor.Scoped<IBackgroundExecutionObservation, ObservedBackgroundExecution>());
         services.AddTransient<OperationLoggingMiddleware>();
         var provider = configuration["OperationJournal:Storage:Provider"] ?? "Postgres";
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
@@ -96,8 +104,8 @@ public static class OperationJournalModule
 internal sealed record OperationCaptureOptions(string Source, TimeSpan WriteTimeout);
 internal sealed class OperationFailureEvidence;
 
-internal sealed partial class OperationLoggingMiddleware(IOperationJournal journal, OperationJournalStatus status,
-    OperationCaptureOptions options, IClock clock, ILogger<OperationLoggingMiddleware> logger) : IMiddleware
+internal sealed class OperationLoggingMiddleware(OperationObservationWriter writer,
+    OperationCaptureOptions options, IClock clock, OperationExecutionContext execution) : IMiddleware
 {
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
     {
@@ -110,6 +118,7 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             || context.Request.Path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase)
             || context.Request.Path.StartsWithSegments("/gateway/openapi", StringComparison.OrdinalIgnoreCase))
         {
+            using var suppressedScope = execution.Enter(null, suppressed: true);
             await next(context).ConfigureAwait(false);
             return;
         }
@@ -128,7 +137,9 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             Metadata = Describe(context),
         };
         var timer = Stopwatch.StartNew();
-        await RecordAsync(started).ConfigureAwait(false);
+        await writer.WriteAsync(started).ConfigureAwait(false);
+        using var operationScope = execution.Enter(new ExecutionOrigin(operationId, options.Source, operationId,
+            options.Source, null, started.TraceId, started.Metadata?.CorrelationId));
         string? interrupted = null;
         try { await next(context).ConfigureAwait(false); }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
@@ -143,6 +154,7 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
         }
         finally
         {
+            operationScope.Dispose();
             // 异常处理器会把客户端断开转换成 499 或已开始的响应；它可能不再向外抛异常。
             if (context.RequestAborted.IsCancellationRequested) { interrupted = "canceled"; }
             var httpStatus = interrupted is null || interrupted == "canceled" ? context.Response.StatusCode : (int?)null;
@@ -150,7 +162,7 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
                 ? context.User.FindFirstValue("sub") ?? context.User.FindFirstValue(ClaimTypes.NameIdentifier) : null;
             // 身份无法满足安全元数据约束时省略；不把未经认证的请求字段当成替代身份。
             if (string.IsNullOrWhiteSpace(actor) || actor.Length > 200 || actor.Any(char.IsControl)) { actor = null; }
-            await RecordAsync(started with
+            await writer.WriteAsync(started with
             {
                 EventId = Guid.NewGuid(),
                 Phase = "finished",
@@ -218,22 +230,4 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
             or "PROPFIND" or "PROPPATCH" or "MKCOL" or "COPY" or "MOVE" or "LOCK" or "UNLOCK" or "M-SEARCH" => method,
         _ => "OTHER",
     };
-
-    private async Task RecordAsync(OperationObservedV1 observation)
-    {
-        // RequestAborted 不取消日志落盘；每条写入自带独立且有界的超时。
-        using var timeout = new CancellationTokenSource(options.WriteTimeout);
-        try
-        {
-            if ((await journal.AppendAsync(observation, timeout.Token).ConfigureAwait(false)).IsSuccess) { return; }
-        }
-        catch (Exception) { /* 普通观察降级不能改变业务响应；原异常可能包含秘密，不输出。 */ }
-        status.ReportFailure();
-        try { LogCaptureFailed(observation.OperationId, observation.Phase); }
-        catch (Exception) { /* 诊断提供器也可能故障；已登记的 health 失败计数仍然可见。 */ }
-    }
-
-    [LoggerMessage(EventId = 10, Level = LogLevel.Error,
-        Message = "操作观察未持久化：OperationId={OperationId}，Phase={Phase}；操作日志已降级。")]
-    private partial void LogCaptureFailed(Guid operationId, string phase);
 }

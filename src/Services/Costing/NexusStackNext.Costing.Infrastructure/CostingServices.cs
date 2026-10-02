@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Application;
@@ -43,7 +44,7 @@ public static class CostingServices
     }
 }
 
-internal sealed class CostingCommands(CostingDbContext database) : ICommandHandler<UpdateCostInputs, CostCalculationStatus>,
+internal sealed class CostingCommands(CostingDbContext database, IExecutionContext execution) : ICommandHandler<UpdateCostInputs, CostCalculationStatus>,
     IQueryHandler<GetCostCalculation, CostCalculationStatus>, IQueryHandler<GetCostSheet, CostSheetView>
 {
     public async Task<Result<CostCalculationStatus>> HandleAsync(UpdateCostInputs command, CancellationToken cancellationToken = default)
@@ -92,6 +93,7 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
         var task = new CostCalculationEntry
         {
             TaskId = command.RequestId,
+            ExecutionOrigin = execution.Capture(),
             ItemId = id,
             ExpectedVersion = command.ExpectedVersion,
             PurchaseCost = command.PurchaseCost,

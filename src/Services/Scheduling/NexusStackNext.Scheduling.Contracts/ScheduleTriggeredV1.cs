@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.Scheduling.Contracts;
 
@@ -21,4 +23,7 @@ public sealed record ScheduleTriggeredV1 : IntegrationEvent
     public required Guid TargetId { get; init; }
     /// <summary>创建后台委托时已经验证的操作者。</summary>
     public required string CreatedBy { get; init; }
+    /// <summary>触发与原始定义操作的关联；旧消息可以没有该字段。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExecutionOrigin? ExecutionOrigin { get; init; }
 }

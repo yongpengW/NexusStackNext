@@ -29,9 +29,11 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
         catch (Exception error) when (error is JsonException or InvalidOperationException or ArgumentException) { return false; }
         if (message.EventId != envelope.MessageId || message.PlanId <= 0 || message.TriggerSequence <= 0 || message.TargetId == Guid.Empty
             || message.TargetKind != CostingScheduleTarget.Recalculate || message.ScheduledAt == default || message.OccurredAt < message.ScheduledAt
-            || string.IsNullOrWhiteSpace(message.CreatedBy) || message.CreatedBy.Length > 128 || message.CreatedBy.Any(char.IsControl)) { return false; }
+            || string.IsNullOrWhiteSpace(message.CreatedBy) || message.CreatedBy.Length > 128 || message.CreatedBy.Any(char.IsControl)
+            || message.ExecutionOrigin is { } origin && !origin.IsValid()) { return false; }
 
         var canonical = FormattableString.Invariant($"{message.PlanId}|{message.TriggerSequence}|{message.ScheduledAt.UtcTicks}|{message.OccurredAt.UtcTicks}|{message.TargetKind}|{message.TargetId:D}|{message.CreatedBy}");
+        if (message.ExecutionOrigin is not null) { canonical += "|origin:" + JsonSerializer.Serialize(message.ExecutionOrigin); }
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         database.ChangeTracker.Clear();
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
@@ -65,6 +67,7 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
                     TaskId = message.EventId,
                     ItemId = id,
                     Origin = "scheduling",
+                    ExecutionOrigin = message.ExecutionOrigin,
                     ExpectedVersion = sheet.Version,
                     PurchaseCost = sheet.PurchaseCost,
                     FreightCost = sheet.FreightCost,

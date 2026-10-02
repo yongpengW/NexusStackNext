@@ -49,6 +49,16 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context) : I
                 SpanId = metadata.SpanId,
                 ParentSpanId = metadata.ParentSpanId,
                 CorrelationId = metadata.CorrelationId,
+                RootOperationId = metadata.RootOperationId,
+                RootSource = metadata.RootSource,
+                ParentOperationId = metadata.ParentOperationId,
+                ParentSource = metadata.ParentSource,
+                InitiatorId = metadata.InitiatorId,
+                TaskId = metadata.TaskId,
+                TaskEpoch = metadata.TaskEpoch,
+                SchedulePlanId = metadata.SchedulePlanId,
+                ScheduleExpectedVersion = metadata.ScheduleExpectedVersion,
+                ScheduleDecisionId = metadata.ScheduleDecisionId,
             },
         })));
         return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>

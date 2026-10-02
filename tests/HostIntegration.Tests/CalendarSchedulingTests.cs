@@ -4,7 +4,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using NexusStackNext.Auditing.Contracts;
+using NexusStackNext.Auditing.Infrastructure;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.TestSupport;
@@ -14,9 +18,9 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class CalendarSchedulingTests
 {
     [Theory]
-    [InlineData("FireOnce", 1, "Coalesced")]
-    [InlineData("Skip", 0, "Skipped")]
-    public async Task LateCalendarWindow_IsDecidedOnce_AndHistorySurvivesRuleChanges(string policy, int triggered, string outcome)
+    [InlineData("FireOnce", 1, "Coalesced", "accepted")]
+    [InlineData("Skip", 0, "Skipped", "skipped")]
+    public async Task LateCalendarWindow_IsDecidedOnce_AndHistorySurvivesRuleChanges(string policy, int triggered, string outcome, string observedOutcome)
     {
         var clock = new MutableClock(DateTimeOffset.Parse("2026-10-02T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
         await using var rootApp = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
@@ -27,8 +31,9 @@ public sealed class CalendarSchedulingTests
                 services.RemoveAll<TaskRegistry>();
                 services.RemoveAll<ScheduleRunner>();
                 services.AddScoped(provider => new TaskRegistry(provider.GetRequiredService<IScheduledTaskStore>(), provider.GetRequiredService<IIdGenerator>(), clock,
-                    provider.GetRequiredService<IScheduleCalendar>()));
-                services.AddScoped(provider => new ScheduleRunner(provider.GetRequiredService<IScheduledTaskStore>(), clock, provider.GetRequiredService<IScheduleCalendar>()));
+                    provider.GetRequiredService<IScheduleCalendar>(), provider.GetRequiredService<IExecutionContext>()));
+                services.AddScoped(provider => new ScheduleRunner(provider.GetRequiredService<IScheduledTaskStore>(), clock, provider.GetRequiredService<IScheduleCalendar>(),
+                    provider.GetRequiredService<IBackgroundExecutionObservation>(), provider.GetRequiredService<IExecutionContext>()));
             });
         });
         using var client = app.CreateClient();
@@ -66,6 +71,36 @@ public sealed class CalendarSchedulingTests
         Assert.Equal(policy, decision.GetProperty("rule").GetProperty("misfirePolicy").GetString());
         if (triggered == 0) { Assert.Equal(JsonValueKind.Null, decision.GetProperty("occurrenceId").ValueKind); }
         else { Assert.Equal(Assert.Single(history.GetProperty("data").EnumerateArray()).GetProperty("occurrenceId").GetGuid(), decision.GetProperty("occurrenceId").GetGuid()); }
+
+        var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+        var phases = (await OperationEndpointInventoryTests.ReadAsync(journal)).Where(item => item.Kind == "schedule").ToArray();
+        Assert.Equal(2, phases.Length);
+        var started = Assert.Single(phases, item => item.Phase == "started");
+        var finished = Assert.Single(phases, item => item.Phase == "finished");
+        Assert.Equal(started.OperationId, finished.OperationId);
+        Assert.Equal(observedOutcome, finished.Outcome);
+        Assert.Null(finished.ActorId);
+        Assert.NotNull(finished.Metadata!.InitiatorId);
+        Assert.Equal(id, finished.Metadata.SchedulePlanId);
+        Assert.Equal(1, finished.Metadata.ScheduleExpectedVersion);
+        var ingestion = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(OperationObservedV1.Name);
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        foreach (var phase in new[] { finished, started })
+        {
+            Assert.True(await ingestion.HandleAsync(new EventEnvelope
+            {
+                MessageId = phase.EventId,
+                EventName = phase.EventName,
+                OccurredAt = phase.OccurredAt,
+                Payload = serializer.Serialize(phase),
+            }));
+        }
+        using var observed = await client.GetAsync(new Uri($"/api/auditing/operations?operationId={finished.OperationId}&outcome={observedOutcome}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, observed.StatusCode);
+        var entry = Assert.Single((await observed.Content.ReadApiDataAsync()).EnumerateArray());
+        Assert.Equal(observedOutcome, entry.GetProperty("outcome").GetString());
+        Assert.Equal(id, entry.GetProperty("metadata").GetProperty("schedulePlanId").ReadHttpInt64());
+        Assert.Equal(finished.Metadata.ScheduleDecisionId, entry.GetProperty("metadata").GetProperty("scheduleDecisionId").GetGuid());
 
         clock.UtcNow = clock.UtcNow.AddHours(1);
         using var same = await client.PutAsJsonAsync(new Uri($"/api/scheduling/tasks/{id}/rule", UriKind.Relative), new
@@ -139,7 +174,7 @@ public sealed class CalendarSchedulingTests
             {
                 services.RemoveAll<TaskRegistry>();
                 services.AddScoped(provider => new TaskRegistry(provider.GetRequiredService<IScheduledTaskStore>(), provider.GetRequiredService<IIdGenerator>(), clock,
-                    provider.GetRequiredService<IScheduleCalendar>()));
+                    provider.GetRequiredService<IScheduleCalendar>(), provider.GetRequiredService<IExecutionContext>()));
             });
         });
         using var client = app.CreateClient();

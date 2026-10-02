@@ -16,6 +16,82 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class OperationObservationPersistenceTests
 {
     [PostgresFact]
+    public async Task TaskAttemptOutcomes_AndImmutableCorrelation_SurviveCentralPersistence()
+    {
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        var migration = await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing");
+        Assert.Equal(0, migration.ExitCode);
+        var occurredAt = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IClock>(new FixedClock(occurredAt.AddMinutes(1)));
+        services.AddSingleton<IIdGenerator>(new SequentialIdGenerator(1000));
+        services.AddSingleton<IIntegrationEventSerializer>(new SystemTextJsonIntegrationEventSerializer());
+        services.AddAuditingPostgresStorage(database.ConnectionString);
+        services.AddKeyedScoped<IIntegrationEventProcessor, OperationObservationIngestion>(OperationObservedV1.Name);
+        await using var application = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        foreach (var outcome in new[] { "superseded", "lease_lost" })
+        {
+            var message = new OperationObservedV1
+            {
+                EventId = Guid.NewGuid(),
+                OperationId = Guid.NewGuid(),
+                Source = "pricing",
+                Kind = "task",
+                Phase = "finished",
+                Outcome = outcome,
+                OccurredAt = occurredAt,
+                TraceId = "task-correlation-trace",
+                DurationMs = 10,
+                Metadata = new OperationDetails
+                {
+                    Action = "pricing.calculate",
+                    ExecutionRole = "task",
+                    RootOperationId = Guid.NewGuid(),
+                    RootSource = "costing",
+                    ParentOperationId = Guid.NewGuid(),
+                    ParentSource = "costing",
+                    InitiatorId = "original-initiator",
+                    TaskId = Guid.NewGuid(),
+                    TaskEpoch = 2,
+                },
+            };
+            await using (var writer = application.CreateAsyncScope())
+            {
+                Assert.True(await DeliverAsync(writer.ServiceProvider, message));
+            }
+            await using var reader = application.CreateAsyncScope();
+            Assert.True(await DeliverAsync(reader.ServiceProvider, message));
+            foreach (var changed in new[]
+            {
+                message.Metadata with { RootOperationId = Guid.NewGuid() },
+                message.Metadata with { RootSource = "another-source" },
+                message.Metadata with { ParentOperationId = Guid.NewGuid() },
+                message.Metadata with { ParentSource = "another-source" },
+                message.Metadata with { InitiatorId = "replacement" },
+                message.Metadata with { TaskId = Guid.NewGuid() },
+                message.Metadata with { TaskEpoch = 3 },
+            })
+            {
+                Assert.False(await DeliverAsync(reader.ServiceProvider, message with { Metadata = changed }));
+            }
+            var page = await reader.ServiceProvider.GetRequiredService<IOperationObservationStore>()
+                .QueryAsync(new OperationQuery(1, 100, Outcome: outcome));
+            var saved = Assert.Single(page.Operations);
+            Assert.Equal(outcome, saved.Outcome);
+            Assert.Null(saved.ActorId);
+            Assert.NotNull(saved.Metadata);
+            Assert.Equal(message.Metadata.RootOperationId, saved.Metadata.RootOperationId);
+            Assert.Equal("costing", saved.Metadata.RootSource);
+            Assert.Equal(message.Metadata.ParentOperationId, saved.Metadata.ParentOperationId);
+            Assert.Equal("costing", saved.Metadata.ParentSource);
+            Assert.Equal("original-initiator", saved.Metadata.InitiatorId);
+            Assert.Equal(message.Metadata.TaskId, saved.Metadata.TaskId);
+            Assert.Equal(2, saved.Metadata.TaskEpoch);
+        }
+    }
+
+    [PostgresFact]
     public async Task FailedObservation_RollsBackInboxAndFingerprint_ThenRedeliveryPreservesCommittedContent()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();

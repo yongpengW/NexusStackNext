@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 
@@ -15,6 +17,9 @@ public static class DurableTaskMapping
         task.ToTable("tasks");
         task.HasKey(x => x.TaskId);
         task.Property(x => x.TaskId).ValueGeneratedNever();
+        task.Property(x => x.ExecutionOrigin).HasColumnType("jsonb").HasConversion(
+            origin => JsonSerializer.Serialize(origin, (JsonSerializerOptions?)null),
+            json => JsonSerializer.Deserialize<ExecutionOrigin>(json, (JsonSerializerOptions?)null));
         task.Property(x => x.State).HasMaxLength(24);
         task.Property(x => x.ErrorCode).HasMaxLength(64);
         task.Property(x => x.AvailableAt).HasDefaultValueSql("clock_timestamp()");

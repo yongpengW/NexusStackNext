@@ -1,12 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
-internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHandler<UpdatePricingFee, RecalculationStatus>
+internal sealed class PricingFeeCommands(PricingDbContext database, IExecutionContext execution) : ICommandHandler<UpdatePricingFee, RecalculationStatus>
 {
     public async Task<Result<RecalculationStatus>> HandleAsync(UpdatePricingFee command, CancellationToken cancellationToken = default)
     {
@@ -36,6 +37,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHa
         var task = new RecalculationEntry
         {
             TaskId = command.RequestId,
+            ExecutionOrigin = execution.Capture(),
             ItemId = id,
             ExpectedVersion = command.ExpectedVersion,
             Origin = "fee",

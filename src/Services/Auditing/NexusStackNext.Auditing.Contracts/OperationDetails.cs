@@ -7,7 +7,7 @@ public sealed record OperationDetails
 {
     /// <summary>代码声明的稳定动作名称。</summary>
     public required string Action { get; init; }
-    /// <summary>endpoint 表示本地处理，proxy 表示边缘转发；均不是提交事实。</summary>
+    /// <summary>endpoint / proxy / command / task / schedule 区分执行入口；均不是提交事实。</summary>
     public required string ExecutionRole { get; init; }
     /// <summary>代码声明的静态描述，不进行参数插值。</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -30,4 +30,34 @@ public sealed record OperationDetails
     /// <summary>有界的关联值；不能用于认证、授权或去重。</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? CorrelationId { get; init; }
+    /// <summary>根操作标识，由来源模块生成。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? RootOperationId { get; init; }
+    /// <summary>根操作所属来源。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RootSource { get; init; }
+    /// <summary>直接触发当前执行的操作标识。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? ParentOperationId { get; init; }
+    /// <summary>直接触发操作的来源。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ParentSource { get; init; }
+    /// <summary>原发起人；不赋予当前后台执行者身份。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? InitiatorId { get; init; }
+    /// <summary>所属来源的任务标识。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? TaskId { get; init; }
+    /// <summary>任务的租约代次。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? TaskEpoch { get; init; }
+    /// <summary>所属来源的计划标识。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? SchedulePlanId { get; init; }
+    /// <summary>本次调度读取的计划版本。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? ScheduleExpectedVersion { get; init; }
+    /// <summary>本次拟登记的调度决定；必须结合结果判断是否已登记。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Guid? ScheduleDecisionId { get; init; }
 }

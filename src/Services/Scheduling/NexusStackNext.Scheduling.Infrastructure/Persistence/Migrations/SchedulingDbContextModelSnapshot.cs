@@ -139,6 +139,9 @@ namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
+                    b.Property<string>("ExecutionOrigin")
+                        .HasColumnType("jsonb");
+
                     b.Property<long>("PlanId")
                         .HasColumnType("bigint");
 
@@ -189,6 +192,9 @@ namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ExecutionOrigin")
+                        .HasColumnType("jsonb");
 
                     b.Property<bool>("IsEnabled")
                         .HasColumnType("boolean");

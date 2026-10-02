@@ -1,5 +1,6 @@
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.Costing.Application;
 
@@ -9,8 +10,12 @@ namespace NexusStackNext.Costing.Application;
 /// <param name="ExpectedVersion">预期聚合版本；创建时为零。</param>
 /// <param name="PurchaseCost">单位成本。</param>
 /// <param name="FreightCost">分摊到单位的运费。</param>
+[BackgroundWorkAcceptance]
 public sealed record UpdateCostInputs(Guid RequestId, Guid ItemId, long ExpectedVersion, decimal PurchaseCost, decimal FreightCost)
-    : ICommand<CostCalculationStatus>;
+    : ICommand<CostCalculationStatus>, ITaskOperationCommand
+{
+    Guid ITaskOperationCommand.TaskId => RequestId;
+}
 
 /// <summary>读取任务与最近执行结果。</summary>
 /// <param name="TaskId">登记时返回的任务标识。</param>
@@ -23,6 +28,8 @@ public sealed record GetCostCalculation(Guid TaskId) : IQuery<CostCalculationSta
 /// <param name="InputRevision">待处理的输入版本。</param>
 public sealed record CostCalculationStatus(Guid TaskId, Guid ItemId, string State, long InputRevision)
 {
+    /// <summary>受理任务时固定的来源和原发起人；不代表当前执行者。</summary>
+    public ExecutionOrigin? ExecutionOrigin { get; init; }
     /// <summary>每次成功领取递增；人工重试也不清零。</summary>
     public long Epoch { get; init; }
     /// <summary>当前自动重试预算内已经领取的次数。</summary>
@@ -46,19 +53,23 @@ public sealed record CostingAttempt(long Epoch, DateTimeOffset StartedAt, DateTi
 /// <summary>工作进程报告本次计算失败；旧执行代次不能修改当前状态。</summary>
 /// <param name="TaskId">任务标识。</param>
 /// <param name="Epoch">执行代次。</param>
+[CommandObservationSuppression("这里只持久化失败与重试安排；实际执行失败已由任务观察记录。")]
 public sealed record FailCostingWork(Guid TaskId, long Epoch) : ICommand<bool>;
 
 /// <summary>授权操作者重新启用一个失败任务，ExpectedEpoch 防止重复操作。</summary>
 /// <param name="TaskId">任务标识。</param>
 /// <param name="ExpectedEpoch">操作者看到的失败代次。</param>
-public sealed record RetryCostingWork(Guid TaskId, long ExpectedEpoch) : ICommand<CostCalculationStatus>;
+[BackgroundWorkAcceptance]
+public sealed record RetryCostingWork(Guid TaskId, long ExpectedEpoch) : ICommand<CostCalculationStatus>, ITaskOperationCommand;
 
 /// <summary>工作进程领取一项到期工作；没有可领取工作时返回 null。</summary>
+[CommandObservationSuppression("后台轮询只协调租约；实际计算由任务观察记录。")]
 public sealed record ClaimCostingWork : ICommand<CostingWorkLease?>;
 
 /// <summary>完成当前执行代次；返回 false 表示执行权已经丢失。</summary>
 /// <param name="TaskId">任务标识。</param>
 /// <param name="Epoch">领取代次。</param>
+[CommandObservationSuppression("计算入口使用任务观察，避免额外生成一条命令操作。")]
 public sealed record CompleteCostingWork(Guid TaskId, long Epoch) : ICommand<bool>;
 
 /// <summary>当前工作进程持有的有限执行权。</summary>

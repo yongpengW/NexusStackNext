@@ -1,6 +1,6 @@
 # 自动操作日志
 
-本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60)、[持久链路 #61](https://github.com/yongpengW/NexusStackNext/issues/61) 与[全宿主 HTTP 覆盖 #62](https://github.com/yongpengW/NexusStackNext/issues/62) 的架构、使用语义和验收边界。四个宿主均已显式接入默认采集；这不代表后台任务已完成操作采集，也不替代全量回归和 CI 的门禁结论。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
+本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60)、[持久链路 #61](https://github.com/yongpengW/NexusStackNext/issues/61)、[全宿主 HTTP 覆盖 #62](https://github.com/yongpengW/NexusStackNext/issues/62) 与[命令和任务关联 #63](https://github.com/yongpengW/NexusStackNext/issues/63) 的架构、使用语义和验收边界。四个宿主均已显式接入默认 HTTP 采集；#63 正在验证命令、业务任务与调度观察，尚未完成整票验收，不替代全量回归和 CI 的门禁结论。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
 
 ## 三种审计信息
 
@@ -54,7 +54,35 @@ YARP 2.3 的路由超时会被转换成 400，见[上游问题 #2662](https://gi
 
 已发送响应头后，[YARP 会通过 Abort / Reset 结束传输错误](https://github.com/dotnet/yarp/blob/v2.3.0/src/ReverseProxy/Forwarder/HttpForwarder.cs#L824-L886)，这也可能取消 RequestAborted。网关适配器保留明确的目的地错误、路由超时，以及代理主动终止前连接是否已取消的证据，再通过 `MarkOperationFailed` 交给采集器；不把这种内部终止反推为客户端主动取消。真实部分响应测试覆盖后端断流、路由超时、代理 activity timeout 和客户端主动取消：都保留已经发送的 200，前三者为 `failed`，客户端先取消为 `canceled`。接收方不再要求 `failed` 必须搭配 5xx，因为响应头发出后不能据此推断传输已完成。
 
-本票 Started 位于认证前，Actor 为空；Finished 仅使用已认证声明中的用户身份，认证失败或没有用户时为空。后台执行的 Actor 与原 Initiator 必须独立表达；后台任务采集与关联是后续票据，当前 HTTP 样板不承诺已经覆盖它们。
+HTTP Started 位于认证前，Actor 为空；Finished 仅使用已认证声明中的用户身份，认证失败或没有用户时为空。后台执行的 Actor 与原 Initiator 独立表达，具体语义见下节。
+
+## 命令与业务任务（#63，进行中）
+
+`ISender` 的独立命令默认产生一次 `command` 操作，覆盖校验、事务入口与返回结果；查询不产生命令操作。已有 HTTP 或外层命令作用域时，内层命令沿用它，不重复记录。显式排除的 HTTP 入口也排除其内部命令；父作用域结束后，异步子流程不能再复用已结束的操作。
+
+命令成功默认表示本次命令入口已完成。声明 `BackgroundWorkAcceptance` 的受理与人工重试命令只记录 `accepted`；业务拒绝为 `rejected`，异常为 `failed`，与本次取消令牌有关的取消为 `canceled`。不序列化命令参数、返回值或错误正文。后台领取、完成和失败汇报声明 `CommandObservationSuppression` 并附原因：领取是内部协调，计算入口已有独立任务观察，失败汇报只负责持久化业务重试状态。这种声明只排除通用命令观察，不关闭已有 HTTP 或显式任务观察。
+
+任务受理与人工重试命令通过 `ITaskOperationCommand` 显式声明目标 TaskId；独立命令观察只读取该强类型标识，不扫描命令属性或载荷。TaskEpoch 留空，因为这次管理操作尚不代表某个计算租约；目标标识也不证明任务存在或操作成功。HTTP 内部命令仍沿用 HTTP 操作，重试 HTTP 入口保留原有的任务客体声明。人工重试有自己的操作者和操作标识，通过 TaskId 关联原任务；后台尝试继续关联最初任务受理来源，不改写原发起人。
+
+Costing / Pricing 在任务受理事务内保存可空的 `ExecutionOrigin`，包含直接触发操作、根操作、原发起人和安全关联。请求重投保持最初来源，不能用重投人的身份覆盖它。实际计算入口以系统 Actor 执行，原发起人只在 `InitiatorId` 中表达；日志关联不授予业务权限。
+
+每次实际调用计算入口产生自己的 OperationId；同次调用的两个阶段共用它，持久化后重投保持阶段消息身份。`Source + TaskId + TaskEpoch` 关联业务任务及租约代次；同代次若被重复调用，会有不同的操作记录，不把它们合并成一次真实执行。只有实际提交返回成功才记录 `completed`；旧输入被取代为 `superseded`，丢失执行权为 `lease_lost`。执行取消不等于业务任务进入取消终态，失败观察也不替代任务自己的失败和重试协议。
+
+观察覆盖读取输入时的异常和取消。输入读取完成后才知道持久化来源；未读到来源时不猜测 Initiator 或父操作，仍用 TaskId / TaskEpoch 保存当前调用的证据。若进程在来源读取完成且 Started 持久化之前退出，可能没有该次调用的操作观察，不能补造记录；业务租约历史仍由所属上下文保存。已经保存 Started、未保存 Finished 的调用在中央保持 `unconfirmed`。
+
+Costing 的 `CostCalculatedV1` 随业务 Outbox 保存产出结果的执行来源；Pricing 校验该可选字段，与 Inbox、业务更新和新任务一起接纳。新字段参与内容指纹，同身份重投不能更换或删除关联；不含该字段的旧消息保持原指纹。旧任务可以没有来源，不能追填成当前调用人。业务任务和中央观察使用增量迁移，来源 journal 的载荷表不需要额外迁移。
+
+Scheduling 定义计划时，将当前来源与计划同一次保存；规则变更、启停及调度推进不改写原始来源。领域层保持独立，该元数据归应用与存储边界。来源随 Occurrence 和 `ScheduleTriggeredV1` 持久交付给 Costing，在 Costing 接受任务时保存；消息校验与指纹同时包含关联，旧消息没有该字段时保留原指纹。计划和发生的新增列是可空 jsonb，采用独立增量迁移。
+
+每个到期计划的裁决独立产生 `schedule` 操作；空扫描不产生操作。`SchedulePlanId + ScheduleExpectedVersion + ScheduleDecisionId` 关联读取的计划版本与本次拟登记的决定，不借用业务任务的 TaskId / TaskEpoch。成功登记触发为 `accepted`，按漏跑策略登记跳过为 `skipped`，版本竞争失败为 `rejected`，计算或存储异常为 `failed`，执行取消为 `canceled`。失败和拒绝记录中的 DecisionId 不证明数据库中存在对应决定。系统 Actor 保持为空，原发起人仍取已保存的来源；发生消息的直接父级改为本次调度操作，根操作保持不变。三个调度关联字段参与中央内容指纹，并以可空列增量迁移。
+
+未保存操作来源的计划仍有明确的 `DelegatedBy`，因此可以保留已知委托人为 Initiator，但不能虚构此前的根操作或父操作；此时日志关联从本次调度开始。提交中取消会尝试用独立 journal 记录 `canceled`，不能把它解释成计划已取消或下游任务已取消。
+
+当前切片已覆盖命令嵌套与并发隔离、校验拒绝、异常与取消、日志故障隔离、受理来源跨重启保留、计划来源进入 Costing、真实数据库回滚、人工重试、输入读取取消和中央关联字段持久化。调度的触发、漏跑跳过、版本竞争和回滚后重试也有公共入口验证。
+
+真实 HTTP / RabbitMQ / PostgreSQL 旅程已验证：请求经网关受理后关闭来源进程，重启执行 Costing → Pricing，受权调查查询可关联两个 HTTP 操作和两次后台计算；跨消息丢失 Initiator 的可编译变异会使该旅程失败。另一条旅程在 Pricing 提交被阻塞时强杀进程，证明业务事务回滚、独立 journal 保留 Started，并在重启交付后显示 `unconfirmed`；新租约执行成功后，原操作仍保持未确认。旧租约失权与旧成本输入被替换分别记录 `lease_lost` / `superseded`，不会伪造结果或发布旧成本结果。
+
+上述场景不能替代完整回归、模板、Linux CI 与双轴评审；各项合并门禁的实际结论记录在本票及 PR 中。后续任务管理票据的取消和续租入口必须按同一语义扩展覆盖。
 
 ## 默认覆盖与安全边界
 

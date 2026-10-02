@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Scheduling.Application;
@@ -34,11 +35,16 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
         return new(items, total);
     }
 
-    public Task<Result> AddAsync(ScheduledTask task, CancellationToken cancellationToken = default)
+    public Task<Result> AddAsync(ScheduledTask task, ExecutionOrigin? origin = null, CancellationToken cancellationToken = default)
     {
         context.Plans.Add(task);
+        context.Entry(task).Property<ExecutionOrigin?>(SchedulingDbContext.ExecutionOriginProperty).CurrentValue = origin;
         return CommitAsync(cancellationToken);
     }
+
+    public Task<ExecutionOrigin?> ReadExecutionOriginAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
+        context.Plans.AsNoTracking().Where(task => task.Id == id)
+            .Select(task => EF.Property<ExecutionOrigin?>(task, SchedulingDbContext.ExecutionOriginProperty)).SingleOrDefaultAsync(cancellationToken);
 
     public Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default)
     {

@@ -76,6 +76,7 @@ internal sealed class RecalculationEntry : DurableTaskRecord
 
     public RecalculationStatus ToStatus() => new(TaskId, ItemId.Value, State, InputRevision)
     {
+        ExecutionOrigin = ExecutionOrigin,
         Epoch = Epoch,
         Attempts = Attempts,
         ErrorCode = ErrorCode,
