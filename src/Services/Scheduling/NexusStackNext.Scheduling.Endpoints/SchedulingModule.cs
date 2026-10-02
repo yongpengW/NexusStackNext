@@ -1,5 +1,6 @@
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.Scheduling.Infrastructure;
@@ -40,7 +41,7 @@ public static class SchedulingModule
 
         // 信息面**显式声明公开**（与边缘的 `scheduling-info` 一致）：公开必须写下来，
         // 而不是靠"忘了标注"这种默认放行。
-        endpoints.MapGet("/api/scheduling", (IClock clock) => Results.Ok(new
+        endpoints.MapGet("/api/scheduling", (ApiResponses responses, IClock clock) => responses.Ok(new
         {
             context = "scheduling",
             responsibility = "什么任务该在什么时候跑",
@@ -50,32 +51,27 @@ public static class SchedulingModule
 
         // **管理面在进程内也要求认证**（与边缘的 `scheduling-management` 一致）。
         // 此前这四个端点在进程内没有任何授权判定——"边缘是唯一入口"是编排的事实，不是代码的事实。
-        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization();
+        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 500);
 
-        // 列出全部任务。**这是"调度器真的在跑"的可观察证据**：
+        // 按稳定 ID 分页列出任务。**这是"调度器真的在跑"的可观察证据**：
         // 任务被执行过一次之后，lastRunAt 会被写上、nextRunAt 会向前推进。
-        tasks.MapGet("/", async (TaskRegistry registry, CancellationToken cancellationToken) =>
+        tasks.MapGet("/", async (ApiResponses responses, TaskRegistry registry, [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
         {
+            if (!paging.IsValid)
+            {
+                return Failure(new Error(ApiPageRequest.InvalidErrorCode, ApiPageRequest.InvalidErrorMessage));
+            }
             var all = await registry.ListAsync(cancellationToken);
 
-            return Results.Ok(new
-            {
-                count = all.Count,
-                items = all.Select(static task => new
-                {
-                    taskId = task.Id.Value,
-                    code = task.Code.Value,
-                    intervalSeconds = task.Interval.TotalSeconds,
-                    task.IsEnabled,
-                    task.LastRunAt,
-                    task.NextRunAt,
-                }),
-            });
-        });
+            return responses.Page(all.OrderBy(static task => task.Id.Value)
+                .Skip((int)Math.Min(paging.Offset, all.Count)).Take(paging.Limit)
+                .Select(static task => new TaskItem(task.Id.Value, task.Code.Value, task.Interval.TotalSeconds,
+                    task.IsEnabled, task.LastRunAt, task.NextRunAt)).ToArray(), all.Count, paging);
+        }).Produces<ApiPage<TaskItem>>();
 
         // 定义一个任务。首次执行时刻不传就以"现在"起算——
         // 于是定义完，下一个调度节拍就会触发它。
-        tasks.MapPost("/", async (
+        tasks.MapPost("/", async (ApiResponses responses,
             DefineTaskRequest request,
             TaskRegistry registry,
             IClock clock,
@@ -100,12 +96,8 @@ public static class SchedulingModule
 
             return defined.IsFailure
                 ? Failure(defined.Error)
-                : Results.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new
-                {
-                    taskId = defined.Value.Id.Value,
-                    code = defined.Value.Code.Value,
-                });
-        });
+                : responses.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new TaskCreatedResponse(defined.Value.Id.Value, defined.Value.Code.Value));
+        }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201);
 
         tasks.MapPost("/{id:long}/pause", async (
             long id,
@@ -114,7 +106,7 @@ public static class SchedulingModule
         {
             var paused = await registry.PauseAsync(new ScheduledTaskId(id), cancellationToken);
             return paused.IsFailure ? Failure(paused.Error) : Results.NoContent();
-        });
+        }).Produces(204).ProducesApiErrors(404);
 
         tasks.MapPost("/{id:long}/resume", async (
             long id,
@@ -123,7 +115,7 @@ public static class SchedulingModule
         {
             var resumed = await registry.ResumeAsync(new ScheduledTaskId(id), cancellationToken);
             return resumed.IsFailure ? Failure(resumed.Error) : Results.NoContent();
-        });
+        }).Produces(204).ProducesApiErrors(404);
 
         return endpoints;
     }
@@ -137,7 +129,7 @@ public static class SchedulingModule
         statusCode: error.Code == "scheduling.task.not_found"
             ? StatusCodes.Status404NotFound
             : StatusCodes.Status400BadRequest,
-        extensions: new Dictionary<string, object?> { ["code"] = error.Code });
+        extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 /// <summary>定义一个计划任务。</summary>
@@ -145,3 +137,6 @@ public static class SchedulingModule
 /// <param name="IntervalSeconds">执行间隔（秒）。</param>
 /// <param name="FirstRunInSeconds">首次执行距现在多少秒；不传则以"现在"起算。</param>
 internal sealed record DefineTaskRequest(string Code, double IntervalSeconds, double? FirstRunInSeconds);
+
+internal sealed record TaskCreatedResponse(long TaskId, string Code);
+internal sealed record TaskItem(long TaskId, string Code, double IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt, DateTimeOffset? NextRunAt);

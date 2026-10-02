@@ -37,6 +37,7 @@ public sealed class ArchitectureInvariantTests
         "NexusStackNext.BuildingBlocks.Application",
         "NexusStackNext.BuildingBlocks.Domain",
         "NexusStackNext.BuildingBlocks.Infrastructure",
+        "NexusStackNext.BuildingBlocks.Web",
         "NexusStackNext.Files.Endpoints",
         "NexusStackNext.Files.Application",
         "NexusStackNext.Files.Domain",
@@ -64,10 +65,10 @@ public sealed class ArchitectureInvariantTests
     ];
 
     /// <summary>
-    /// 架构决定（ADR-0001 的目录布局）里声明的共享内核。<b>只有这四个允许存在</b>——
+    /// 架构决定（ADR-0001、ADR-0018）里声明的共享程序集。<b>只有清单中的允许存在</b>——
     /// 不变量 7 说"被第二个消费者证明需要才允许上移"，那是评审时的判断，编译器管不了；
     /// 这里守住可执行的下界：<b>BuildingBlocks 不得长出声明之外的程序集</b>。
-    /// 加第五个就得改这份清单，改的时候必须回答"谁需要它、为什么不能留在上下文里"。
+    /// 新增就得改这份清单，改的时候必须回答"谁需要它、为什么不能留在上下文里"。
     /// </summary>
     private static readonly string[] DeclaredBuildingBlocks =
     [
@@ -75,6 +76,9 @@ public sealed class ArchitectureInvariantTests
         "NexusStackNext.BuildingBlocks.Contracts",
         "NexusStackNext.BuildingBlocks.Domain",
         "NexusStackNext.BuildingBlocks.Infrastructure",
+        // Identity 与 Platform 首先共同使用，随后 Files、Scheduling、Auditing 与网关接入。
+        // 只共享 HTTP 线协议；模块自己的状态映射仍留在 Endpoints（ADR-0018）。
+        "NexusStackNext.BuildingBlocks.Web",
     ];
 
     /// <summary>宿主里禁止出现的隐藏装配调用（含参照仓库里那个拼错的字面量）。</summary>

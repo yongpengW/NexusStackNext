@@ -7,6 +7,7 @@
 # 用到就清理：两个进程、临时日志。
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'api-response.ps1')
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $outDir = Join-Path $env:TEMP "nexusstack-writepaths"
 Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -41,7 +42,8 @@ function Call([string]$method, [string]$url, [string]$body, [string]$token) {
 
     $raw = & curl.exe @a 2>&1 | Out-String
     $status = if ($raw -match '__STATUS__(\d+)') { $Matches[1] } else { '???' }
-    return @{ Status = $status; Body = ($raw -replace "`n__STATUS__\d+\s*$", '').Trim() }
+    $payload = ($raw -replace "`n__STATUS__\d+\s*$", '').Trim()
+    return ConvertFrom-ApiResponse -Status $status -Body $payload
 }
 
 try {
@@ -54,7 +56,7 @@ try {
     $login = Call 'POST' 'http://127.0.0.1:5190/api/identity/login' `
         ("{""UserName"":""$username"",""Password"":""Write-Paths-123456""}") $null
 
-    $token = if ($login.Body -match '"accessToken"\s*:\s*"([^"]+)"') { $Matches[1] } else { $null }
+    $token = $login.Data.accessToken
     $results.Add("0. 登录拿到令牌        → $($login.Status)")
 
     if ($token) {
@@ -89,7 +91,7 @@ try {
             # 第一版找的是后者——而响应的形状里根本没有那个字段，
             # 于是"没找到"被读成了"没触发"，而日志里明明写着"触发 1 个"。
             # 又是一个"错误的断言读起来像真的失败"。
-            $triggered = $list.Body -match '"lastRunAt"\s*:\s*"[^"]+"'
+            $triggered = @($list.Data | Where-Object { $_.code -eq $code -and $_.lastRunAt }).Count -eq 1
             $results.Add("5. 一个节拍后查任务    → $($list.Status)  已被触发=$triggered")
             if (-not $triggered) {
                 $results.Add("     响应片段：$($list.Body.Substring(0,[Math]::Min(220,$list.Body.Length)))")

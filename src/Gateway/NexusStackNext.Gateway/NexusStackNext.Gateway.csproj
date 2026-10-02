@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\NexusStackNext.Gateway.Routing\NexusStackNext.Gateway.Routing.csproj" />
     <ProjectReference Include="..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../BuildingBlocks/BuildingBlocks.Web/BuildingBlocks.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

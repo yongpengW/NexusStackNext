@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Aspire.ServiceDefaults;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
@@ -63,7 +64,7 @@ var rateLimitWindowSeconds = builder.Configuration.GetValue("Gateway:RateLimit:W
 // ---------- 2. 显式组装 ----------
 builder.Services.AddNexusStackApplication();
 builder.Services.AddOpenApi();
-builder.Services.AddProblemDetails();
+builder.Services.AddApiResponseContract();
 
 // 可达性探测：**两个消费者**共用它——就绪检查与实时推送。
 // 一个消费者时它只是一段代码；两个之后，"探测后端是否可达"才成为一道真的缝。
@@ -192,6 +193,7 @@ var app = builder.Build();
 
 app.UseExceptionHandler();
 app.UseCorrelationId();
+app.UseApiResponseContract();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseRequestTimeouts();
@@ -213,11 +215,11 @@ app.MapGet(
 // 否则它与"接口本来就不存在"分不开，而后者会让人以为服务没实现。
 app.MapGet(
     "/gateway/openapi/sources",
-    async (DownstreamOpenApiAggregator aggregator, CancellationToken cancellationToken) =>
+    async (ApiResponses responses, DownstreamOpenApiAggregator aggregator, CancellationToken cancellationToken) =>
     {
         var aggregated = await aggregator.GetAsync(cancellationToken);
 
-        return Results.Ok(new
+        return responses.Ok(new
         {
             complete = aggregated.Sources.All(static source => source.Ok),
             sources = aggregated.Sources.Select(static source => new
@@ -254,9 +256,9 @@ app.MapHealthChecks("/health/ready");
 // "是一个服务"与"在边缘上可达"是两件事——参照仓库从没把这条写下来过。
 //
 // 返回进程已接受的配置。直接编辑磁盘需要重启，不能把未加载的文件冒充运行配置。
-app.MapGet("/gateway/routes", (GatewayRouteConfiguration configuration) =>
+app.MapGet("/gateway/routes", (ApiResponses responses, GatewayRouteConfiguration configuration) =>
 {
-    return Results.Ok(new
+    return responses.Ok(new
     {
         routeTablePath,
         routes = configuration.Current.Routes.Select(static route => new

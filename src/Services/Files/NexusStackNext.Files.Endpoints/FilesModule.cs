@@ -1,4 +1,5 @@
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.Files.Infrastructure;
@@ -79,7 +80,7 @@ public static class FilesModule
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
         // 需要 multipart 时它可以在这一层之上加，不影响下面任何东西。
-        endpoints.MapPost("/api/files", async (
+        endpoints.MapPost("/api/files", async (ApiResponses responses,
             HttpRequest request,
             string name,
             FileService files,
@@ -104,14 +105,8 @@ public static class FilesModule
 
             return uploaded.IsFailure
                 ? Failure(uploaded.Error)
-                : Results.Created($"/api/files/{uploaded.Value.Id.Value}", new
-                {
-                    fileId = uploaded.Value.Id.Value,
-                    name = uploaded.Value.Name.Value,
-                    size = uploaded.Value.Size,
-                    storageKey = uploaded.Value.StorageKey,
-                });
-        }).RequireAuthorization();
+                : responses.Created($"/api/files/{uploaded.Value.Id.Value}", new FileUploadedResponse(uploaded.Value.Id.Value, uploaded.Value.Name.Value, uploaded.Value.Size, uploaded.Value.StorageKey));
+        }).Produces<ApiResponse<FileUploadedResponse>>(201).ProducesApiErrors(400, 401, 403, 500).RequireAuthorization();
 
         // 下载字节。**文件名由领域校验过**，因此这里不必再防路径穿越——
         // 而磁盘存储解析句柄时还有第二道闸（见 LocalDiskFileStore）。
@@ -125,10 +120,10 @@ public static class FilesModule
             return opened.IsFailure
                 ? Failure(opened.Error)
                 : Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
-        }).RequireAuthorization();
+        }).Produces(200, contentType: "application/octet-stream").ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 元数据（不碰字节）。
-        endpoints.MapGet("/api/files/{id:long}/metadata", async (
+        endpoints.MapGet("/api/files/{id:long}/metadata", async (ApiResponses responses,
             long id,
             FileService files,
             CancellationToken cancellationToken) =>
@@ -137,16 +132,8 @@ public static class FilesModule
 
             return file is null
                 ? Failure(new Error("files.not_found", $"文件不存在：{id}。"))
-                : Results.Ok(new
-                {
-                    fileId = file.Id.Value,
-                    name = file.Name.Value,
-                    file.ContentType,
-                    file.Size,
-                    stored = file.IsStored,
-                    file.UploadedAt,
-                });
-        }).RequireAuthorization();
+                : responses.Ok(new FileMetadataResponse(file.Id.Value, file.Name.Value, file.ContentType, file.Size, file.IsStored, file.UploadedAt));
+        }).Produces<ApiResponse<FileMetadataResponse>>().ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 删除：先软删元数据，再删字节（顺序的理由见 FileService）。
         endpoints.MapDelete("/api/files/{id:long}", async (
@@ -157,17 +144,17 @@ public static class FilesModule
             var deleted = await files.DeleteAsync(new StoredFileId(id), cancellationToken);
 
             return deleted.IsFailure ? Failure(deleted.Error) : Results.NoContent();
-        }).RequireAuthorization();
+        }).Produces(204).ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
         // 校验文件名——目录穿越的第一道闸在领域里，这里只是把它暴露出来。
-        endpoints.MapGet("/api/files/validate-name", (string name) =>
+        endpoints.MapGet("/api/files/validate-name", (ApiResponses responses, string name) =>
         {
             var parsed = FileName.Create(name);
 
             return parsed.IsFailure
                 ? Failure(parsed.Error)
-                : Results.Ok(new { fileName = parsed.Value.Value });
-        }).RequireAuthorization();
+                : responses.Ok(new FileNameResponse(parsed.Value.Value));
+        }).Produces<ApiResponse<FileNameResponse>>().ProducesApiErrors(400, 401, 403, 500).RequireAuthorization();
 
         return endpoints;
     }
@@ -182,7 +169,7 @@ public static class FilesModule
         statusCode: error.Code == "files.not_found"
             ? StatusCodes.Status404NotFound
             : StatusCodes.Status400BadRequest,
-        extensions: new Dictionary<string, object?> { ["code"] = error.Code });
+        extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 /// <summary>
@@ -231,3 +218,7 @@ internal sealed partial class FileStoreInitializer(
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "文件存储根目录就绪：{RootDirectory}")]
     private static partial void LogStorageReady(ILogger logger, string rootDirectory);
 }
+
+internal sealed record FileUploadedResponse(long FileId, string Name, long Size, string? StorageKey);
+internal sealed record FileMetadataResponse(long FileId, string Name, string ContentType, long Size, bool Stored, DateTimeOffset UploadedAt);
+internal sealed record FileNameResponse(string FileName);

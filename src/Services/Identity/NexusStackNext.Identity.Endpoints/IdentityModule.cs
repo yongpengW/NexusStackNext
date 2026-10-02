@@ -2,6 +2,7 @@ using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Infrastructure;
 
@@ -90,14 +91,14 @@ public static class IdentityModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        var identity = endpoints.MapGroup("/api/identity");
+        var identity = endpoints.MapGroup("/api/identity").ProducesApiErrors(400, 401, 403, 500);
 
         // **授权过滤器挂在整个分组上**，于是"这个模块的端点默认都要过一遍授权"是结构性的，
         // 而不是每个端点各自的记性。公开的端点由框架的 `AllowAnonymous()` 显式标注。
         identity.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         // 自述端点：说明这个服务是什么。**不返回任何假数据。**
-        identity.MapGet("/", (IClock clock) => Results.Ok(new
+        identity.MapGet("/", (ApiResponses responses, IClock clock) => responses.Ok(new
         {
             context = "identity",
             responsibility = "谁可以登录、登录后能做什么",
@@ -114,7 +115,7 @@ public static class IdentityModule
         // **响应里带着刷新令牌的原文，而它只在这里出现一次。**
         // 它不该进日志——所以这两个端点不要挂请求体记录类的东西。
 
-        identity.MapPost("/login", async (
+        identity.MapPost("/login", async (ApiResponses responses,
             LoginRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -125,18 +126,12 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Ok(new
-                {
-                    userId = result.Value.UserId,
-                    userName = result.Value.UserName,
-                    accessToken = result.Value.Tokens.AccessToken,
-                    accessTokenExpiresAt = result.Value.Tokens.AccessTokenExpiresAt,
-                    refreshToken = result.Value.Tokens.RefreshToken,
-                    refreshTokenExpiresAt = result.Value.Tokens.RefreshTokenExpiresAt,
-                });
-        }).AllowAnonymous();   // 登录当然要公开——它是拿钥匙的地方。
+                : responses.Ok(new LoginResponse(result.Value.UserId, result.Value.UserName,
+                    result.Value.Tokens.AccessToken, result.Value.Tokens.AccessTokenExpiresAt,
+                    result.Value.Tokens.RefreshToken, result.Value.Tokens.RefreshTokenExpiresAt));
+        }).ProducesApiErrors(415).Produces<ApiResponse<LoginResponse>>().AllowAnonymous();   // 登录当然要公开——它是拿钥匙的地方。
 
-        identity.MapPost("/refresh", async (
+        identity.MapPost("/refresh", async (ApiResponses responses,
             RefreshRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -147,14 +142,9 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Ok(new
-                {
-                    accessToken = result.Value.AccessToken,
-                    accessTokenExpiresAt = result.Value.AccessTokenExpiresAt,
-                    refreshToken = result.Value.RefreshToken,
-                    refreshTokenExpiresAt = result.Value.RefreshTokenExpiresAt,
-                });
-        }).AllowAnonymous();   // 刷新也一样：访问令牌过期时，客户端手里只有刷新令牌。
+                : responses.Ok(new RefreshResponse(result.Value.AccessToken, result.Value.AccessTokenExpiresAt,
+                    result.Value.RefreshToken, result.Value.RefreshTokenExpiresAt));
+        }).ProducesApiErrors(415).Produces<ApiResponse<RefreshResponse>>().AllowAnonymous();   // 刷新也一样：访问令牌过期时，客户端手里只有刷新令牌。
 
         identity.MapPost("/logout", async (
             ISender sender,
@@ -173,11 +163,11 @@ public static class IdentityModule
             var result = await sender.SendAsync(new LogoutCommand(userId), cancellationToken);
 
             return result.IsFailure ? Failure(result.Error) : Results.NoContent();
-        }).RequireAuthenticated();
+        }).Produces(204).RequireAuthenticated();
 
         // ---------- 用户 ----------
 
-        identity.MapPost("/users", async (
+        identity.MapPost("/users", async (ApiResponses responses,
             CreateUserRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -188,8 +178,8 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Created($"/api/identity/users/{result.Value}", new { userId = result.Value });
-        })
+                : responses.Created($"/api/identity/users/{result.Value}", new UserCreatedResponse(result.Value));
+        }).ProducesApiErrors(415).Produces<ApiResponse<UserCreatedResponse>>(201).ProducesApiErrors(409)
         // **自注册公开，是显式的。**
         //
         // 它必须是公开的，否则没有人能创建第一个用户——而"发一个令牌"需要先有用户。
@@ -206,9 +196,9 @@ public static class IdentityModule
             var result = await sender.SendAsync(new AssignRoleCommand(userId, roleId), cancellationToken);
 
             return result.IsFailure ? Failure(result.Error) : Results.NoContent();
-        }).RequirePermission("/api/identity/users/{userId}/roles/{roleId}", "POST");
+        }).Produces(204).ProducesApiErrors(404).RequirePermission("/api/identity/users/{userId}/roles/{roleId}", "POST");
 
-        identity.MapGet("/users/{userId:long}/permissions", async (
+        identity.MapGet("/users/{userId:long}/permissions", async (ApiResponses responses,
             long userId,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -217,12 +207,12 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Ok(new { userId, keys = result.Value });
-        }).RequirePermission("/api/identity/users/{userId}/permissions", "GET");
+                : responses.Ok(new UserPermissionsResponse(userId, result.Value));
+        }).Produces<ApiResponse<UserPermissionsResponse>>().ProducesApiErrors(404).RequirePermission("/api/identity/users/{userId}/permissions", "GET");
 
         // ---------- 角色 ----------
 
-        identity.MapPost("/roles", async (
+        identity.MapPost("/roles", async (ApiResponses responses,
             CreateRoleRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -231,8 +221,8 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Created($"/api/identity/roles/{result.Value}", new { roleId = result.Value });
-        }).RequirePermission("/api/identity/roles", "POST");
+                : responses.Created($"/api/identity/roles/{result.Value}", new RoleCreatedResponse(result.Value));
+        }).ProducesApiErrors(415).Produces<ApiResponse<RoleCreatedResponse>>(201).ProducesApiErrors(409).RequirePermission("/api/identity/roles", "POST");
 
         identity.MapPost("/roles/{roleId:long}/menus/{menuId:long}", async (
             long roleId,
@@ -243,11 +233,11 @@ public static class IdentityModule
             var result = await sender.SendAsync(new GrantMenuToRoleCommand(roleId, menuId), cancellationToken);
 
             return result.IsFailure ? Failure(result.Error) : Results.NoContent();
-        }).RequirePermission("/api/identity/roles/{roleId}/menus/{menuId}", "POST");
+        }).Produces(204).ProducesApiErrors(404).RequirePermission("/api/identity/roles/{roleId}/menus/{menuId}", "POST");
 
         // ---------- API 资源（权限键的来源） ----------
 
-        identity.MapPost("/api-resources", async (
+        identity.MapPost("/api-resources", async (ApiResponses responses,
             CreateApiResourceRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -258,10 +248,10 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Created(
+                : responses.Created(
                     $"/api/identity/api-resources/{result.Value.ApiResourceId}",
-                    new { apiResourceId = result.Value.ApiResourceId, permissionKey = result.Value.PermissionKey });
-        })
+                    result.Value);
+        }).ProducesApiErrors(415).Produces<ApiResponse<ApiResourceCreated>>(201)
         // **引导端点：只要求"已认证"，不要求权限键。**
         //
         // 这里有一个真实的循环：要授权得先有权限键，而权限键由这个端点登记。
@@ -273,7 +263,7 @@ public static class IdentityModule
 
         // ---------- 授权判定 ----------
 
-        identity.MapPost("/authorize", async (
+        identity.MapPost("/authorize", async (ApiResponses responses,
             AuthorizeRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -284,14 +274,9 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Ok(new
-                {
-                    request.UserId,
-                    requiredKey = result.Value.RequiredKey,
-                    decision = result.Value.Decision,
-                    grantedCount = result.Value.GrantedCount,
-                });
-        }).RequirePermission("/api/identity/authorize", "POST");
+                : responses.Ok(new AuthorizationResponse(request.UserId, result.Value.RequiredKey,
+                    result.Value.Decision, result.Value.GrantedCount));
+        }).ProducesApiErrors(415).Produces<ApiResponse<AuthorizationResponse>>().ProducesApiErrors(404).RequirePermission("/api/identity/authorize", "POST");
 
         // ---------- 菜单 ----------
         //
@@ -307,16 +292,16 @@ public static class IdentityModule
         // 而普通用户没有这个键 → 403。它也顺带把"菜单管理可以授权给某个角色"留成了正规路径：
         // 登记一条 `/api/identity/menus` + `POST` 的 api-resource 并授予即可，不必改代码。
 
-        identity.MapGet("/menus", async (ISender sender, CancellationToken cancellationToken) =>
+        identity.MapGet("/menus", async (ApiResponses responses, ISender sender, CancellationToken cancellationToken) =>
         {
             var result = await sender.QueryAsync(new GetMenusQuery(), cancellationToken);
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Ok(new { count = result.Value.Count, items = result.Value });
-        }).RequirePermission("/api/identity/menus", "GET");
+                : responses.Ok(new MenuCollectionResponse(result.Value.Count, result.Value));
+        }).Produces<ApiResponse<MenuCollectionResponse>>().RequirePermission("/api/identity/menus", "GET");
 
-        identity.MapPost("/menus", async (
+        identity.MapPost("/menus", async (ApiResponses responses,
             CreateMenuRequest request,
             ISender sender,
             CancellationToken cancellationToken) =>
@@ -327,8 +312,8 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : Results.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
-        }).RequirePermission("/api/identity/menus", "POST");
+                : responses.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
+        }).ProducesApiErrors(415).Produces<ApiResponse<MenuCreated>>(201).RequirePermission("/api/identity/menus", "POST");
 
         return endpoints;
     }
@@ -338,14 +323,15 @@ public static class IdentityModule
     /// <para>与 Platform（全 400）、Files（not_found 404）、Scheduling（not_found 404）**故意不同**：
     /// 这里还区分 409 冲突——用户名/角色编码被占用不是"请求错了"，是"状态冲突"。</para>
     /// </summary>
-    private static IResult Failure(Error error) => error.Code switch
-    {
-        "identity.user.not_found" or "identity.role.not_found" =>
-            Results.Problem(statusCode: StatusCodes.Status404NotFound, title: error.Message),
-        "identity.user_name.taken" or "identity.role_code.taken" =>
-            Results.Problem(statusCode: StatusCodes.Status409Conflict, title: error.Message),
-        _ => Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: error.Message),
-    };
+    private static IResult Failure(Error error) => Results.Problem(
+        statusCode: error.Code switch
+        {
+            "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
+            "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
+            _ => StatusCodes.Status400BadRequest,
+        },
+        title: error.Message,
+        extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 /// <summary>登录。</summary>
@@ -385,3 +371,12 @@ internal sealed record AuthorizeRequest(long UserId, string Path, string Method)
 /// <param name="SortOrder">同级排序；不传按 0。</param>
 /// <param name="ParentMenuId">父菜单；<c>null</c>（不传）表示根节点。</param>
 internal sealed record CreateMenuRequest(string Title, int SortOrder, long? ParentMenuId);
+
+internal sealed record LoginResponse(long UserId, string UserName, string AccessToken, DateTimeOffset AccessTokenExpiresAt,
+    string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
+internal sealed record RefreshResponse(string AccessToken, DateTimeOffset AccessTokenExpiresAt, string RefreshToken, DateTimeOffset RefreshTokenExpiresAt);
+internal sealed record UserCreatedResponse(long UserId);
+internal sealed record RoleCreatedResponse(long RoleId);
+internal sealed record UserPermissionsResponse(long UserId, IReadOnlyList<string> Keys);
+internal sealed record AuthorizationResponse(long UserId, string RequiredKey, string Decision, int GrantedCount);
+internal sealed record MenuCollectionResponse(int Count, IReadOnlyList<MenuView> Items);

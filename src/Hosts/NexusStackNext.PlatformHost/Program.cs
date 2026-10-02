@@ -8,6 +8,7 @@ using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Infrastructure;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
+using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Files.Endpoints;
 using NexusStackNext.Identity.Endpoints;
@@ -115,12 +116,13 @@ builder.Services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
 builder.Services.AddNexusStackAuthorization();
 
 builder.Services.AddHealthChecks();
-builder.Services.AddProblemDetails();
+builder.Services.AddApiResponseContract();
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
 
 app.UseExceptionHandler();
+app.UseApiResponseContract();
 
 // 顺序有意义：先认证（你是谁），再授权（你能不能）。反过来的话，
 // 授权过滤器看到的是一个还没有身份的请求——于是每个请求都 401。

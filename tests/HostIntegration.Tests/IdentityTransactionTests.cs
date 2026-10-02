@@ -22,7 +22,7 @@ public sealed class IdentityTransactionTests
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         using var login = await client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-        var body = await login.Content.ReadFromJsonAsync<JsonElement>();
+        var body = await login.Content.ReadApiDataAsync();
         var request = new { refreshToken = body.GetProperty("refreshToken").GetString() };
 
         app.FailIssuance = true;

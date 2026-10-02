@@ -52,7 +52,7 @@ public sealed class IdentityPersistenceJourneyTests
             var request = new { refreshToken = original.GetProperty("refreshToken").GetString() };
             using var rotated = await client.PostAsJsonAsync(new Uri("/api/identity/refresh", UriKind.Relative), request);
             Assert.Equal(HttpStatusCode.OK, rotated.StatusCode);
-            replacement = await rotated.Content.ReadFromJsonAsync<JsonElement>();
+            replacement = await rotated.Content.ReadApiDataAsync();
             using var replay = await client.PostAsJsonAsync(new Uri("/api/identity/refresh", UriKind.Relative), request);
             Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
         }
@@ -144,25 +144,25 @@ public sealed class IdentityPersistenceJourneyTests
         using var after = restarted.CreateClient();
         await AuthenticateAsync(after, credentials.userName, credentials.password);
         var permissions = await after.GetFromJsonAsync<JsonElement>(new Uri($"/api/identity/users/{userId}/permissions", UriKind.Relative));
-        Assert.Contains("/api/identity/users/{userid}/permissions:GET", permissions.GetProperty("keys").EnumerateArray().Select(static key => key.GetString()));
+        Assert.Contains("/api/identity/users/{userid}/permissions:GET", permissions.GetProperty("data").GetProperty("keys").EnumerateArray().Select(static key => key.GetString()));
         await AuthenticateAsync(after, "journey-root", "original-root-password");
         var menus = await after.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
-        Assert.Equal(1, menus.GetProperty("count").GetInt32());
-        Assert.Equal(menuId, Assert.Single(menus.GetProperty("items").EnumerateArray()).GetProperty("menuId").GetInt64());
+        Assert.Equal(1, menus.GetProperty("data").GetProperty("count").GetInt32());
+        Assert.Equal(menuId, Assert.Single(menus.GetProperty("data").GetProperty("items").EnumerateArray()).GetProperty("menuId").GetInt64());
     }
 
     private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
     {
         using var response = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), payload);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
+        return await response.Content.ReadApiDataAsync();
     }
 
     private static async Task<JsonElement> AuthenticateAsync(HttpClient client, string userName, string password)
     {
         using var response = await client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), new { userName, password });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var tokens = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var tokens = await response.Content.ReadApiDataAsync();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("accessToken").GetString());
         return tokens;
     }
@@ -207,7 +207,7 @@ public sealed class IdentityPersistenceJourneyTests
             Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
             using var login = await client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-            tokens = await login.Content.ReadFromJsonAsync<JsonElement>();
+            tokens = await login.Content.ReadApiDataAsync();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens.GetProperty("accessToken").GetString());
             using var logout = await client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
             Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
@@ -223,11 +223,11 @@ public sealed class IdentityPersistenceJourneyTests
         Assert.Equal(HttpStatusCode.BadRequest, oldRefresh.StatusCode);
         using var fresh = await second.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
         Assert.Equal(HttpStatusCode.OK, fresh.StatusCode);
-        var body = await fresh.Content.ReadFromJsonAsync<JsonElement>();
+        var body = await fresh.Content.ReadApiDataAsync();
         using var freshRefresh = await second.PostAsJsonAsync(new Uri("/api/identity/refresh", UriKind.Relative),
             new { refreshToken = body.GetProperty("refreshToken").GetString() });
         Assert.Equal(HttpStatusCode.OK, freshRefresh.StatusCode);
-        var renewed = await freshRefresh.Content.ReadFromJsonAsync<JsonElement>();
+        var renewed = await freshRefresh.Content.ReadApiDataAsync();
         second.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", renewed.GetProperty("accessToken").GetString());
         using var accepted = await second.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, accepted.StatusCode);
@@ -254,7 +254,7 @@ public sealed class IdentityPersistenceJourneyTests
             using var client = app.CreateClient();
             using var registered = await client.PostAsJsonAsync(new Uri("/api/identity/users", UriKind.Relative), credentials);
             Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
-            userId = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("userId").GetInt64();
+            userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").GetInt64();
         }
 
         await database.MigrateAsync();
@@ -262,7 +262,7 @@ public sealed class IdentityPersistenceJourneyTests
         using var second = restarted.CreateClient();
         using var login = await second.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
-        Assert.Equal(userId, (await login.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("userId").GetInt64());
+        Assert.Equal(userId, (await login.Content.ReadApiDataAsync()).GetProperty("userId").GetInt64());
     }
 }
 
