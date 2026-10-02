@@ -26,7 +26,9 @@ public static class PricingModule
         ArgumentNullException.ThrowIfNull(configuration);
         var connection = configuration.GetConnectionString("Pricing");
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Pricing，使用独立业务数据库。"); }
-        services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>());
+        var cache = configuration.GetSection("Pricing:Cache").Get<PricingCacheOptions>();
+        services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache);
+        if (cache?.Enabled == true) { services.AddPricingCacheInvalidationWorker(); }
         services.AddSingleton(new PricingConnection(connection));
         services.AddHostedService<PricingStartupCheck>();
         if (configuration.GetValue("Pricing:Worker:Enabled", true)) { services.AddHostedService<PricingWorker>(); }
@@ -71,7 +73,7 @@ public static class PricingModule
         {
             var result = await sender.QueryAsync(new GetPriceQuote(itemId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<PriceQuoteView>>();
+        }).Produces<ApiResponse<PriceQuoteView>>().ProducesApiErrors(503);
         group.MapGet("/tasks/{taskId:guid}", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetRecalculation(taskId), token).ConfigureAwait(false);
@@ -89,6 +91,7 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
+            "pricing.query_busy" or "pricing.query_timeout" => StatusCodes.Status503ServiceUnavailable,
             "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

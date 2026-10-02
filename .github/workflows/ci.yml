@@ -27,6 +27,16 @@ jobs:
 
     # 每次运行专属的空库，端口仅绑定 runner 本机。trust 只用于这个临时测试容器。
     services:
+      redis:
+        # 本次运行专属的普通缓存；只向 runner 回环地址发布端口。
+        image: redis:7.2.14
+        ports:
+          - 127.0.0.1:6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       postgres:
         image: postgres:18
         env:
@@ -72,6 +82,7 @@ jobs:
           $connection['Database'] = 'postgres'
           $connection['Username'] = 'postgres'
           $env:NEXUSSTACK_TEST_POSTGRES = $connection.ConnectionString
+          $env:NEXUSSTACK_TEST_REDIS = '127.0.0.1:6379'
           # 此运行专属的 broker，随机凭据只经环境传给容器与测试，不进入命令参数。
           $env:RABBITMQ_DEFAULT_USER = 'nsn-ci'
           $env:RABBITMQ_DEFAULT_PASS = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24))

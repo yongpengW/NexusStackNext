@@ -179,27 +179,53 @@ if ($testProjects.Count -eq 0) {
 }
 
 $results = @()
+$testReportDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N'))
 foreach ($project in $testProjects) {
     $name = $project.BaseName
     Write-Host ''
     Write-Host "▶ $name" -ForegroundColor Cyan
 
-    $dotnetArgs = @('test', $project.FullName, '--configuration', $Configuration, '--nologo', '--no-build', '-nodeReuse:false')
+    $reportPath = Join-Path $testReportDirectory ($name + '.trx')
+    $dotnetArgs = @('test', $project.FullName, '--configuration', $Configuration, '--nologo', '--no-build', '-nodeReuse:false',
+        '--logger', "trx;LogFileName=$name.trx", '--results-directory', $testReportDirectory)
     if ($Filter) {
         $dotnetArgs += @('--filter', $Filter)
     }
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $output = & dotnet @dotnetArgs 2>&1
+    $testExitCode = $LASTEXITCODE
     $watch.Stop()
 
     $output | Where-Object { $_ -match '已通过!|失败!|通过!|Passed!|Failed!' } | ForEach-Object {
         Write-Host "  $_"
     }
 
+    if ($testExitCode -ne 0) {
+        Write-Host "  测试退出码：$testExitCode；诊断报告：$reportPath" -ForegroundColor Red
+        if (Test-Path -LiteralPath $reportPath) {
+            try {
+                [xml] $report = Get-Content -LiteralPath $reportPath -Raw
+                foreach ($failure in $report.SelectNodes('//*[local-name()="UnitTestResult" and @outcome="Failed"]')) {
+                    # 不回显异常原文或理论测试参数：它们可能包含连接串、口令与令牌。
+                    $testName = [regex]::Match([string] $failure.testName, '^[\w.]+').Value
+                    $errorKind = [regex]::Match([string] $failure.Output.ErrorInfo.Message, '^(?:[\w.]+Exception|Assert\.[\w]+\(\))').Value
+                    Write-Host "  FAIL $testName [$errorKind]" -ForegroundColor Red
+                    $locations = [regex]::Matches([string] $failure.Output.ErrorInfo.StackTrace, '[\w.-]+\.cs:line \d+') |
+                        ForEach-Object { $_.Value } | Select-Object -Unique
+                    foreach ($location in $locations) { Write-Host "    $location" }
+                }
+            }
+            catch {
+                # XML 转换异常可能携带原始报告文本；损坏报告同样不能绕过脱敏。
+                Write-Host '  诊断报告不可解析；保留测试失败退出码，不回显报告原文。' -ForegroundColor Red
+            }
+        }
+    }
+
     $results += [pscustomobject]@{
         Project  = $name
-        ExitCode = $LASTEXITCODE
+        ExitCode = $testExitCode
         Seconds  = [math]::Round($watch.Elapsed.TotalSeconds, 1)
     }
 }

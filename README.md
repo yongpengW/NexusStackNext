@@ -47,6 +47,9 @@ tests/
 重复、乱序及进程重启通过真实 broker 验证。两个上下文共用租约与历史实现，保留独立数据和业务规则。
 运行与故障恢复见 [成本与定价协作](docs/costing-pricing-cooperation.md)。多机高可用在全部能力之后单独安排。
 
+Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟到回填保护，以及有并发预算的故障回源。
+这是最终一致查询缓存；配置、TTL、容量与恢复边界见 [定价查询缓存](docs/pricing-query-cache.md)。
+
 每个上下文自带 `CONTEXT.md`（词表，含 `_Avoid_` 反义词）与 `docs/adr/`（上下文级决策）。
 
 ## 八条架构不变量
@@ -125,7 +128,7 @@ bash scripts/setup-wizard.sh          # 需要 bash（Windows 上 git bash 即�
 | 持久化（各上下文） | 各 `I*Repository` | **Identity** 默认装配 PostgreSQL；Platform / Scheduling / Auditing 及 Files 元数据仍在内存 |
 | 消息 | `IEventBus` | ✅ RabbitMQ 已实现（发布确认 + `mandatory`，6 条真 broker 验收） |
 | 配置中心 | —— | ✅ AgileConfig（**读**；写入需要管理 API 凭据，未接） |
-| 缓存 | —— | ❌ Redis **尚未接入**（权限缓存是进程内的，见票据 08 的说明） |
+| 缓存 | StackExchange.Redis | Pricing 普通查询已接入；权限缓存仍使用独立的一致性与失效规则 |
 
 > **发件箱要能真的发出去，宿主必须调 `AddNexusStackRabbitMqEventBus(...)`**——
 > 它一次做两件事：接上总线、启用投递循环。平台宿主在配了 `RabbitMQ` 节时会调用它。

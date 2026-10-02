@@ -4,6 +4,7 @@
     <ProjectReference Include="../../Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
     <ProjectReference Include="../NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="StackExchange.Redis" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
   </ItemGroup>
 </Project>
