@@ -45,6 +45,7 @@ public sealed class AnonymousEndpointsAreReachableTests
     [Theory]
     [InlineData("routes.json")]
     [InlineData("routes.pricing.json")]
+    [InlineData("routes.business.json")]
     public void EveryEndpointThatMustBeAnonymous_HasAnAnonymousRoute(string routeFile)
     {
         var path = FindRouteTable(routeFile);

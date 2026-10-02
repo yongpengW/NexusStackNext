@@ -101,6 +101,11 @@ var gateway = builder
 
 // 独立业务样板按需启用，默认仍只有平台与网关。先独立执行 migrate-pricing。
 var pricingDatabase = Environment.GetEnvironmentVariable("NEXUSSTACK_PRICING_DB");
+var costingDatabase = Environment.GetEnvironmentVariable("NEXUSSTACK_COSTING_DB");
+if (!string.IsNullOrWhiteSpace(costingDatabase) && string.IsNullOrWhiteSpace(pricingDatabase))
+{
+    throw new InvalidOperationException("成本协作样板须同时配置 NEXUSSTACK_PRICING_DB 与 NEXUSSTACK_COSTING_DB。");
+}
 if (!string.IsNullOrWhiteSpace(pricingDatabase))
 {
     var pricing = builder.AddProject<Projects.NexusStackNext_PricingHost>("pricing")
@@ -108,6 +113,31 @@ if (!string.IsNullOrWhiteSpace(pricingDatabase))
         .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
         .WithEndpoint(5192, 5192, "http", isProxied: false);
     gateway.WithEnvironment("Gateway__RouteTablePath", "routes.pricing.json").WaitFor(pricing);
+    if (!string.IsNullOrWhiteSpace(costingDatabase))
+    {
+        var costing = builder.AddProject<Projects.NexusStackNext_CostingHost>("costing")
+            .WithEnvironment("ConnectionStrings__Costing", costingDatabase)
+            .WithEnvironment("Costing__Messaging__Enabled", "true")
+            .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
+            .WithEndpoint(5193, 5193, "http", isProxied: false);
+        pricing.WithEnvironment("Pricing__Messaging__Enabled", "true");
+        // 凭据从私有配置注入；这里只声明各宿主实际消费的完整连接属性。
+        foreach (var key in new[] { "HostName", "Port", "UserName", "Password", "VirtualHost", "ExchangeName" })
+        {
+            var value = builder.Configuration[$"RabbitMq:{key}"];
+            if (key is "HostName" or "Password" && string.IsNullOrWhiteSpace(value))
+            {
+                throw new InvalidOperationException($"成本协作样板必须配置 RabbitMq:{key}。");
+            }
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                pricing.WithEnvironment($"RabbitMq__{key}", value);
+                costing.WithEnvironment($"RabbitMq__{key}", value);
+            }
+        }
+        costing.WaitFor(pricing);
+        gateway.WithEnvironment("Gateway__RouteTablePath", "routes.business.json").WaitFor(costing);
+    }
 }
 
 // 从连接串里取主机名——这里只用来示意，真正解析连接串的是各宿主自己。

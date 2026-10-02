@@ -12,9 +12,8 @@ namespace NexusStackNext.BuildingBlocks.Application.Events;
 /// 后者在分布式下不存在，声称它只会让人写出错误的假设。
 /// </para>
 /// <para>
-/// <b>它是三段式，不是两段式：先占键 → 失败删键 → 成功留键。</b>
-/// <see cref="TryBeginProcessingAsync"/> 占掉名额，<see cref="ReleaseAsync"/> 在"这一步没做成"时
-/// 把它还回去，成功则什么都不做（名额留着，重投即被判为重复）。
+/// <see cref="TryBeginProcessingAsync"/> 在业务事务内占键，成功一起提交，失败一起回滚。
+/// 非事务存储的调用者才需要 <see cref="ReleaseAsync"/> 归还未完成的名额。
 /// </para>
 /// <para>
 /// <b>调用顺序有讲究。</b>占键会占掉去重名额，
@@ -22,10 +21,8 @@ namespace NexusStackNext.BuildingBlocks.Application.Events;
 /// 重投时会被判为已处理而**永久静默丢失**（票据 39 抓到过这个缺陷）。
 /// </para>
 /// <para>
-/// <b>缺了"失败删键"会安静地废掉整条重试链。</b>
-/// 名字占着而业务没生效，重投会被判成重复而 ACK 跳过——重试档位永远不会被真正用到，
-/// 处理器的失败也永远到不了死信队列，而计数器还在显示"重试过"。
-/// 消费端（<c>RabbitMqConsumer</c>）与用例（<c>AuditIngestion</c>）都必须在中止路径上调用它。
+/// 运输层不能在独立事务中先占名额；崩溃时来不及补偿，会静默跳过未完成业务。
+/// RabbitMqConsumer 只依据应用处理器提交后的结果确认消息，不直接操作 Inbox。
 /// </para>
 /// </summary>
 public interface IInboxStore

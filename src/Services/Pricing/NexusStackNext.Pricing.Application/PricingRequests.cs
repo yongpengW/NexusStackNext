@@ -79,4 +79,15 @@ public sealed record GetPriceQuote(Guid ItemId) : IQuery<PriceQuoteView>;
 /// <param name="CalculatedRevision">已计算版本。</param>
 /// <param name="BreakEvenPrice">最近演示保本价。</param>
 public sealed record PriceQuoteView(Guid ItemId, long Version, decimal Cost, decimal FeeRate,
-    long InputRevision, long CalculatedRevision, decimal? BreakEvenPrice);
+    long InputRevision, long CalculatedRevision, decimal? BreakEvenPrice)
+{
+    /// <summary>已接纳的上游成本版本，零表示手工成本。</summary>
+    public long CostingRevision { get; init; }
+}
+
+/// <summary>仅更新 Pricing 拥有的费率并登记重算，不覆盖上游成本。</summary>
+/// <param name="RequestId">幂等请求标识。</param>
+/// <param name="ItemId">定价对象。</param>
+/// <param name="ExpectedVersion">预期聚合版本。</param>
+/// <param name="FeeRate">新费率。</param>
+public sealed record UpdatePricingFee(Guid RequestId, Guid ItemId, long ExpectedVersion, decimal FeeRate) : ICommand<RecalculationStatus>;

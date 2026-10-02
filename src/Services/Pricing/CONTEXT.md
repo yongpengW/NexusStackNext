@@ -27,3 +27,7 @@ _Avoid_: 领取代次、随机重试号
 **ExecutionEpoch**:
 一次成功领取所获的执行代次。过期接管和人工重试后重新领取都会获得更大的代次。
 _Avoid_: 业务版本、请求标识
+
+**CostingRevision**:
+已接纳的上游成本输入版本。零表示手工成本；非零表示成本由 Costing 维护，费率仍由 Pricing 维护。
+_Avoid_: 本地 InputRevision、ExecutionEpoch、聚合 Version

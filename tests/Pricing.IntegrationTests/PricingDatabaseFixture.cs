@@ -32,7 +32,7 @@ public sealed class PricingDatabaseFixture : IAsyncLifetime
         if (!_created) { return; }
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("TRUNCATE pricing.tasks, pricing.quotes CASCADE", connection);
+        await using var command = new NpgsqlCommand("TRUNCATE pricing.tasks, pricing.quotes, pricing.inbox, pricing.outbox CASCADE", connection);
         await command.ExecuteNonQueryAsync();
     }
 
@@ -109,6 +109,14 @@ public sealed class PricingDatabaseFixture : IAsyncLifetime
             FOR EACH ROW EXECUTE FUNCTION pricing.reject_test_task();
             """;
         await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public async Task AllowTaskInsertsAsync()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("DROP TRIGGER IF EXISTS reject_test_task ON pricing.tasks", connection);
         await command.ExecuteNonQueryAsync();
     }
 }

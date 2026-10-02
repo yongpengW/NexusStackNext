@@ -3,89 +3,49 @@ using NexusStackNext.BuildingBlocks.Application.Events;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
-/// <summary>
-/// <see cref="IOutboxStore"/> 的 EF Core 实现。
-///
-/// <para><b>它刻意不提供"写入"</b>——接口上就没有 <c>Add</c>，写入由
-/// <see cref="DomainEventOutboxInterceptor"/> 在同一次 <c>SaveChanges</c> 里完成。
-/// 给投递器一个写口子会让"同事务"这条保证变得可疑。</para>
-///
-/// <para>因此这个类的每个方法都是**短事务**：读一批、标记一条，各自 <c>SaveChanges</c>。
-/// 投递循环本来就不该长事务——它每几秒跑一次，占着连接只会拖累别人。</para>
-/// </summary>
-/// <typeparam name="TContext">上下文类型。</typeparam>
-/// <param name="context">上下文。</param>
-public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore
-    where TContext : NexusStackDbContext
+/// <summary>所属上下文的 Outbox 投递存储；确认后的状态不可被迟到的失败覆盖。</summary>
+/// <typeparam name="TContext">拥有此 Outbox 的上下文。</typeparam>
+/// <param name="context">本地数据库。</param>
+public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore where TContext : NexusStackDbContext
 {
     /// <inheritdoc />
-    public async Task<IReadOnlyList<OutboxEntry>> ReadPendingAsync(
-        int batchSize,
-        DateTimeOffset now,
-        CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<OutboxEntry>> ReadPendingAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
-
-        return await context.Outbox
-            .Where(entry => entry.DeliveredAt == null
-                && entry.DeadLetteredAt == null
-                && (entry.NextAttemptAt == null || entry.NextAttemptAt <= now))
-            // 按发生顺序投递：下游看到的次序才与事实发生的次序一致。
-            .OrderBy(entry => entry.OccurredAt)
-            .ThenBy(entry => entry.Id)
-            .Take(batchSize)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
+        return await context.Outbox.AsNoTracking()
+            .Where(x => x.DeliveredAt == null && x.DeadLetteredAt == null && (x.NextAttemptAt == null || x.NextAttemptAt <= now))
+            .OrderBy(x => x.OccurredAt).ThenBy(x => x.Id).Take(batchSize).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
-    public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default)
-        => MutateAsync(id, entry => entry.MarkDelivered(now), cancellationToken);
+    public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.IsDelivered ? entry
+            : entry.MarkDelivered(now) with { DeadLetteredAt = null, NextAttemptAt = null }, cancellationToken);
 
     /// <inheritdoc />
-    public Task MarkFailedAsync(
-        Guid id,
-        string failure,
-        DateTimeOffset nextAttemptAt,
-        CancellationToken cancellationToken = default)
-        => MutateAsync(id, entry => entry.RecordFailure(failure, nextAttemptAt), cancellationToken);
+    public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.IsPending ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
 
     /// <inheritdoc />
-    public Task MarkDeadLetteredAsync(
-        Guid id,
-        string failure,
-        DateTimeOffset now,
-        CancellationToken cancellationToken = default)
-        => MutateAsync(id, entry => entry.MarkDeadLettered(failure, now), cancellationToken);
+    public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.IsPending ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
 
-    /// <summary>
-    /// 取出记录、套用一次状态迁移、存回。
-    ///
-    /// <para><see cref="OutboxEntry"/> 是不可变 record，状态迁移都是 <c>with</c> 表达式——
-    /// 所以这里不能"就地改属性"，而要**替换跟踪器里的那个实体**。
-    /// 直接改属性在 record 上编译不过，这反而让"状态迁移只有那几个方法"成为结构上的事实。</para>
-    /// </summary>
-    private async Task MutateAsync(
-        Guid id,
-        Func<OutboxEntry, OutboxEntry> transition,
-        CancellationToken cancellationToken)
+    private async Task UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
-        var entry = await context.Outbox
-            .FirstOrDefaultAsync(candidate => candidate.Id == id, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (entry is null)
-        {
-            // 记录不在——说明另一个投递器已经处理过它，或它根本不属于这个上下文。
-            // 不抛异常：投递循环不该因为一条记录消失而停摆。
-            return;
-        }
-
-        context.Outbox.Update(transition(entry));
+        // 锁住最新状态再经跟踪器保存：既不丢并发更新，也不绕过 SaveChanges 拦截器。
+        await using var transaction = context.Database.CurrentTransaction is null
+            ? await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false) : null;
+        var schema = context.Schema.Replace("\"", "\"\"", StringComparison.Ordinal);
+        var sql = $"SELECT * FROM \"{schema}\".outbox WHERE \"Id\" = {{0}} FOR UPDATE";
+        var entry = (await context.Outbox.FromSqlRaw(sql, id).ToListAsync(cancellationToken).ConfigureAwait(false)).SingleOrDefault();
+        if (entry is null) { return; }
+        // 同一个作用域可能已跟踪它；拿锁后刷新，避免 EF 的身份映射返回旧状态。
+        await context.Entry(entry).ReloadAsync(cancellationToken).ConfigureAwait(false);
+        context.Entry(entry).CurrentValues.SetValues(update(entry));
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        if (transaction is not null) { await transaction.CommitAsync(cancellationToken).ConfigureAwait(false); }
     }
 }
-
 /// <summary>
 /// <see cref="IInboxStore"/> 的 EF Core 实现。
 ///

@@ -54,11 +54,13 @@ public sealed class RabbitMqConsumerTests
     {
         private readonly Lock _gate = new();
         private readonly List<Guid> _handled = [];
+        private int _calls;
 
         public string EventName => RabbitMqConsumerTests.EventName;
 
         /// <summary>要不要让处理失败。</summary>
         public bool Fail { get; set; }
+        public bool ThrowOnce { get; init; }
 
         /// <summary>处理成功的次数。</summary>
         public int Count
@@ -68,12 +70,90 @@ public sealed class RabbitMqConsumerTests
 
         public Task<bool> HandleAsync(EventEnvelope envelope, CancellationToken cancellationToken = default)
         {
+            if (ThrowOnce && Interlocked.Increment(ref _calls) == 1) { throw new IOException("Temporary processor outage"); }
             lock (_gate)
             {
-                _handled.Add(envelope.MessageId);
+                if (Fail || !_handled.Contains(envelope.MessageId)) { _handled.Add(envelope.MessageId); }
             }
 
             return Task.FromResult(!Fail);
+        }
+    }
+
+    [RabbitMqFact]
+    public async Task TemporaryProcessorFailure_RequeuesOriginal_WithoutMovingItToDeadLetters()
+    {
+        var prefix = RabbitMqTestBroker.UniquePrefix();
+        var options = OptionsFor(prefix);
+        var subscription = new EventSubscription { EventName = EventName, ConsumerName = prefix + "-temporary" };
+        var topology = EventTopology.Create(options.ExchangeName, [subscription]);
+        Assert.True((await new RabbitMqTopologyBootstrapper(options).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+        await using var connection = await ConnectAsync(options);
+        await using var channel = await connection.CreateChannelAsync();
+        try
+        {
+            using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await using var consumer = new RabbitMqConsumer(options, topology, subscription, new Probe { ThrowOnce = true });
+            var consuming = consumer.RunAsync(stop.Token);
+            await using var bus = new RabbitMqEventBus(options);
+            Assert.True((await bus.PublishAsync(Envelope())).IsSuccess);
+            Assert.True(await ConsumerTestWait.WaitForAsync(() => consumer.HandledCount == 1, TimeSpan.FromSeconds(10)));
+            await stop.CancelAsync();
+            try { await consuming; }
+            catch (OperationCanceledException) { }
+            Assert.Equal(0, await ChannelDepthAsync(channel, subscription.DeadLetterQueueName));
+        }
+        finally
+        {
+            foreach (var queue in topology.AllQueueNames) { await channel.QueueDeleteAsync(queue, ifUnused: false, ifEmpty: false); }
+            await channel.ExchangeDeleteAsync(topology.ExchangeName);
+        }
+    }
+
+    [RabbitMqFact]
+    public async Task MissingDeadLetterQueue_DoesNotAcknowledgeOriginal_AndConsumerRecovers()
+    {
+        var prefix = RabbitMqTestBroker.UniquePrefix();
+        var options = OptionsFor(prefix);
+        var subscription = new EventSubscription { EventName = EventName, ConsumerName = prefix + "-confirmed" };
+        var topology = EventTopology.Create(options.ExchangeName, [subscription]);
+        Assert.True((await new RabbitMqTopologyBootstrapper(options).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+        await using var connection = await ConnectAsync(options);
+        await using var channel = await connection.CreateChannelAsync();
+        try
+        {
+            await channel.QueueDeleteAsync(subscription.DeadLetterQueueName, ifUnused: false, ifEmpty: false);
+            var envelope = Envelope();
+            using (var stop = new CancellationTokenSource(TimeSpan.FromSeconds(20)))
+            await using (var consumer = new RabbitMqConsumer(options, topology, subscription, new Probe { Fail = true }))
+            {
+                var consuming = consumer.RunAsync(stop.Token);
+                await using var bus = new RabbitMqEventBus(options);
+                Assert.True((await bus.PublishAsync(envelope)).IsSuccess);
+                Assert.True(await ConsumerTestWait.WaitForAsync(() => consumer.RecoveryCount > 0, TimeSpan.FromSeconds(10)),
+                    "搬运被退回时必须重建消费通道，不能确认原消息或静默停滞。");
+                await stop.CancelAsync();
+                try { await consuming; }
+                catch (OperationCanceledException) { }
+            }
+            Assert.Equal(1, await WaitForDepthAsync(options, subscription.QueueName, 1));
+            Assert.True((await new RabbitMqTopologyBootstrapper(options).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+            using var resumedStop = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await using var resumed = new RabbitMqConsumer(options, topology, subscription, new Probe { Fail = true });
+            var resumedTask = resumed.RunAsync(resumedStop.Token);
+            Assert.Equal(1, await WaitForDepthAsync(options, subscription.DeadLetterQueueName, 1));
+            var message = await channel.BasicGetAsync(subscription.DeadLetterQueueName, autoAck: true);
+            Assert.NotNull(message);
+            Assert.Equal(envelope.MessageId.ToString("D"), message.BasicProperties.MessageId);
+            Assert.Equal(envelope.OccurredAt.ToUnixTimeSeconds(), message.BasicProperties.Timestamp.UnixTime);
+            await resumedStop.CancelAsync();
+            try { await resumedTask; }
+            catch (OperationCanceledException) { }
+        }
+        finally
+        {
+            foreach (var queue in topology.AllQueueNames) { await channel.QueueDeleteAsync(queue, ifUnused: false, ifEmpty: false); }
+            await channel.ExchangeDeleteAsync(topology.ExchangeName);
         }
     }
 
@@ -84,7 +164,7 @@ public sealed class RabbitMqConsumerTests
         IIntegrationEventProcessor processor,
         CancellationToken cancellationToken)
     {
-        var consumer = new RabbitMqConsumer(options, topology, subscription, processor, new InMemoryInboxStore());
+        var consumer = new RabbitMqConsumer(options, topology, subscription, processor);
         _ = consumer.RunAsync(cancellationToken);
         return consumer;
     }
@@ -248,7 +328,7 @@ public sealed class RabbitMqConsumerTests
         await Task.Delay(TimeSpan.FromSeconds(3), stop.Token);
 
         Assert.Equal(1, probe.Count);
-        Assert.Equal(1, consumer.DuplicateCount);
+        Assert.Equal(2, consumer.HandledCount);
 
         await stop.CancelAsync();
     }

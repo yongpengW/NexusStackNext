@@ -7,17 +7,16 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.BuildingBlocks.Application.Security;
-using NexusStackNext.Gateway;
-using NexusStackNext.PricingHost;
+using Xunit;
 
-namespace NexusStackNext.Pricing.IntegrationTests;
+namespace NexusStackNext.IntegrationSupport;
 
-internal sealed class PricingProcess : IAsyncDisposable
+internal sealed class BusinessProcess : IAsyncDisposable
 {
     private readonly Process _process;
     private readonly Task<string> _output;
     private readonly Task<string> _error;
-    private PricingProcess(Process process, Uri address)
+    private BusinessProcess(Process process, Uri address)
     {
         _process = process;
         _output = process.StandardOutput.ReadToEndAsync();
@@ -28,25 +27,26 @@ internal sealed class PricingProcess : IAsyncDisposable
     internal static readonly string SigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
     public HttpClient Client { get; }
 
-    public static async Task<PricingProcess> StartAsync(string connectionString, bool worker = false, TimeSpan? leaseDuration = null)
+    public static async Task<BusinessProcess> StartAsync(string assembly, string context, string connectionString, bool worker = false, TimeSpan? leaseDuration = null, IReadOnlyDictionary<string, string>? settings = null)
     {
-        var start = StartInfo(connectionString);
-        start.Environment["Pricing__Worker__Enabled"] = worker.ToString();
-        start.Environment["Pricing__Tasks__PollInterval"] = "00:00:00.100";
-        if (leaseDuration is not null) { start.Environment["Pricing__Tasks__LeaseDuration"] = leaseDuration.Value.ToString("c", System.Globalization.CultureInfo.InvariantCulture); }
+        var start = StartInfo(assembly, context, connectionString);
+        start.Environment[$"{context}__Worker__Enabled"] = worker.ToString();
+        start.Environment[$"{context}__Tasks__PollInterval"] = "00:00:00.100";
+        if (leaseDuration is not null) { start.Environment[$"{context}__Tasks__LeaseDuration"] = leaseDuration.Value.ToString("c", System.Globalization.CultureInfo.InvariantCulture); }
+        if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
         return await StartHttpAsync(start);
     }
 
-    public static Task<PricingProcess> StartGatewayAsync(string routePath)
+    public static Task<BusinessProcess> StartGatewayAsync(string assembly, string routePath)
     {
-        var start = StartInfo(string.Empty);
+        var start = StartInfo(assembly, "Gateway", string.Empty);
         start.ArgumentList.Clear();
-        start.ArgumentList.Add(typeof(GatewayHostMarker).Assembly.Location);
+        start.ArgumentList.Add(assembly);
         start.Environment["Gateway__RouteTablePath"] = routePath;
         return StartHttpAsync(start);
     }
 
-    private static async Task<PricingProcess> StartHttpAsync(ProcessStartInfo start)
+    private static async Task<BusinessProcess> StartHttpAsync(ProcessStartInfo start)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -54,13 +54,13 @@ internal sealed class PricingProcess : IAsyncDisposable
         listener.Stop();
         var address = new Uri($"http://127.0.0.1:{port}");
         start.Environment["ASPNETCORE_URLS"] = address.ToString();
-        var app = new PricingProcess(Process.Start(start)!, address);
+        var app = new BusinessProcess(Process.Start(start)!, address);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             while (!timeout.IsCancellationRequested)
             {
-                Assert.False(app._process.HasExited, "Pricing 宿主提前退出；诊断输出保留在子进程，不回显凭据。");
+                Assert.False(app._process.HasExited, "业务宿主提前退出；诊断输出保留在子进程，不回显凭据。");
                 try
                 {
                     using var response = await app.Client.GetAsync(new Uri("/health", UriKind.Relative), timeout.Token);
@@ -69,7 +69,7 @@ internal sealed class PricingProcess : IAsyncDisposable
                 catch (HttpRequestException) { }
                 await Task.Delay(100, timeout.Token);
             }
-            throw new TimeoutException("Pricing 宿主未就绪。");
+            throw new TimeoutException("业务宿主未就绪。");
         }
         catch
         {
@@ -87,11 +87,11 @@ internal sealed class PricingProcess : IAsyncDisposable
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(token));
     }
 
-    public static ProcessStartInfo StartInfo(string connectionString)
+    public static ProcessStartInfo StartInfo(string assembly, string context, string connectionString)
     {
         var start = new ProcessStartInfo("dotnet") { RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-        start.ArgumentList.Add(typeof(PricingHostMarker).Assembly.Location);
-        start.Environment["ConnectionStrings__Pricing"] = connectionString;
+        start.ArgumentList.Add(assembly);
+        start.Environment[$"ConnectionStrings__{context}"] = connectionString;
         start.Environment["Jwt__SigningKey"] = SigningKey;
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
         start.Environment["AgileConfig__AppId"] = string.Empty;

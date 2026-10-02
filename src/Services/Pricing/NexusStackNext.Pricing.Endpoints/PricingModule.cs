@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
@@ -29,6 +30,19 @@ public static class PricingModule
         services.AddSingleton(new PricingConnection(connection));
         services.AddHostedService<PricingStartupCheck>();
         if (configuration.GetValue("Pricing:Worker:Enabled", true)) { services.AddHostedService<PricingWorker>(); }
+        if (configuration.GetValue("Pricing:Messaging:Enabled", false))
+        {
+            var broker = configuration.GetSection("RabbitMq").Get<RabbitMqOptions>()
+                ?? throw new InvalidOperationException("必须配置 RabbitMq。");
+            broker.Validate();
+            var consumer = configuration.GetValue<string>("Pricing:Messaging:ConsumerName") ?? "pricing-cost";
+            ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
+            services.AddSingleton(new PricingMessaging(broker, consumer));
+            services.AddHostedService<PricingCostConsumer>();
+            services.AddHealthChecks().AddAsyncCheck("pricing-broker", async token =>
+                await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
+                    ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: ["ready"]);
+        }
         services.AddHealthChecks().AddAsyncCheck("pricing-database", async cancellationToken =>
             await PricingDatabase.IsReadyAsync(connection, cancellationToken).ConfigureAwait(false)
                 ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("Pricing 数据库不可用或需要迁移。"), tags: ["ready"]);
@@ -44,6 +58,11 @@ public static class PricingModule
         var group = endpoints.MapGroup("/api/pricing").RequireAuthorization("pricing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
         group.MapPost("/cost", async (UpdatePricingCost request, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(request, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415);
+        group.MapPost("/fee", async (UpdatePricingFee request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
@@ -70,7 +89,7 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" => StatusCodes.Status409Conflict,
+            "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

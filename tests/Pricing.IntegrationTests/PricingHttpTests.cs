@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using NexusStackNext.Gateway;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.Pricing.IntegrationTests;
 
@@ -14,7 +16,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     [PostgresFact]
     public async Task HttpContract_RequiresOperator_AndPreservesConflictCodesAndSchemas()
     {
-        await using var app = await PricingProcess.StartAsync(database.ConnectionString);
+        await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString);
         var request = new { requestId = Guid.NewGuid(), itemId = Guid.NewGuid(), expectedVersion = 0, cost = 80m, feeRate = 0.2m };
         using var anonymous = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), request);
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
@@ -43,19 +45,19 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
         await blank.InitializeAsync();
         try
         {
-            var stopped = await PricingProcess.RunToExitAsync(PricingProcess.StartInfo(blank.ConnectionString));
+            var stopped = await BusinessProcess.RunToExitAsync(BusinessProcess.StartInfo(typeof(PricingHostMarker).Assembly.Location, "Pricing", blank.ConnectionString));
             Assert.Equal(1, stopped.ExitCode);
             Assert.True(stopped.Output.Contains("Pricing startup failed", StringComparison.Ordinal), "Missing controlled startup diagnostic.");
             for (var count = 0; count < 2; count++)
             {
-                var start = PricingProcess.StartInfo(blank.ConnectionString);
+                var start = BusinessProcess.StartInfo(typeof(PricingHostMarker).Assembly.Location, "Pricing", blank.ConnectionString);
                 start.ArgumentList.Add("migrate-pricing");
                 start.Environment["Jwt__SigningKey"] = string.Empty;
-                var migrated = await PricingProcess.RunToExitAsync(start);
+                var migrated = await BusinessProcess.RunToExitAsync(start);
                 Assert.Equal(0, migrated.ExitCode);
                 Assert.True(migrated.Output.Contains("Pricing migrations applied.", StringComparison.Ordinal), "Missing migration confirmation.");
             }
-            await using var app = await PricingProcess.StartAsync(blank.ConnectionString);
+            await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", blank.ConnectionString);
             using var ready = await app.Client.GetAsync(new Uri("/health/ready", UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
         }
@@ -65,9 +67,9 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     [Fact]
     public async Task MissingMigrationConfiguration_ExitsWithControlledDiagnostic()
     {
-        var start = PricingProcess.StartInfo(string.Empty);
+        var start = BusinessProcess.StartInfo(typeof(PricingHostMarker).Assembly.Location, "Pricing", string.Empty);
         start.ArgumentList.Add("migrate-pricing");
-        var result = await PricingProcess.RunToExitAsync(start);
+        var result = await BusinessProcess.RunToExitAsync(start);
         Assert.Equal(1, result.ExitCode);
         Assert.True(result.Output.Contains("Pricing migration failed", StringComparison.Ordinal), "Missing migration diagnostic.");
     }
@@ -75,7 +77,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     [PostgresFact]
     public async Task DatabaseOutage_FailsReadiness_WhileLivenessRemainsAvailable()
     {
-        await using var app = await PricingProcess.StartAsync(database.ConnectionString);
+        await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString);
         try
         {
             await database.SetAvailableAsync(false);
@@ -90,7 +92,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     [PostgresFact]
     public async Task GatewayForwardsAuthenticatedBusinessCommands_ToTheIndependentHost()
     {
-        await using var app = await PricingProcess.StartAsync(database.ConnectionString, worker: true);
+        await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true);
         var path = Path.Combine(Path.GetTempPath(), $"nsn-pricing-routes-{Guid.NewGuid():N}.json");
         var root = new DirectoryInfo(AppContext.BaseDirectory);
         while (root is not null && !Directory.Exists(Path.Combine(root.FullName, "src", "Gateway"))) { root = root.Parent; }
@@ -107,7 +109,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
         await File.WriteAllTextAsync(path, table.ToJsonString());
         try
         {
-            await using var gateway = await PricingProcess.StartGatewayAsync(path);
+            await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, path);
             var request = new { requestId = Guid.NewGuid(), itemId = Guid.NewGuid(), expectedVersion = 0, cost = 80m, feeRate = 0.2m };
             using var denied = await gateway.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), request);
             Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
@@ -124,14 +126,14 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
     {
         var requestId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
-        await using (var app = await PricingProcess.StartAsync(database.ConnectionString))
+        await using (var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString))
         {
             app.Authenticate();
             using var response = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId, itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m });
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         }
-        await using var restarted = await PricingProcess.StartAsync(database.ConnectionString, worker: true);
+        await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true);
         restarted.Authenticate();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         while (true)
@@ -152,7 +154,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await using (var pause = await database.PauseResultWriteAsync())
         {
-            await using var app = await PricingProcess.StartAsync(database.ConnectionString, worker: true, leaseDuration: TimeSpan.FromSeconds(5));
+            await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true, leaseDuration: TimeSpan.FromSeconds(5));
             app.Authenticate();
             using var accepted = await app.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative),
                 new { requestId, itemId, expectedVersion = 0, cost = 80m, feeRate = 0.2m }, timeout.Token);
@@ -167,7 +169,7 @@ public sealed class PricingHttpTests(PricingDatabaseFixture database) : IClassFi
             Assert.Equal(JsonValueKind.Null, incomplete.GetProperty("data").GetProperty("breakEvenPrice").ValueKind);
             // Dispose 杀掉真实进程；离开外层作用域后数据库停顿解除。
         }
-        await using var restarted = await PricingProcess.StartAsync(database.ConnectionString, worker: true);
+        await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, worker: true);
         restarted.Authenticate();
         while (true)
         {

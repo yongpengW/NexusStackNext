@@ -1,19 +1,23 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
+using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
-internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> options) : DbContext(options)
+internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> options) : NexusStackDbContext(options, "pricing")
 {
+    internal const string CostPayloadHashProperty = "CostPayloadHash";
     public DbSet<PriceQuote> Quotes => Set<PriceQuote>();
     public DbSet<RecalculationEntry> Tasks => Set<RecalculationEntry>();
-    public DbSet<AttemptEntry> Attempts => Set<AttemptEntry>();
+    public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("pricing");
+        modelBuilder.Entity<InboxMessage>().Property<string?>(CostPayloadHashProperty).HasMaxLength(64);
         var quote = modelBuilder.Entity<PriceQuote>();
         quote.ToTable("quotes");
         quote.HasKey(x => x.Id);
@@ -24,44 +28,27 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         quote.Property(x => x.Version).IsConcurrencyToken();
         quote.Ignore(x => x.DomainEvents);
 
+        DurableTaskMapping.Configure<RecalculationEntry>(modelBuilder);
         var task = modelBuilder.Entity<RecalculationEntry>();
-        task.ToTable("tasks");
-        task.HasKey(x => x.TaskId);
-        task.Property(x => x.TaskId).ValueGeneratedNever();
         task.Property(x => x.Cost).HasPrecision(18, 4);
         task.Property(x => x.FeeRate).HasPrecision(5, 4);
-        task.Property(x => x.State).HasMaxLength(24);
-        task.Property(x => x.ErrorCode).HasMaxLength(64);
-        task.Property(x => x.AvailableAt).HasDefaultValueSql("clock_timestamp()");
-        task.HasIndex(x => new { x.State, x.AvailableAt });
+        task.Property(x => x.Origin).HasMaxLength(24).HasDefaultValue("manual");
         task.HasOne<PriceQuote>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
-        var attempt = modelBuilder.Entity<AttemptEntry>();
-        attempt.ToTable("attempts");
-        attempt.HasKey(x => new { x.TaskId, x.Epoch });
-        attempt.Property(x => x.Outcome).HasMaxLength(24);
-        attempt.Property(x => x.ErrorCode).HasMaxLength(64);
-        attempt.HasOne<RecalculationEntry>().WithMany(x => x.History).HasForeignKey(x => x.TaskId);
     }
 
     public Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken cancellationToken) =>
         Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(cancellationToken);
 }
 
-internal sealed class RecalculationEntry
+internal sealed class RecalculationEntry : DurableTaskRecord
 {
-    public Guid TaskId { get; set; }
     public PriceId ItemId { get; set; } = null!;
     public long ExpectedVersion { get; set; }
     public decimal Cost { get; set; }
     public decimal FeeRate { get; set; }
     public long InputRevision { get; set; }
-    public string State { get; set; } = "Pending";
-    public DateTimeOffset AvailableAt { get; set; }
-    public DateTimeOffset? LeaseUntil { get; set; }
-    public long Epoch { get; set; }
-    public int Attempts { get; set; }
-    public string? ErrorCode { get; set; }
-    public List<AttemptEntry> History { get; set; } = [];
+    public string Origin { get; set; } = "manual";
+
 
     public RecalculationStatus ToStatus() => new(TaskId, ItemId.Value, State, InputRevision)
     {
@@ -71,18 +58,8 @@ internal sealed class RecalculationEntry
         AvailableAt = AvailableAt,
         History = History.OrderBy(x => x.Epoch).Select(x => new PricingAttempt(x.Epoch, x.StartedAt, x.FinishedAt, x.Outcome, x.ErrorCode)).ToArray(),
     };
-    public bool Matches(UpdatePricingCost request) => ItemId.Value == request.ItemId
+    public bool Matches(UpdatePricingCost request) => Origin == "manual" && ItemId.Value == request.ItemId
         && ExpectedVersion == request.ExpectedVersion && Cost == request.Cost && FeeRate == request.FeeRate;
-}
-
-internal sealed class AttemptEntry
-{
-    public Guid TaskId { get; set; }
-    public long Epoch { get; set; }
-    public DateTimeOffset StartedAt { get; set; }
-    public DateTimeOffset? FinishedAt { get; set; }
-    public string Outcome { get; set; } = "Running";
-    public string? ErrorCode { get; set; }
 }
 
 /// <summary>迁移工具的显式入口，只从环境读取连接配置。</summary>
@@ -128,6 +105,7 @@ public static class PricingDatabase
             _ = await context.Quotes.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Inbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

@@ -41,36 +41,41 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
         ("*", "/api/auditing"),
     ];
 
-    [Fact]
-    public void PricingVariant_PreservesTheCompletePlatformConfiguration()
+    [Theory]
+    [InlineData("routes.json", "routes.pricing.json", "pricing")]
+    [InlineData("routes.pricing.json", "routes.business.json", "costing")]
+    public void OptionalContextVariant_PreservesTheCompleteBaselineConfiguration(string baselineFile, string variantFile, string context)
     {
         var directory = Path.Combine(RepositoryRoot(), "src", "Gateway", "NexusStackNext.Gateway");
-        var baseline = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.json")));
-        var variant = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "routes.pricing.json")));
+        var baseline = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, baselineFile)));
+        var variant = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, variantFile)));
         Assert.NotNull(baseline);
         Assert.NotNull(variant);
         var routes = variant["routes"]!.AsArray();
         var clusters = variant["clusters"]!.AsArray();
-        var pricingRoute = Assert.Single(routes, node => node!["routeId"]!.GetValue<string>() == "pricing");
-        var pricingCluster = Assert.Single(clusters, node => node!["clusterId"]!.GetValue<string>() == "pricing-host");
+        var pricingRoute = Assert.Single(routes, node => node!["routeId"]!.GetValue<string>() == context);
+        var pricingCluster = Assert.Single(clusters, node => node!["clusterId"]!.GetValue<string>() == context + "-host");
         routes.Remove(pricingRoute);
         clusters.Remove(pricingCluster);
         // 对象字段顺序无关；数组顺序保留，尤其不能掩盖 transforms 的顺序变化。
         Assert.True(JsonNode.DeepEquals(baseline, variant),
-            "Pricing 变体必须完整保留默认平台配置，包括鉴权、限流、超时、transforms 与目标地址。");
+            "上下文变体必须完整保留基线配置，包括鉴权、限流、超时、transforms 与目标地址。");
     }
 
     /// <summary>每个端点都要有归宿。</summary>
     [Theory]
-    [InlineData("routes.json", false)]
-    [InlineData("routes.pricing.json", true)]
-    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal(string routeFile, bool includePricing)
+    [InlineData("routes.json", false, false)]
+    [InlineData("routes.pricing.json", true, false)]
+    [InlineData("routes.business.json", true, true)]
+    public void EveryModuleEndpoint_IsRoutedOrDeclaredInternal(string routeFile, bool includePricing, bool includeCosting)
     {
         var routes = LoadRoutes(routeFile);
         var allEndpoints = ModuleEndpoints();
         Assert.Contains(allEndpoints, endpoint => endpoint.Module == "PricingModule");
+        Assert.Contains(allEndpoints, endpoint => endpoint.Module == "CostingModule");
         // 默认编排不启动 Pricing；启用样板时，必须同时保留全部平台路由。
-        var endpoints = allEndpoints.Where(endpoint => includePricing || endpoint.Module != "PricingModule").ToList();
+        var endpoints = allEndpoints.Where(endpoint => (includePricing || endpoint.Module != "PricingModule")
+            && (includeCosting || endpoint.Module != "CostingModule")).ToList();
 
         Assert.NotEmpty(routes);
         Assert.NotEmpty(endpoints);

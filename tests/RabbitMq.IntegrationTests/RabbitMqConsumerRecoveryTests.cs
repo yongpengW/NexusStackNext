@@ -134,7 +134,7 @@ public sealed class RabbitMqConsumerRecoveryTests
 
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         await using var consumer = new RabbitMqConsumer(
-            options, topology, subscription, processor, new InMemoryInboxStore());
+            options, topology, subscription, processor);
 
         _ = consumer.RunAsync(stop.Token);
 
