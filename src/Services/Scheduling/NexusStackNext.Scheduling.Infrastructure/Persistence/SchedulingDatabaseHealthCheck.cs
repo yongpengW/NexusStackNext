@@ -1,4 +1,3 @@
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace NexusStackNext.Scheduling.Infrastructure.Persistence;
@@ -11,7 +10,7 @@ internal sealed class SchedulingDatabaseHealthCheck(SchedulingDbContext context)
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
         {
-            _ = await context.Plans.AnyAsync(timeout.Token).ConfigureAwait(false);
+            await context.VerifyStorageAsync(timeout.Token).ConfigureAwait(false);
             return HealthCheckResult.Healthy();
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or InvalidOperationException)

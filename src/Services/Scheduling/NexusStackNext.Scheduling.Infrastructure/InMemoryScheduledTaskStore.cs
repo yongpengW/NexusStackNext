@@ -12,6 +12,7 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     private readonly Dictionary<long, ScheduledTask> _tasks = [];
     private readonly Lock _writes = new();
     private readonly Dictionary<Guid, ScheduleOccurrence> _occurrences = [];
+    private readonly Dictionary<Guid, ScheduleDecision> _decisions = [];
     private readonly Dictionary<Guid, OutboxEntry> _outbox = [];
 
     /// <inheritdoc />
@@ -92,26 +93,47 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     }
 
     /// <inheritdoc />
-    public Task<Result> RecordOccurrenceAsync(ScheduledTask task, long expectedVersion, ScheduleOccurrence occurrence, CancellationToken cancellationToken = default)
+    public Task<Result> RecordDecisionAsync(ScheduledTask task, long expectedVersion, ScheduleDecision decision, ScheduleOccurrence? occurrence, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(task);
-        ArgumentNullException.ThrowIfNull(occurrence);
+        ArgumentNullException.ThrowIfNull(decision);
         cancellationToken.ThrowIfCancellationRequested();
-        var pending = OutboxEntry.From(occurrence.ToEvent(), serializer);
+        if (decision.OccurrenceId != occurrence?.OccurrenceId) { return Task.FromResult(Result.Failure(TaskRegistry.Conflict)); }
+        var pending = occurrence is null ? null : OutboxEntry.From(occurrence.ToEvent(), serializer);
         lock (_writes)
         {
-            if (_occurrences.TryGetValue(occurrence.OccurrenceId, out var existing))
+            if (_decisions.TryGetValue(decision.DecisionId, out var existing))
             {
-                return Task.FromResult(existing == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict));
+                var original = decision.OccurrenceId is { } id ? _occurrences.GetValueOrDefault(id) : null;
+                return Task.FromResult(existing == decision && original == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict));
             }
-            if (!_tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion)
+            if (!_tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion
+                || occurrence is not null && _occurrences.ContainsKey(occurrence.OccurrenceId))
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.Conflict));
             }
             _tasks[task.Id.Value] = task.Snapshot();
-            _occurrences.Add(occurrence.OccurrenceId, occurrence);
-            _outbox.Add(pending.Id, pending);
+            _decisions.Add(decision.DecisionId, decision);
+            if (occurrence is not null)
+            {
+                _occurrences.Add(occurrence.OccurrenceId, occurrence);
+                _outbox.Add(pending!.Id, pending);
+            }
             return Task.FromResult(Result.Success());
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<ScheduleDecisionPage> ReadDecisionsAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_writes)
+        {
+            var query = _decisions.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.PlanVersion);
+            return Task.FromResult(new ScheduleDecisionPage(query.Skip((int)Math.Min(offset, int.MaxValue)).Take(limit).ToArray(), query.LongCount()));
         }
     }
 

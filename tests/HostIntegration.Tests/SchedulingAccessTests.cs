@@ -34,7 +34,15 @@ public sealed class SchedulingAccessTests
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
         using var historyDenied = await user.GetAsync(new Uri("/api/scheduling/tasks/1/occurrences", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Forbidden, historyDenied.StatusCode);
-        foreach (var path in new[] { "/api/scheduling/tasks/", "/api/scheduling/tasks/1/pause", "/api/scheduling/tasks/1/resume",
+        using var decisionsDenied = await user.GetAsync(new Uri("/api/scheduling/tasks/1/decisions", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Forbidden, decisionsDenied.StatusCode);
+        using var ruleDenied = await user.PutAsJsonAsync(new Uri("/api/scheduling/tasks/1/rule", UriKind.Relative), new
+        {
+            expectedVersion = "1",
+            rule = new { kind = "Cron", expression = "* * * * *", timeZoneId = "UTC" },
+        });
+        Assert.Equal(HttpStatusCode.Forbidden, ruleDenied.StatusCode);
+        foreach (var path in new[] { "/api/scheduling/tasks/", "/api/scheduling/tasks/preview", "/api/scheduling/tasks/1/pause", "/api/scheduling/tasks/1/resume",
             "/api/scheduling/occurrences/11111111-1111-1111-1111-111111111111/retry" })
         {
             using var denied = await user.PostAsJsonAsync(new Uri(path, UriKind.Relative),

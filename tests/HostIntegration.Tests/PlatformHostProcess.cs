@@ -64,11 +64,13 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         try
         {
             var elapsed = Stopwatch.StartNew();
+            int? lastStatus = null;
             while (elapsed.Elapsed < TimeSpan.FromSeconds(20) && !host._process.HasExited)
             {
                 try
                 {
                     using var ready = await host.Client.GetAsync(new Uri(requireReady ? "/health/ready" : "/health/live", UriKind.Relative));
+                    lastStatus = (int)ready.StatusCode;
                     if (ready.IsSuccessStatusCode)
                     {
                         return host;
@@ -80,7 +82,12 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
                 await Task.Delay(100);
             }
 
-            throw new InvalidOperationException("平台子进程未就绪；不回显可能包含敏感信息的宿主日志。");
+            var exited = host._process.HasExited;
+            int? exitCode = exited ? host._process.ExitCode : null;
+            await host.CrashAsync();
+            var diagnostic = Path.Combine(Path.GetTempPath(), $"nsn-platform-startup-{Guid.NewGuid():N}.log");
+            await File.WriteAllTextAsync(diagnostic, (await host._output) + Environment.NewLine + (await host._errors));
+            throw new InvalidOperationException($"平台子进程未就绪；exited={exited}; exitCode={exitCode}; lastStatus={lastStatus}。私有诊断：{diagnostic}；不回显日志内容。");
         }
         catch
         {

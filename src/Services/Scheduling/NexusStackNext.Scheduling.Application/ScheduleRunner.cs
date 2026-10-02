@@ -50,13 +50,22 @@ public interface IScheduledTaskStore
     /// <returns>提交结果。</returns>
     Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default);
 
-    /// <summary>按版本原子保存已推进的计划、发生和 Outbox；重复同一次提交返回原结论。</summary>
+    /// <summary>按版本原子保存已推进的计划、调度决定及可选发生/Outbox；重复同一次提交返回原结论。</summary>
     /// <param name="task">推进后的计划快照。</param>
     /// <param name="expectedVersion">推进前版本。</param>
-    /// <param name="occurrence">重试期间保持不变的发生。</param>
+    /// <param name="decision">重试期间保持不变的决定。</param>
+    /// <param name="occurrence">触发时的发生；跳过为空。</param>
     /// <param name="cancellationToken">取消。</param>
     /// <returns>登记成功或版本冲突。</returns>
-    Task<Result> RecordOccurrenceAsync(ScheduledTask task, long expectedVersion, ScheduleOccurrence occurrence, CancellationToken cancellationToken = default);
+    Task<Result> RecordDecisionAsync(ScheduledTask task, long expectedVersion, ScheduleDecision decision, ScheduleOccurrence? occurrence, CancellationToken cancellationToken = default);
+
+    /// <summary>按提交版本倒序查询调度决定，最多 100 条。</summary>
+    /// <param name="planId">所属计划。</param>
+    /// <param name="offset">非负偏移。</param>
+    /// <param name="limit">1 到 100。</param>
+    /// <param name="cancellationToken">取消。</param>
+    /// <returns>有界历史。</returns>
+    Task<ScheduleDecisionPage> ReadDecisionsAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default);
 
     /// <summary>按发生序号倒序查询一个计划的触发历史，最多 100 条。</summary>
     /// <param name="planId">计划。</param>
@@ -94,7 +103,8 @@ public sealed record ScheduleRunResult(int Examined, int Triggered, int Skipped)
 /// </summary>
 /// <param name="store">任务存储。</param>
 /// <param name="clock">时钟。</param>
-public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock)
+/// <param name="calendar">与预览共用的时刻计算。</param>
+public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, IScheduleCalendar calendar)
 {
     /// <summary>单轮最多处理多少个任务。</summary>
     public const int DefaultBatchSize = 50;
@@ -114,6 +124,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock)
 
         foreach (var task in due)
         {
+            var original = task.Snapshot();
             try
             {
                 // 再判一次到期：存储可能返回了已被并发修改的任务。
@@ -123,31 +134,59 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock)
                     continue;
                 }
 
-                // **不丢弃结果**：`MarkTriggered` 在任务已停用时返回失败。
-                // 今天这条路到不了（上面刚判过 `IsDue`），但"结果被丢掉"是个会腐烂的形状——
-                // 将来谁改了 `IsDue` 或 `MarkTriggered` 的语义，这里会安静地少数一次触发。
                 var expectedVersion = task.Version;
                 var scheduledAt = task.NextRunAt!.Value;
-                if (task.MarkTriggered(now).IsFailure)
+                var next = calendar.NextOccurrence(task.Rule, now);
+                if (next.IsFailure)
+                {
+                    failed.Add(task.Id.Value);
+                    await DeferAsync(original, now, next.Error.Code, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                var misfire = task.Rule.Kind != "Interval" && now - scheduledAt > TimeSpan.FromSeconds(task.Rule.GraceSeconds!.Value);
+                var trigger = !misfire || task.Rule.MisfirePolicy != "Skip";
+                if (task.Advance(now, next.Value, trigger).IsFailure)
                 {
                     skipped++;
                     continue;
                 }
 
-                var occurrence = new ScheduleOccurrence(Guid.NewGuid(), task.Id.Value, task.TriggerSequence, scheduledAt, now,
-                    task.Target.Kind, task.Target.SubjectId, task.CreatedBy);
-                var saved = await store.RecordOccurrenceAsync(task, expectedVersion, occurrence, cancellationToken).ConfigureAwait(false);
-                if (saved.IsSuccess) { triggered++; }
+                var id = Guid.NewGuid();
+                var occurrence = trigger ? new ScheduleOccurrence(id, task.Id.Value, task.TriggerSequence, scheduledAt, now,
+                    task.Target.Kind, task.Target.SubjectId, task.CreatedBy) : null;
+                var decision = new ScheduleDecision(id, task.Id.Value, task.Version, task.ScheduleRevision, task.Rule,
+                    !trigger ? "Skipped" : misfire ? "Coalesced" : "Triggered", scheduledAt, now, next.Value, occurrence?.OccurrenceId);
+                var saved = await store.RecordDecisionAsync(task, expectedVersion, decision, occurrence, cancellationToken).ConfigureAwait(false);
+                if (saved.IsSuccess && trigger) { triggered++; }
                 else { skipped++; }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception)
             {
                 failed.Add(task.Id.Value);
+                await DeferAsync(original, now, "scheduling.commit.failed", cancellationToken).ConfigureAwait(false);
             }
         }
 
         var result = new ScheduleRunResult(due.Count, triggered, skipped);
         return failed.Count == 0 ? result : result with { FailedPlanIds = failed.ToArray() };
+    }
+
+    private async Task DeferAsync(ScheduledTask original, DateTimeOffset now, string errorCode, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var version = original.Version;
+            if (original.Defer(now, errorCode).IsSuccess)
+            {
+                // 使用推进前的快照及版本：失败或未知提交结果不得覆盖已成功的决定，也不得恢复已暂停的计划。
+                await store.SaveAsync(original, version, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception)
+        {
+            // 存储本身不可用时无法持久化退避；该计划仍报告失败，继续处理本批其他计划。
+        }
     }
 }

@@ -13,7 +13,7 @@ namespace NexusStackNext.Scheduling.Infrastructure;
 internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegrationEventSerializer serializer) : IScheduledTaskStore
 {
     public async Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default) =>
-        await context.Plans.AsNoTracking().Where(task => task.IsEnabled && task.NextRunAt <= now)
+        await context.Plans.AsNoTracking().Where(task => task.IsEnabled && task.NextRunAt <= now && (task.RetryAt == null || task.RetryAt <= now))
             .OrderBy(task => task.NextRunAt).ThenBy(task => task.Id).Take(batchSize).ToArrayAsync(cancellationToken).ConfigureAwait(false);
 
     public async Task<IReadOnlyList<ScheduledTask>> ListAsync(CancellationToken cancellationToken = default) =>
@@ -42,6 +42,7 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
 
     public Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default)
     {
+        context.ChangeTracker.Clear();
         var entry = context.Update(task);
         entry.Property(value => value.Version).OriginalValue = expectedVersion;
         return CommitAsync(cancellationToken);
@@ -62,25 +63,47 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
         { return Result.Failure(TaskRegistry.CodeTaken); }
         catch (DbUpdateException error) when (error.InnerException is PostgresException
         {
-            SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_occurrences_plan_sequence",
+            SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_occurrences_plan_sequence" or "ux_decisions_plan_version",
         })
         { return Result.Failure(TaskRegistry.Conflict); }
         finally { context.ChangeTracker.Clear(); }
     }
 
-    public Task<Result> RecordOccurrenceAsync(ScheduledTask task, long expectedVersion, ScheduleOccurrence occurrence, CancellationToken cancellationToken = default) =>
+    public Task<Result> RecordDecisionAsync(ScheduledTask task, long expectedVersion, ScheduleDecision decision, ScheduleOccurrence? occurrence, CancellationToken cancellationToken = default) =>
         context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             context.ChangeTracker.Clear();
-            var existing = await context.Occurrences.AsNoTracking().SingleOrDefaultAsync(item => item.OccurrenceId == occurrence.OccurrenceId, cancellationToken).ConfigureAwait(false);
-            if (existing is not null) { return existing == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict); }
-            // 三种状态使用同一次 SaveChanges 的事务。重试从独立快照重新跟踪，不再次推进聚合。
+            if (decision.OccurrenceId != occurrence?.OccurrenceId) { return Result.Failure(TaskRegistry.Conflict); }
+            var existing = await context.Decisions.AsNoTracking().SingleOrDefaultAsync(item => item.DecisionId == decision.DecisionId, cancellationToken).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                var original = decision.OccurrenceId is { } id
+                    ? await context.Occurrences.AsNoTracking().SingleOrDefaultAsync(item => item.OccurrenceId == id, cancellationToken).ConfigureAwait(false) : null;
+                return existing == decision && original == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict);
+            }
+            // 计划、决定、可选发生与 Outbox 使用同一次 SaveChanges 的事务；重试不再次推进聚合。
             var entry = context.Update(task.Snapshot());
             entry.Property(value => value.Version).OriginalValue = expectedVersion;
-            context.Occurrences.Add(occurrence);
-            context.Outbox.Add(OutboxEntry.From(occurrence.ToEvent(), serializer));
+            context.Decisions.Add(decision);
+            if (occurrence is not null)
+            {
+                context.Occurrences.Add(occurrence);
+                context.Outbox.Add(OutboxEntry.From(occurrence.ToEvent(), serializer));
+            }
             return await CommitAsync(cancellationToken).ConfigureAwait(false);
         });
+
+    public async Task<ScheduleDecisionPage> ReadDecisionsAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
+        var query = context.Decisions.AsNoTracking().Where(item => item.PlanId == planId);
+        var total = await query.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        var items = await query.OrderByDescending(item => item.PlanVersion).Skip((int)Math.Min(offset, int.MaxValue)).Take(limit)
+            .ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        return new(items, total);
+    }
 
     public async Task<ScheduleOccurrencePage> ReadOccurrencesAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default)
     {

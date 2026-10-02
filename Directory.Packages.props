@@ -42,6 +42,8 @@
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
     <!-- Pricing 普通查询缓存：共享连接与原子 Lua 回填；客户端 MIT。服务端许可另行登记。 -->
     <PackageVersion Include="StackExchange.Redis" Version="2.13.17" />
+    <!-- Scheduling 日历计算；Cronos 为 MIT，不引入第二套调度存储。 -->
+    <PackageVersion Include="Cronos" Version="0.13.0" />
   <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.0" />
   <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />

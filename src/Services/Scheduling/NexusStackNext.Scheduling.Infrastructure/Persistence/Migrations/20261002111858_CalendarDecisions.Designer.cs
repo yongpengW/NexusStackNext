@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Scheduling.Infrastructure.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(SchedulingDbContext))]
-    partial class SchedulingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002111858_CalendarDecisions")]
+    partial class CalendarDecisions
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -189,21 +192,11 @@ namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastRunAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("LastSchedulingErrorCode")
-                        .HasMaxLength(96)
-                        .HasColumnType("character varying(96)");
-
                     b.Property<DateTimeOffset?>("NextRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("RetryAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<long>("ScheduleRevision")
                         .HasColumnType("bigint");
-
-                    b.Property<int>("SchedulingFailureCount")
-                        .HasColumnType("integer");
 
                     b.Property<long>("TriggerSequence")
                         .HasColumnType("bigint");

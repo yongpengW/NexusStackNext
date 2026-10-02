@@ -89,7 +89,14 @@ public sealed class ScheduledCostBusinessJourneyTests
     }
 
     [AuditBrokerFact]
-    public async Task GatewaySchedule_SurvivesCostingOutageAndCreatorLogout_ThenCompletesWithoutInventingBusinessVersions()
+    public Task GatewaySchedule_SurvivesCostingOutageAndCreatorLogout_ThenCompletesWithoutInventingBusinessVersions() =>
+        VerifyScheduledBusinessJourneyAsync(calendar: false);
+
+    [AuditBrokerFact]
+    public Task GatewayCalendar_SurvivesCostingOutageAndCreatorLogout_ThenCompletesThroughPricing() =>
+        VerifyScheduledBusinessJourneyAsync(calendar: true);
+
+    private static async Task VerifyScheduledBusinessJourneyAsync(bool calendar)
     {
         await using var platformDatabase = await IdentityJourneyDatabase.CreateAsync();
         await platformDatabase.MigrateAsync();
@@ -138,13 +145,33 @@ public sealed class ScheduledCostBusinessJourneyTests
             await using (var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes))
             {
                 await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "journey-root", "schedule-root-password");
+                if (calendar)
+                {
+                    using var status = await gateway.Client.GetAsync(Relative("/api/scheduling"));
+                    Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+                    Assert.Equal(1, (await status.Content.ReadApiDataAsync()).GetProperty("tickIntervalSeconds").GetDouble());
+                }
+                var secondOffset = DateTimeOffset.UtcNow.AddSeconds(5).Second;
+                object definition = calendar
+                    ? new { code = "scheduled-cost-journey", rule = new { kind = "Cron", expression = FormattableString.Invariant($"{secondOffset} * * * * *"), timeZoneId = "Asia/Shanghai" }, targetKind = CostingScheduleTarget.Recalculate, targetId = itemId }
+                    : new { code = "scheduled-cost-journey", intervalSeconds = 3600, targetKind = CostingScheduleTarget.Recalculate, targetId = itemId };
                 using var scheduledPlan = await gateway.Client.PostAsJsonAsync(Relative("/api/scheduling/tasks/"),
-                    new { code = "scheduled-cost-journey", intervalSeconds = 3600, targetKind = CostingScheduleTarget.Recalculate, targetId = itemId });
+                    definition);
                 Assert.Equal(HttpStatusCode.Created, scheduledPlan.StatusCode);
                 var planId = (await scheduledPlan.Content.ReadApiDataAsync()).GetProperty("taskId").ReadHttpInt64();
                 var history = await WaitAsync(gateway.Client, $"/api/scheduling/tasks/{planId}/occurrences", data =>
                     data.GetArrayLength() == 1 && data[0].GetProperty("deliveryState").GetString() == "Delivered");
                 occurrenceId = history[0].GetProperty("occurrenceId").GetGuid();
+                if (calendar)
+                {
+                    Assert.Equal(secondOffset, history[0].GetProperty("scheduledAt").GetDateTimeOffset().Second);
+                    using var decided = await gateway.Client.GetAsync(Relative($"/api/scheduling/tasks/{planId}/decisions"));
+                    var decision = Assert.Single((await decided.Content.ReadApiDataAsync()).EnumerateArray());
+                    Assert.Equal("Triggered", decision.GetProperty("kind").GetString());
+                    Assert.Equal(6, decision.GetProperty("rule").GetProperty("cronFieldCount").GetInt32());
+                    using var pause = await gateway.Client.PostAsJsonAsync(Relative($"/api/scheduling/tasks/{planId}/pause"), new { expectedVersion = "2" });
+                    Assert.Equal(HttpStatusCode.NoContent, pause.StatusCode);
+                }
                 using var setting = await gateway.Client.PutAsJsonAsync(Relative("/api/platform/settings/schedule.business"), new { value = "committed" });
                 Assert.Equal(HttpStatusCode.NoContent, setting.StatusCode);
                 await AuditBusinessJourneyTests.WaitForCountAsync(gateway.Client, 1);

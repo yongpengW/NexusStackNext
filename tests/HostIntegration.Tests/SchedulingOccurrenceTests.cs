@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.TestSupport;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -60,7 +61,9 @@ public sealed class SchedulingOccurrenceTests
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await database.MigrateAsync();
-        await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
+        var clock = new MutableClock(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero));
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password",
+            schedulingWorkerEnabled: false, schedulingClock: clock);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "schedule-root-password");
         var broken = await CreatePlanAsync(client, "first-plan");
@@ -82,13 +85,17 @@ public sealed class SchedulingOccurrenceTests
         Assert.Single(await HistoryAsync(client, healthy));
         var page = await client.GetFromJsonAsync<JsonElement>(Relative("/api/scheduling/tasks/"));
         var plan = Assert.Single(page.GetProperty("data").EnumerateArray(), item => item.GetProperty("taskId").ReadHttpInt64() == broken);
-        Assert.Equal(1, plan.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(2, plan.GetProperty("version").ReadHttpInt64());
         Assert.Equal(JsonValueKind.Null, plan.GetProperty("lastRunAt").ValueKind);
+        Assert.Equal(clock.UtcNow, plan.GetProperty("nextRunAt").GetDateTimeOffset());
+        Assert.Equal(clock.UtcNow.AddMinutes(1), plan.GetProperty("retryAt").GetDateTimeOffset());
 
         await using (var recover = new NpgsqlCommand("ALTER TABLE scheduling.outbox DROP CONSTRAINT test_reject_plan", connection))
         {
             await recover.ExecuteNonQueryAsync();
         }
+        Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+        clock.UtcNow = clock.UtcNow.AddMinutes(1);
         Assert.Equal(1, (await runner.RunOnceAsync()).Triggered);
         var recovered = Assert.Single(await HistoryAsync(client, broken));
         Assert.Equal(1, recovered.GetProperty("triggerSequence").ReadHttpInt64());
