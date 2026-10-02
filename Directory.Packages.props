@@ -38,6 +38,8 @@
          ADR-0008 禁的是"需要付费授权"，它不在其中；但把它写成 MIT 是不准确的，
          而清单里每一条的注释都是给人核对许可证用的。 -->
     <PackageVersion Include="RabbitMQ.Client" Version="7.2.2" />
+    <!-- Pricing 普通查询缓存：共享连接与原子 Lua 回填；客户端 MIT。服务端许可另行登记。 -->
+    <PackageVersion Include="StackExchange.Redis" Version="2.13.17" />
   <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.0" />
   <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />

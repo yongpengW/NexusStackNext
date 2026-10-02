@@ -13,10 +13,28 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     public DbSet<PriceQuote> Quotes => Set<PriceQuote>();
     public DbSet<RecalculationEntry> Tasks => Set<RecalculationEntry>();
     public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
+    public DbSet<PriceCacheInvalidation> CacheInvalidations => Set<PriceCacheInvalidation>();
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<PriceQuote>().Where(x => x.State is EntityState.Added or EntityState.Modified).ToArray())
+        {
+            // 所有输入、上游消息和计算结果路径都经过这里，与业务/任务/Inbox 一起提交。
+            if (!CacheInvalidations.Local.Any(x => x.ItemId == entry.Entity.Id.Value && x.Version == entry.Entity.Version))
+            {
+                CacheInvalidations.Add(new PriceCacheInvalidation { ItemId = entry.Entity.Id.Value, Version = entry.Entity.Version });
+            }
+        }
+        return base.SaveChangesAsync(cancellationToken);
+    }
 
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("pricing");
+        var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
+        invalidation.ToTable("cache_invalidations");
+        invalidation.HasKey(x => new { x.ItemId, x.Version });
         modelBuilder.Entity<InboxMessage>().Property<string?>(CostPayloadHashProperty).HasMaxLength(64);
         var quote = modelBuilder.Entity<PriceQuote>();
         quote.ToTable("quotes");
@@ -38,6 +56,12 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
 
     public Task<DateTimeOffset> DatabaseTimeAsync(CancellationToken cancellationToken) =>
         Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(cancellationToken);
+}
+
+internal sealed class PriceCacheInvalidation
+{
+    public Guid ItemId { get; set; }
+    public long Version { get; set; }
 }
 
 internal sealed class RecalculationEntry : DurableTaskRecord
@@ -106,6 +130,7 @@ public static class PricingDatabase
             _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Inbox.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.CacheInvalidations.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

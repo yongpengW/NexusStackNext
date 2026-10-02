@@ -11,24 +11,41 @@ namespace NexusStackNext.Pricing.Infrastructure;
 /// <summary>显式装配 Pricing 的 PostgreSQL 命令与查询适配器。</summary>
 public static class PricingServices
 {
+    /// <summary>宿主显式启动失效投递器；查询容器本身不隐式启动后台工作。</summary>
+    /// <param name="services">容器。</param>
+    /// <returns>容器。</returns>
+    public static IServiceCollection AddPricingCacheInvalidationWorker(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddHostedService<PricingCacheInvalidationWorker>();
+        return services;
+    }
+
     /// <summary>注册持久化定价模块。</summary>
     /// <param name="services">容器。</param>
     /// <param name="connectionString">所属数据库的连接配置。</param>
     /// <param name="options">有界执行策略。</param>
+    /// <param name="cacheOptions">可选缓存和回源预算。</param>
     /// <returns>容器。</returns>
-    public static IServiceCollection AddPricingPostgres(this IServiceCollection services, string connectionString, PricingTaskOptions? options = null)
+    public static IServiceCollection AddPricingPostgres(this IServiceCollection services, string connectionString, PricingTaskOptions? options = null, PricingCacheOptions? cacheOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         var policy = options ?? new PricingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
+        var cache = cacheOptions ?? new PricingCacheOptions();
+        cache.Validate();
+        services.AddSingleton(cache);
+        services.AddSingleton<PricingQueryBudget>();
+        services.AddLogging();
+        services.AddSingleton<PricingRedisCache>();
         services.AddScoped(_ => PricingDatabase.CreateContext(connectionString));
         services.AddScoped<IIntegrationEventProcessor, PricingCostIngestion>();
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetRecalculation, RecalculationStatus>, PricingCommands>();
-        services.AddScoped<IQueryHandler<GetPriceQuote, PriceQuoteView>, PricingCommands>();
+        services.AddScoped<IQueryHandler<GetPriceQuote, PriceQuoteView>, PricingQuoteQueries>();
         services.AddScoped<ICommandHandler<ClaimPricingWork, PricingWorkLease?>, PricingExecution>();
         services.AddScoped<ICommandHandler<CompletePricingWork, bool>, PricingExecution>();
         services.AddScoped<ICommandHandler<FailPricingWork, bool>, PricingExecution>();
@@ -38,7 +55,7 @@ public static class PricingServices
 }
 
 internal sealed class PricingCommands(PricingDbContext database) : ICommandHandler<UpdatePricingCost, RecalculationStatus>,
-    IQueryHandler<GetRecalculation, RecalculationStatus>, IQueryHandler<GetPriceQuote, PriceQuoteView>
+    IQueryHandler<GetRecalculation, RecalculationStatus>
 {
     public async Task<Result<RecalculationStatus>> HandleAsync(UpdatePricingCost command, CancellationToken cancellationToken = default)
     {
@@ -102,14 +119,4 @@ internal sealed class PricingCommands(PricingDbContext database) : ICommandHandl
             : Result.Success(entry.ToStatus());
     }
 
-    public async Task<Result<PriceQuoteView>> HandleAsync(GetPriceQuote query, CancellationToken cancellationToken = default)
-    {
-        if (query.ItemId == Guid.Empty) { return Result.Failure<PriceQuoteView>(new Error("pricing.not_found", "定价对象不存在。")); }
-        var id = new PriceId(query.ItemId);
-        var quote = await database.Quotes.AsNoTracking().SingleOrDefaultAsync(x => x.Id == id, cancellationToken).ConfigureAwait(false);
-        return quote is null ? Result.Failure<PriceQuoteView>(new Error("pricing.not_found", "定价对象不存在。"))
-            : Result.Success(new PriceQuoteView(quote.Id.Value, quote.Version, quote.Cost, quote.FeeRate,
-                quote.InputRevision, quote.CalculatedRevision, quote.BreakEvenPrice)
-            { CostingRevision = quote.CostingRevision });
-    }
 }

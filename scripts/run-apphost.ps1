@@ -88,10 +88,13 @@ if ([string]::IsNullOrWhiteSpace($env:NEXUSSTACK_DB) -and
     [Environment]::SetEnvironmentVariable('NEXUSSTACK_DB', $env:ConnectionStrings__Identity, 'Process')
 }
 
-# Redis / RabbitMQ / Seq 的地址同样从已注入的配置里推导。
+# Pricing Redis / RabbitMQ / Seq 的地址同样从已注入的配置里推导。
 # **推导不出来就留空** —— AppHost 会点名说缺哪个，而不是拿着空串往下走。
-if ($env:Redis__Configuration) {
-    [Environment]::SetEnvironmentVariable('NEXUSSTACK_REDIS', $env:Redis__Configuration, 'Process')
+if ($env:Pricing__Cache__ConnectionString -and [string]::IsNullOrWhiteSpace($env:NEXUSSTACK_PRICING_REDIS)) {
+    [Environment]::SetEnvironmentVariable('NEXUSSTACK_PRICING_REDIS', $env:Pricing__Cache__ConnectionString, 'Process')
+}
+if ($env:Pricing__Cache__Namespace -and [string]::IsNullOrWhiteSpace($env:NEXUSSTACK_PRICING_CACHE_NAMESPACE)) {
+    [Environment]::SetEnvironmentVariable('NEXUSSTACK_PRICING_CACHE_NAMESPACE', $env:Pricing__Cache__Namespace, 'Process')
 }
 
 if ($env:RabbitMQ__HostName) {

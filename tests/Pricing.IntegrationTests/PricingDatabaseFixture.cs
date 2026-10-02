@@ -32,7 +32,7 @@ public sealed class PricingDatabaseFixture : IAsyncLifetime
         if (!_created) { return; }
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("TRUNCATE pricing.tasks, pricing.quotes, pricing.inbox, pricing.outbox CASCADE", connection);
+        await using var command = new NpgsqlCommand("TRUNCATE pricing.tasks, pricing.quotes, pricing.inbox, pricing.outbox, pricing.cache_invalidations CASCADE", connection);
         await command.ExecuteNonQueryAsync();
     }
 
