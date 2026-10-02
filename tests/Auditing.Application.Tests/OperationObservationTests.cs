@@ -174,7 +174,7 @@ public sealed class OperationObservationTests
     [InlineData("completed", 202)]
     [InlineData("accepted", 204)]
     [InlineData("rejected", 500)]
-    [InlineData("failed", 403)]
+    [InlineData("failed", 600)]
     [InlineData("unconfirmed", null)]
     [InlineData("completed", null)]
     public async Task InconsistentOutcomeAndStatus_IsRejectedWithoutConsumingTheMessage(string outcome, int? statusCode)
@@ -188,6 +188,21 @@ public sealed class OperationObservationTests
 
         Assert.True(await DeliverAsync(scope.ServiceProvider, valid));
         Assert.Equal("completed", Assert.Single((await operations.QueryAsync(new OperationQuery(1, 100))).Operations).Outcome);
+    }
+
+    [Theory]
+    [InlineData(200)]
+    [InlineData(403)]
+    public async Task FailureAfterHeadersWereSent_RetainsBothStatusAndFailure(int statusCode)
+    {
+        await using var application = CreateApplication();
+        await using var scope = application.CreateAsyncScope();
+        var failed = Finished(Started()) with { Outcome = "failed", StatusCode = statusCode };
+        Assert.True(await DeliverAsync(scope.ServiceProvider, failed));
+        var page = await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(new OperationQuery(1, 100));
+        var observed = Assert.Single(page.Operations);
+        Assert.Equal("failed", observed.Outcome);
+        Assert.Equal(statusCode, observed.StatusCode);
     }
 
     [Fact]

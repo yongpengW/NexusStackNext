@@ -64,6 +64,14 @@ public static class OperationJournalModule
         return app.UseMiddleware<OperationLoggingMiddleware>();
     }
 
+    /// <summary>向当前观察提供已确认的执行故障；不修改响应，不传递异常原文。</summary>
+    /// <param name="context">由宿主适配器处理的请求。</param>
+    public static void MarkOperationFailed(this HttpContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        context.Features.Set(new OperationFailureEvidence());
+    }
+
     /// <summary>独立 CLI 入口；不启动 Web、broker 或业务模块。</summary>
     /// <returns>进程退出码。</returns>
     public static async Task<int> MigrateOperationJournalAsync()
@@ -86,6 +94,7 @@ public static class OperationJournalModule
 }
 
 internal sealed record OperationCaptureOptions(string Source, TimeSpan WriteTimeout);
+internal sealed class OperationFailureEvidence;
 
 internal sealed partial class OperationLoggingMiddleware(IOperationJournal journal, OperationJournalStatus status,
     OperationCaptureOptions options, IClock clock, ILogger<OperationLoggingMiddleware> logger) : IMiddleware
@@ -149,7 +158,7 @@ internal sealed partial class OperationLoggingMiddleware(IOperationJournal journ
                 ActorId = actor,
                 StatusCode = httpStatus,
                 DurationMs = timer.ElapsedMilliseconds,
-                Outcome = interrupted ?? httpStatus switch
+                Outcome = context.Features.Get<OperationFailureEvidence>() is not null ? "failed" : interrupted ?? httpStatus switch
                 {
                     StatusCodes.Status202Accepted => "accepted",
                     >= 500 => "failed",

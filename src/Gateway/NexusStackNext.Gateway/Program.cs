@@ -217,7 +217,7 @@ app.UseApiResponseContract();
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseRequestTimeouts();
-app.UseProxyTimeoutResponse();
+app.UseProxyFailureHandling();
 app.UseAuthorization();
 
 // 网关自己的文档。**放在一个内部路径上**：对外提供的是聚合文档，见下。

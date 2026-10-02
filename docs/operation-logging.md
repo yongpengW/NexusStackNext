@@ -44,13 +44,15 @@ HTTP 结果按观察定义：
 | `completed` | HTTP 管线结束，未落入受理、拒绝或异常分类；不表示数据库提交 |
 | `accepted` | HTTP 202，后续工作已受理，未证明完成 |
 | `rejected` | HTTP 4xx，当前请求被拒绝；仍可能有刻意提交的业务状态，例如密码错误计数 |
-| `failed` | HTTP 5xx 或未被下游处理的异常；不披露异常原文 |
+| `failed` | HTTP 5xx、未处理异常或明确的代理传输故障；已发送的 200 等状态仍保留，不披露异常原文 |
 | `canceled` | 观察到与客户端取消相关的执行取消；不据此断言业务一定回滚 |
 | `unconfirmed` | 中央没有 Finished 证据，是查询结论，不是来源补发的虚构结果 |
 
 来源宿主显式采用 `UseRouting → UseCorrelationId → UseOperationJournal → UseExceptionHandler → UseApiResponseContract → UseAuthentication → UseAuthorization`。网关在认证后另显式接入限流和超时处理，均位于观察适配器内部。路由之后可取模板，返回时可读异常处理转换后的实际状态；不能依赖框架自动插入中间件后恰好得到所需顺序。ASP.NET Core 的排序依据见 [Microsoft 官方文档](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/middleware/?view=aspnetcore-10.0#middleware-added-automatically-by-webapplication)。
 
 YARP 2.3 的路由超时会被转换成 400，见[上游问题 #2662](https://github.com/dotnet/yarp/issues/2662)。网关只在框架超时 token 确实已取消、YARP 报告取消且响应尚未开始时，将取消交回框架超时处理器生成 504。普通下游 400、客户端主动断开均不按此改写。真实 HTTP 验证分别得到 504 / `failed` 与客户端断开 / `canceled`；已开始的流式响应不能改写已发送的状态码。
+
+已发送响应头后，[YARP 会通过 Abort / Reset 结束传输错误](https://github.com/dotnet/yarp/blob/v2.3.0/src/ReverseProxy/Forwarder/HttpForwarder.cs#L824-L886)，这也可能取消 RequestAborted。网关适配器保留明确的目的地错误、路由超时，以及代理主动终止前连接是否已取消的证据，再通过 `MarkOperationFailed` 交给采集器；不把这种内部终止反推为客户端主动取消。真实部分响应测试覆盖后端断流、路由超时、代理 activity timeout 和客户端主动取消：都保留已经发送的 200，前三者为 `failed`，客户端先取消为 `canceled`。接收方不再要求 `failed` 必须搭配 5xx，因为响应头发出后不能据此推断传输已完成。
 
 本票 Started 位于认证前，Actor 为空；Finished 仅使用已认证声明中的用户身份，认证失败或没有用户时为空。后台执行的 Actor 与原 Initiator 必须独立表达；后台任务采集与关联是后续票据，当前 HTTP 样板不承诺已经覆盖它们。
 

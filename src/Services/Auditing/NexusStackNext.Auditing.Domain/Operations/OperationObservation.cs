@@ -61,7 +61,8 @@ public sealed class OperationObservation : Entity<OperationObservationId>
             "accepted" => data.StatusCode == 202,
             "completed" => data.StatusCode is >= 200 and < 400 and not 202,
             "rejected" => data.StatusCode is >= 400 and < 500,
-            "failed" => data.StatusCode is null or >= 500 and <= 599,
+            // 响应头已发送后仍可能断流或超时；保留已发状态，不能把 200 当作传输成功证明。
+            "failed" => data.StatusCode is null or >= 100 and <= 599,
             "canceled" => data.StatusCode is null or >= 100 and <= 599,
             _ => false,
         }),
