@@ -20,7 +20,7 @@ internal sealed class SchedulingDatabaseStartupCheck(IServiceScopeFactory scopes
             {
                 throw new InvalidOperationException("Scheduling 数据库需要迁移；先执行 migrate-scheduling 命令。");
             }
-            _ = await context.Plans.AnyAsync(timeout.Token).ConfigureAwait(false);
+            await context.VerifyStorageAsync(timeout.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is DbException or OperationCanceledException or ArgumentException)
         {

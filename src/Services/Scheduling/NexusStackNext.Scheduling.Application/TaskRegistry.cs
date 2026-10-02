@@ -7,7 +7,7 @@ using NexusStackNext.Scheduling.Domain.Tasks;
 namespace NexusStackNext.Scheduling.Application;
 
 /// <summary>
-/// 计划任务的注册表：定义、列出、停用、启用。
+/// 计划任务的注册表：定义、查询、启停与规则更新。
 ///
 /// <para>校验业务目标、生成标识并选择首次时刻；编码唯一性与版本竞争由存储原子裁决。</para>
 ///
@@ -16,12 +16,13 @@ namespace NexusStackNext.Scheduling.Application;
 /// 任务在 <c>ReadDueAsync</c> 眼里仍然是"到期"的——于是它每轮都被读出来、每轮都被跳过，
 /// 日志上看起来一切正常，实际上调度器在空转。</para>
 ///
-/// <para>接口四个方法，后面是：唯一性、默认时刻、两个状态转换、以及一条"任务不存在"的错误路径。</para>
+/// <para>调用方通过预期版本管理计划；时刻计算、唯一性和持久化由本模块完成。</para>
 /// </summary>
 /// <param name="store">任务存储。</param>
 /// <param name="ids">标识生成器。</param>
 /// <param name="clock">时钟。</param>
-public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IClock clock)
+/// <param name="calendar">日历计算。</param>
+public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IClock clock, IScheduleCalendar calendar)
 {
     /// <summary>管理查询的最大页码。</summary>
     public const int MaximumPage = 1000;
@@ -31,6 +32,28 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     public static readonly Error Conflict = new("scheduling.version_conflict", "计划已被修改，请读取最新版本。");
     /// <summary>任务编码已有定义。</summary>
     public static readonly Error CodeTaken = new("scheduling.task_code.taken", "任务编码已存在。");
+
+    /// <summary>定义显式规则计划；日历首次时刻与预览相同，Interval 立即到期。</summary>
+    /// <param name="code">唯一编码。</param>
+    /// <param name="rule">调用方规则。</param>
+    /// <param name="target">创建后固定的目标。</param>
+    /// <param name="createdBy">已验证的委托人。</param>
+    /// <param name="cancellationToken">取消。</param>
+    /// <returns>计划或验证错误。</returns>
+    public async Task<Result<ScheduledTask>> DefineAsync(TaskCode code, ScheduleRuleInput rule, ScheduleTarget target,
+        string createdBy, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (target.Kind != CostingScheduleTarget.Recalculate) { return Result.Failure<ScheduledTask>(ScheduleTarget.Invalid); }
+        var now = clock.UtcNow;
+        var preview = calendar.Preview(rule, now, 1);
+        if (preview.IsFailure) { return Result.Failure<ScheduledTask>(preview.Error); }
+        var created = ScheduledTask.Create(new ScheduledTaskId(ids.NextId()), code, preview.Value.Rule,
+            preview.Value.Rule.Kind == "Interval" ? now : preview.Value.Times[0].Utc, target, createdBy);
+        if (created.IsFailure) { return created; }
+        var saved = await store.AddAsync(created.Value, cancellationToken).ConfigureAwait(false);
+        return saved.IsSuccess ? created : Result.Failure<ScheduledTask>(saved.Error);
+    }
 
     /// <summary>定义一个计划任务。</summary>
     /// <param name="code">任务编码，必须唯一。</param>
@@ -103,6 +126,32 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     public Task<Result> ResumeAsync(ScheduledTaskId id, long expectedVersion, CancellationToken cancellationToken = default) =>
         ChangeEnabledAsync(id, expectedVersion, enable: true, cancellationToken);
 
+    /// <summary>按已观察版本更新规则，不修改已经提交的发生或调度决定。</summary>
+    /// <param name="id">计划。</param>
+    /// <param name="expectedVersion">调用方观察到的版本。</param>
+    /// <param name="rule">新规则。</param>
+    /// <param name="cancellationToken">取消。</param>
+    /// <returns>更新或条件冲突。</returns>
+    public async Task<Result> UpdateRuleAsync(ScheduledTaskId id, long expectedVersion, ScheduleRuleInput rule, CancellationToken cancellationToken = default)
+    {
+        var task = await FindAsync(id, cancellationToken).ConfigureAwait(false);
+        if (task is null) { return Result.Failure(new Error("scheduling.task.not_found", "计划不存在。")); }
+        if (task.Version != expectedVersion) { return Result.Failure(Conflict); }
+        var normalized = calendar.Normalize(rule);
+        if (normalized.IsFailure) { return Result.Failure(normalized.Error); }
+        if (normalized.Value == task.Rule)
+        {
+            // 已接受的稀疏规则不因当前预览窗口为空而失去空操作语义；存储仍须裁决并发版本。
+            return await store.SaveAsync(task, expectedVersion, cancellationToken).ConfigureAwait(false);
+        }
+        var now = clock.UtcNow;
+        var preview = calendar.Preview(rule, now, 1);
+        if (preview.IsFailure) { return Result.Failure(preview.Error); }
+        var changed = task.ChangeRule(preview.Value.Rule, now, preview.Value.Times[0].Utc);
+        if (changed.IsFailure) { return changed; }
+        return await store.SaveAsync(task, expectedVersion, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<Result> ChangeEnabledAsync(
         ScheduledTaskId id,
         long expectedVersion,
@@ -119,7 +168,13 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
         if (enable)
         {
             // 从"现在"起算，而不是补跑停用期间欠下的那些次。
-            task.Enable(clock.UtcNow);
+            if (task.Interval is not null) { task.Enable(clock.UtcNow); }
+            else
+            {
+                var next = calendar.NextOccurrence(task.Rule, clock.UtcNow);
+                if (next.IsFailure) { return Result.Failure(next.Error); }
+                task.EnableAt(next.Value);
+            }
         }
         else
         {

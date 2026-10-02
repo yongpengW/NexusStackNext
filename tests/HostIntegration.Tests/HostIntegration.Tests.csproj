@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\IntegrationSupport\IntegrationSupport.csproj" />
+    <ProjectReference Include="..\TestSupport\TestSupport.csproj" />
     <ProjectReference Include="../../src/Hosts/NexusStackNext.CostingHost/NexusStackNext.CostingHost.csproj" />
     <ProjectReference Include="../../src/Hosts/NexusStackNext.PricingHost/NexusStackNext.PricingHost.csproj" />
     <ProjectReference Include="..\..\src\Gateway\NexusStackNext.Gateway\NexusStackNext.Gateway.csproj" />

@@ -16,13 +16,42 @@ namespace NexusStackNext.Scheduling.Application.Tests;
 /// </summary>
 public sealed class TaskRegistryTests
 {
+    [Fact]
+    public async Task PausedRuleChange_PreservesPause_AndResumeUsesTheNewCalendar()
+    {
+        var (registry, store, clock) = NewRegistry();
+        var created = await registry.DefineAsync(Code("paused-calendar"), TimeSpan.FromSeconds(5), Target, "42");
+        Assert.True(created.IsSuccess);
+        var id = created.Value.Id;
+        Assert.True((await registry.PauseAsync(id, 1)).IsSuccess);
+        var monthly = new ScheduleRuleInput("MonthlyDay", TimeZoneId: "Asia/Shanghai", Day: 31, Hour: 9, Minute: 0);
+        Assert.True((await registry.UpdateRuleAsync(id, 2, monthly)).IsSuccess);
+        var changed = Assert.IsType<ScheduledTask>(await registry.FindAsync(id));
+        Assert.False(changed.IsEnabled);
+        Assert.Null(changed.NextRunAt);
+        Assert.Equal(3, changed.Version);
+        Assert.Equal(2, changed.ScheduleRevision);
+        Assert.Empty(await store.ReadDueAsync(Now.AddYears(1), 50));
+        Assert.True((await registry.UpdateRuleAsync(id, 3, monthly)).IsSuccess);
+        Assert.Equal(3, (await registry.FindAsync(id))!.Version);
+        Assert.Equal(TaskRegistry.Conflict, (await registry.UpdateRuleAsync(id, 2, monthly)).Error);
+        clock.UtcNow = new DateTimeOffset(2027, 2, 1, 0, 0, 0, TimeSpan.Zero);
+        Assert.True((await registry.ResumeAsync(id, 3)).IsSuccess);
+        var resumed = Assert.IsType<ScheduledTask>(await registry.FindAsync(id));
+        Assert.True(resumed.IsEnabled);
+        Assert.Equal(new DateTimeOffset(2027, 2, 28, 1, 0, 0, TimeSpan.Zero), resumed.NextRunAt);
+        Assert.Equal(4, resumed.Version);
+        Assert.Equal(2, resumed.ScheduleRevision);
+        Assert.Empty((await store.ReadOccurrencesAsync(id.Value, 0, 100)).Items);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
     private static (TaskRegistry Registry, InMemoryScheduledTaskStore Store, MutableClock Clock) NewRegistry()
     {
         var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
-        return (new TaskRegistry(store, new SequentialIdGenerator(9000), clock), store, clock);
+        return (new TaskRegistry(store, new SequentialIdGenerator(9000), clock, new CronScheduleCalendar()), store, clock);
     }
 
     private static ScheduleTarget Target => ScheduleTarget.Create("costing.recalculate", Guid.Parse("44444444-4444-4444-4444-444444444444")).Value;

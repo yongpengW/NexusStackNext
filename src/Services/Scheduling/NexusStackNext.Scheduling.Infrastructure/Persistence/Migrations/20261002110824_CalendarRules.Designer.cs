@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Scheduling.Infrastructure.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(SchedulingDbContext))]
-    partial class SchedulingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002110824_CalendarRules")]
+    partial class CalendarRules
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -85,50 +88,6 @@ namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
                     b.ToTable("inbox", "scheduling");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Scheduling.Application.ScheduleDecision", b =>
-                {
-                    b.Property<Guid>("DecisionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Kind")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<DateTimeOffset>("NextRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset>("ObservedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid?>("OccurrenceId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("PlanId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("PlanVersion")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("Rule")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<long>("ScheduleRevision")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTimeOffset>("ScheduledAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("DecisionId");
-
-                    b.HasIndex("PlanId", "PlanVersion")
-                        .IsUnique()
-                        .HasDatabaseName("ux_decisions_plan_version");
-
-                    b.ToTable("decisions", "scheduling");
-                });
-
             modelBuilder.Entity("NexusStackNext.Scheduling.Application.ScheduleOccurrence", b =>
                 {
                     b.Property<Guid>("OccurrenceId")
@@ -189,21 +148,11 @@ namespace NexusStackNext.Scheduling.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("LastRunAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("LastSchedulingErrorCode")
-                        .HasMaxLength(96)
-                        .HasColumnType("character varying(96)");
-
                     b.Property<DateTimeOffset?>("NextRunAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("RetryAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<long>("ScheduleRevision")
                         .HasColumnType("bigint");
-
-                    b.Property<int>("SchedulingFailureCount")
-                        .HasColumnType("integer");
 
                     b.Property<long>("TriggerSequence")
                         .HasColumnType("bigint");

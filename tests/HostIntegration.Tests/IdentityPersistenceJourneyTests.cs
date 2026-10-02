@@ -5,10 +5,16 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.PlatformHost;
+using NexusStackNext.Scheduling.Application;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -275,10 +281,11 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
     private readonly string _schedulingConnectionString;
     private readonly string? _rootPassword;
     private readonly bool _schedulingWorkerEnabled;
+    private readonly IClock? _schedulingClock;
 
     public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null,
         string? filesConnectionString = null, string? auditingConnectionString = null, bool schedulingWorkerEnabled = true,
-        string? schedulingConnectionString = null)
+        string? schedulingConnectionString = null, IClock? schedulingClock = null)
     {
         _connectionString = connectionString;
         _platformConnectionString = platformConnectionString ?? connectionString;
@@ -287,6 +294,7 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
         _schedulingConnectionString = schedulingConnectionString ?? connectionString;
         _rootPassword = rootPassword;
         _schedulingWorkerEnabled = schedulingWorkerEnabled;
+        _schedulingClock = schedulingClock;
         UseKestrel(0);
     }
 
@@ -313,6 +321,18 @@ internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHost
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment(Environments.Production);
+        if (_schedulingClock is { } clock)
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<TaskRegistry>();
+                services.RemoveAll<ScheduleRunner>();
+                services.AddScoped(provider => new TaskRegistry(provider.GetRequiredService<IScheduledTaskStore>(),
+                    provider.GetRequiredService<IIdGenerator>(), clock, provider.GetRequiredService<IScheduleCalendar>()));
+                services.AddScoped(provider => new ScheduleRunner(provider.GetRequiredService<IScheduledTaskStore>(),
+                    clock, provider.GetRequiredService<IScheduleCalendar>()));
+            });
+        }
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
             new Dictionary<string, string?>(StringComparer.Ordinal)
             {

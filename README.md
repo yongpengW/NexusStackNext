@@ -29,13 +29,13 @@ tests/
   Architecture.Tests/            八条不变量变成断言
 ```
 
-五个平台上下文各有一条验证链路；Identity / Platform 默认 PostgreSQL，其余平台模块仍有内存适配器：
+五个平台上下文各有一条验证链路，全部默认 PostgreSQL；开发和测试可显式选择内存适配器：
 
 | 上下文 | 链路 |
 |---|---|
 | Identity | 用户 → 角色 → 菜单 → 端点 → 权限键 → 授权判定 |
 | Platform | 写入配置 → 存储 → 经边缘读出 |
-| Auditing | 事件进入 → 幂等去重 → 落库（**只写，没有查询端点**） |
+| Auditing | 已提交的业务事实 → 幂等落库 → 按权限调查查询 |
 | Files | 上传 → 字节真的落盘 → 下载 → 删除 |
 | Scheduling | 持久计划 → 原子登记发生与 Outbox → Costing 接受重算 → 可查询交付与恢复 |
 
@@ -229,9 +229,8 @@ pwsh ./scripts/assert-no-credentials.ps1   # 模板生成物不含凭据
 > 守这件事的有两条防线：静态读 `routes.json` 的 `AnonymousEndpointsAreReachableTests`，
 > 与手动跑的 `scripts/verify-user-journey.ps1`（两个真进程 + curl）。
 
-**Auditing 没有路由，这是刻意的**：它是只写上下文，事件从消息总线进入。
-给它开一条边缘路由等于让任何人都能注入审计记录——而审计的全部价值就在于它不可伪造。
-**"是一个服务"与"在边缘上可达"是两件事。**
+Auditing 的调查查询经网关和模块权限检查后访问 `/api/auditing/entries`。
+审计写入只接受上下文提交后的可信事件，HTTP 不提供创建或修改审计记录的端点。
 
 > 认证形态已由 **ADR-0014** 定下：令牌由 Identity 签发、网关验签、各上下文授权。\n> 要求认证的路由现在真的会验签（HS256）；**没配签名密钥时**一律返回 401 并在 stderr 说明缺什么。
 > 定下形态后替换宿主的默认认证方案即可，路由表与策略名都不用改。

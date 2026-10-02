@@ -323,6 +323,9 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 /// </summary>
 public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
 {
+    /// <summary>是否启用真实后台扫描；手动调用扫描器的测试显式关闭。</summary>
+    public bool SchedulingWorkerEnabled { get; init; } = true;
+
     protected override IHost CreateHost(IHostBuilder builder)
     {
         builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(
@@ -333,6 +336,7 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
                 ["Files:Storage:Provider"] = "Memory",
                 ["Auditing:Storage:Provider"] = "Memory",
                 ["Scheduling:Storage:Provider"] = "Memory",
+                ["Scheduling:Worker:Enabled"] = SchedulingWorkerEnabled.ToString(),
             }));
         return base.CreateHost(builder);
     }

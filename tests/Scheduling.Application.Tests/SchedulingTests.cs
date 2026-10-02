@@ -9,6 +9,167 @@ namespace NexusStackNext.Scheduling.Application.Tests;
 /// <summary>Scheduling：任务到期判定与"每次执行都推进下次时刻"。</summary>
 public sealed class SchedulingTests
 {
+    [Theory]
+    [InlineData("0 0 1 1 MON", "2029-01-01", "2035-01-01", "FireOnce")]
+    [InlineData("0 0 1 1 MON", "2029-01-01", "2035-01-01", "Skip")]
+    [InlineData("0 0 29 2 MON", "2044-02-29", "2072-02-29", "FireOnce")]
+    [InlineData("0 0 29 2 MON", "2044-02-29", "2072-02-29", "Skip")]
+    public async Task AcceptedSparseRule_TriggersOnTime_AndSameRuleRemainsANoOp(string expression, string dueDate, string nextDate, string policy)
+    {
+        var due = DateTimeOffset.Parse(dueDate + "T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var next = DateTimeOffset.Parse(nextDate + "T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(due.AddYears(-1));
+        var calendar = new CronScheduleCalendar();
+        var registry = new TaskRegistry(store, new SequentialIdGenerator(), clock, calendar);
+        var input = new ScheduleRuleInput("Cron", expression, "UTC", MisfirePolicy: policy);
+        var created = await registry.DefineAsync(Code("sparse"), input, Target, "42");
+        Assert.True(created.IsSuccess);
+        Assert.Equal(due, created.Value.NextRunAt);
+        clock.UtcNow = due;
+        // 公共预览仍限五年；这个窗口不能吞掉已经接受的当前发生。
+        Assert.Equal("scheduling.next_run.unavailable", calendar.Preview(input, due, 1).Error.Code);
+        var runner = new ScheduleRunner(store, clock, calendar);
+        var result = await runner.RunOnceAsync();
+        Assert.Equal(1, result.Triggered);
+        Assert.Empty(result.FailedPlanIds);
+        Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+        var decision = Assert.Single((await store.ReadDecisionsAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.Equal("Triggered", decision.Kind);
+        Assert.Equal(due, decision.ScheduledAt);
+        Assert.Equal(next, decision.NextRunAt);
+        Assert.Single((await store.ReadOccurrencesAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.True((await registry.UpdateRuleAsync(created.Value.Id, 2, input with { Expression = "  " + expression + "  " })).IsSuccess);
+        var saved = Assert.IsType<ScheduledTask>(await store.FindAsync(created.Value.Id));
+        Assert.Equal(2, saved.Version);
+        Assert.Equal(1, saved.ScheduleRevision);
+        Assert.Equal(next, saved.NextRunAt);
+        Assert.Equal(TaskRegistry.Conflict, (await registry.UpdateRuleAsync(saved.Id, 1, input)).Error);
+    }
+
+    [Theory]
+    [InlineData("FireOnce", 29999999, "Triggered", 1, 31)]
+    [InlineData("Skip", 29999999, "Triggered", 1, 31)]
+    [InlineData("FireOnce", 30000000, "Triggered", 1, 32)]
+    [InlineData("Skip", 30000000, "Triggered", 1, 32)]
+    [InlineData("FireOnce", 30000001, "Coalesced", 1, 32)]
+    [InlineData("Skip", 30000001, "Skipped", 0, 32)]
+    public async Task CalendarGrace_IncludesItsBoundary_AndDecidesTheWindowOnce(string policy, long lateMicroseconds,
+        string expectedKind, int expectedTriggers, int nextSecond)
+    {
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(Now);
+        var calendar = new CronScheduleCalendar();
+        var registry = new TaskRegistry(store, new SequentialIdGenerator(), clock, calendar);
+        var created = await registry.DefineAsync(Code("grace"), new ScheduleRuleInput("Cron", "* * * * * *", "UTC", MisfirePolicy: policy), Target, "42");
+        Assert.True(created.IsSuccess);
+        clock.UtcNow = Now.AddSeconds(1).AddTicks(lateMicroseconds * 10);
+        var runner = new ScheduleRunner(store, clock, calendar);
+        var result = await runner.RunOnceAsync();
+        Assert.Equal(expectedTriggers, result.Triggered);
+        Assert.Empty(result.FailedPlanIds);
+        Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+        var decision = Assert.Single((await store.ReadDecisionsAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.Equal(expectedKind, decision.Kind);
+        Assert.Equal(Now.AddSeconds(1), decision.ScheduledAt);
+        Assert.Equal(new DateTimeOffset(2026, 9, 29, 12, 0, nextSecond, TimeSpan.Zero), decision.NextRunAt);
+        Assert.Equal(expectedTriggers, (await store.ReadOccurrencesAsync(created.Value.Id.Value, 0, 100)).Items.Count);
+    }
+
+    [Theory]
+    [InlineData("FireOnce", 1, "Coalesced")]
+    [InlineData("Skip", 0, "Skipped")]
+    public async Task SecondRule_AfterTwoYearsOffline_ProducesOnlyOneDecision(string policy, int triggers, string kind)
+    {
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(Now);
+        var calendar = new CronScheduleCalendar();
+        var registry = new TaskRegistry(store, new SequentialIdGenerator(), clock, calendar);
+        var created = await registry.DefineAsync(Code("long-outage"), new ScheduleRuleInput("Cron", "* * * * * *", "UTC", MisfirePolicy: policy), Target, "42");
+        Assert.True(created.IsSuccess);
+        clock.UtcNow = new DateTimeOffset(2028, 9, 29, 12, 0, 0, TimeSpan.Zero);
+        var result = await new ScheduleRunner(store, clock, calendar).RunOnceAsync();
+        Assert.Equal(triggers, result.Triggered);
+        Assert.Empty(result.FailedPlanIds);
+        var decision = Assert.Single((await store.ReadDecisionsAsync(created.Value.Id.Value, 0, 100)).Items);
+        Assert.Equal(kind, decision.Kind);
+        Assert.Equal(new DateTimeOffset(2026, 9, 29, 12, 0, 1, TimeSpan.Zero), decision.ScheduledAt);
+        Assert.Equal(new DateTimeOffset(2028, 9, 29, 12, 0, 1, TimeSpan.Zero), decision.NextRunAt);
+        Assert.Equal(triggers, (await store.ReadOccurrencesAsync(created.Value.Id.Value, 0, 100)).Items.Count);
+    }
+
+    [Fact]
+    public async Task FailedCalendarBatch_IsDeferred_SoLaterHealthyPlansCanRun()
+    {
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(Now);
+        var calendar = new CronScheduleCalendar();
+        // 布置部署后时区数据不可用的已有规则；客户端创建仍由真实计算适配器验证。
+        for (var id = 1; id <= 50; id++)
+        {
+            var rule = new ScheduleRule("Cron", "* * * * *", "Unknown/RemovedZone", 5, MisfirePolicy: "FireOnce", GraceSeconds: 30);
+            var failed = ScheduledTask.Create(new ScheduledTaskId(id), Code($"failed-{id}"), rule, Now.AddMinutes(-1), Target, "42").Value;
+            Assert.True((await store.AddAsync(failed)).IsSuccess);
+        }
+        Assert.True((await store.AddAsync(ScheduledTask.Create(new ScheduledTaskId(51), Code("healthy"), TimeSpan.FromMinutes(1), Now, Target, "42").Value)).IsSuccess);
+        var runner = new ScheduleRunner(store, clock, calendar);
+        var first = await runner.RunOnceAsync();
+        Assert.Equal(50, first.Examined);
+        Assert.Equal(50, first.FailedPlanIds.Count);
+        var deferred = Assert.IsType<ScheduledTask>(await store.FindAsync(new ScheduledTaskId(1)));
+        Assert.Equal(Now.AddMinutes(-1), deferred.NextRunAt);
+        Assert.Equal(Now.AddMinutes(1), deferred.RetryAt);
+        Assert.Equal(1, deferred.SchedulingFailureCount);
+        Assert.Equal(2, deferred.Version);
+        Assert.Equal(1, deferred.ScheduleRevision);
+        Assert.Null(deferred.LastRunAt);
+        Assert.Equal(0, deferred.TriggerSequence);
+        Assert.Empty((await store.ReadDecisionsAsync(1, 0, 100)).Items);
+        var next = await runner.RunOnceAsync();
+        Assert.Equal(1, next.Examined);
+        Assert.Equal(1, next.Triggered);
+        Assert.Empty(next.FailedPlanIds);
+        Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+    }
+
+    [Fact]
+    public async Task RepeatedFailure_IsBounded_AndChangingRuleRecoversWithoutRewritingHistory()
+    {
+        var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
+        var clock = new MutableClock(Now);
+        var rule = new ScheduleRule("Cron", "* * * * *", "Unknown/RemovedZone", 5, MisfirePolicy: "FireOnce", GraceSeconds: 30);
+        var plan = ScheduledTask.Create(new ScheduledTaskId(1), Code(), rule, Now, Target, "42").Value;
+        Assert.True((await store.AddAsync(plan)).IsSuccess);
+        var runner = new ScheduleRunner(store, clock, new CronScheduleCalendar());
+        var delays = new[] { 1, 2, 4, 8, 16, 32, 60, 60 };
+        for (var index = 0; index < delays.Length; index++)
+        {
+            Assert.Equal(1, Assert.Single((await runner.RunOnceAsync()).FailedPlanIds));
+            plan = Assert.IsType<ScheduledTask>(await store.FindAsync(plan.Id));
+            Assert.Equal(clock.UtcNow.AddMinutes(delays[index]), plan.RetryAt);
+            Assert.Equal(index + 1, plan.SchedulingFailureCount);
+            Assert.Equal(Now, plan.NextRunAt);
+            Assert.Equal(1, plan.ScheduleRevision);
+            Assert.Empty((await store.ReadOccurrencesAsync(1, 0, 100)).Items);
+            Assert.Empty((await store.ReadDecisionsAsync(1, 0, 100)).Items);
+            clock.UtcNow = plan.RetryAt!.Value.AddTicks(-10);
+            Assert.Equal(0, (await runner.RunOnceAsync()).Examined);
+            clock.UtcNow = clock.UtcNow.AddTicks(10);
+        }
+        var registry = new TaskRegistry(store, new SequentialIdGenerator(), clock, new CronScheduleCalendar());
+        Assert.True((await registry.UpdateRuleAsync(plan.Id, plan.Version,
+            new ScheduleRuleInput("Cron", "* * * * *", "UTC"))).IsSuccess);
+        var repaired = Assert.IsType<ScheduledTask>(await store.FindAsync(plan.Id));
+        Assert.Null(repaired.RetryAt);
+        Assert.Null(repaired.LastSchedulingErrorCode);
+        Assert.Equal(0, repaired.SchedulingFailureCount);
+        Assert.Equal(2, repaired.ScheduleRevision);
+        clock.UtcNow = repaired.NextRunAt!.Value;
+        Assert.Equal(1, (await runner.RunOnceAsync()).Triggered);
+        Assert.Single((await store.ReadOccurrencesAsync(1, 0, 100)).Items);
+        Assert.Equal(2, Assert.Single((await store.ReadDecisionsAsync(1, 0, 100)).Items).ScheduleRevision);
+    }
+
     private static readonly DateTimeOffset Now = new(2026, 9, 29, 12, 0, 0, TimeSpan.Zero);
 
     private static TaskCode Code(string value = "scheduling.heartbeat") => TaskCode.Create(value).Value;
@@ -106,7 +267,7 @@ public sealed class SchedulingTests
         Assert.True((await store.AddAsync(due)).IsSuccess);
         Assert.True((await store.AddAsync(notYet)).IsSuccess);
 
-        var runner = new ScheduleRunner(store, clock);
+        var runner = new ScheduleRunner(store, clock, new CronScheduleCalendar());
         var result = await runner.RunOnceAsync();
 
         Assert.Equal(new ScheduleRunResult(1, 1, 0), result);
@@ -126,7 +287,7 @@ public sealed class SchedulingTests
         var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
         Assert.True((await store.AddAsync(NewTask(firstRun: Now))).IsSuccess);
-        var runner = new ScheduleRunner(store, clock);
+        var runner = new ScheduleRunner(store, clock, new CronScheduleCalendar());
 
         var first = await runner.RunOnceAsync();
         var second = await runner.RunOnceAsync();
@@ -141,7 +302,7 @@ public sealed class SchedulingTests
         var store = new InMemoryScheduledTaskStore(new SystemTextJsonIntegrationEventSerializer());
         var clock = new MutableClock(Now);
         Assert.True((await store.AddAsync(NewTask(interval: TimeSpan.FromMinutes(1), firstRun: Now))).IsSuccess);
-        var runner = new ScheduleRunner(store, clock);
+        var runner = new ScheduleRunner(store, clock, new CronScheduleCalendar());
 
         await runner.RunOnceAsync();
         clock.UtcNow = Now + TimeSpan.FromMinutes(1);

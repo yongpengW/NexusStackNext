@@ -29,6 +29,9 @@ public static class SchedulingModule
 
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
+        services.AddSingleton<IScheduleCalendar, CronScheduleCalendar>();
+        services.AddHostedService<SchedulingCalendarRuntimeCheck>();
+        services.AddHealthChecks().AddCheck<SchedulingCalendarRuntimeCheck>("scheduling-calendar");
         var provider = configuration["Scheduling:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
@@ -77,6 +80,15 @@ public static class SchedulingModule
         var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
         tasks.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
+        tasks.MapPost("/preview", (PreviewScheduleRequest request, IScheduleCalendar calendar, ApiResponses responses) =>
+        {
+            if (request.Rule is null) { return Failure(new Error("scheduling.rule.invalid", "必须指定计划规则。")); }
+            if (!request.TryGetAfter(out var after)) { return Failure(new Error("scheduling.preview.invalid", "必须指定包含 Z 或显式偏移的 ISO 日期时间起点。")); }
+            var preview = calendar.Preview(request.Rule, after, request.Count);
+            return preview.IsSuccess ? (IResult)responses.Ok(preview.Value) : Failure(preview.Error);
+        }).Produces<ApiResponse<SchedulePreview>>().ProducesApiErrors(415)
+            .RequirePermission("/api/scheduling/tasks/preview", "POST");
+
         var occurrences = endpoints.MapGroup("/api/scheduling/occurrences").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
         occurrences.AddEndpointFilter<NexusStackAuthorizationFilter>();
         occurrences.MapPost("/{id:guid}/retry", async (Guid id, RetryOccurrenceRequest request, IScheduledTaskStore store,
@@ -95,6 +107,14 @@ public static class SchedulingModule
             return responses.Page(page.Items, page.Total, paging);
         }).Produces<ApiPage<ScheduleOccurrenceDelivery>>().RequirePermission("/api/scheduling/tasks/{id}/occurrences", "GET");
 
+        tasks.MapGet("/{id:long}/decisions", async (long id, IScheduledTaskStore store, ApiResponses responses,
+            [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
+        {
+            if (!paging.IsValid || paging.Page > TaskRegistry.MaximumPage || paging.Limit > 100) { return Failure(new Error(ApiPageRequest.InvalidErrorCode, "page 必须在 1 到 1000，调度决定 limit 必须在 1 到 100 之间。")); }
+            var page = await store.ReadDecisionsAsync(id, paging.Offset, paging.Limit, cancellationToken);
+            return responses.Page(page.Items, page.Total, paging);
+        }).Produces<ApiPage<ScheduleDecision>>().RequirePermission("/api/scheduling/tasks/{id}/decisions", "GET");
+
         // 按稳定 ID 分页列出任务。**这是"调度器真的在跑"的可观察证据**：
         // 任务被执行过一次之后，lastRunAt 会被写上、nextRunAt 会向前推进。
         tasks.MapGet("/", async (ApiResponses responses, IScheduledTaskStore store, [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
@@ -106,13 +126,13 @@ public static class SchedulingModule
             var page = await store.ReadPageAsync(paging.Page, paging.Limit, cancellationToken);
 
             return responses.Page(page.Items
-                .Select(static task => new TaskItem(task.Id.Value, task.Code.Value, task.Interval.TotalSeconds,
+                .Select(static task => new TaskItem(task.Id.Value, task.Code.Value, task.Interval?.TotalSeconds,
                     task.IsEnabled, task.LastRunAt, task.NextRunAt, task.Target.Kind, task.Target.SubjectId,
-                    task.CreatedBy, task.Version)).ToArray(), page.Total, paging);
+                    task.CreatedBy, task.Version, task.Rule, task.ScheduleRevision, task.RetryAt,
+                    task.LastSchedulingErrorCode, task.SchedulingFailureCount)).ToArray(), page.Total, paging);
         }).Produces<ApiPage<TaskItem>>().RequirePermission("/api/scheduling/tasks", "GET");
 
-        // 定义一个任务。首次执行时刻不传就以"现在"起算——
-        // 于是定义完，下一个调度节拍就会触发它。
+        // 固定间隔未指定首次延迟时立即到期；日历计划使用明确规则的下一发生。
         tasks.MapPost("/", async (ApiResponses responses,
             DefineTaskRequest request,
             TaskRegistry registry,
@@ -126,8 +146,21 @@ public static class SchedulingModule
                 return Failure(code.Error);
             }
 
-            if (!double.IsFinite(request.IntervalSeconds) || request.IntervalSeconds < ScheduledTask.MinimumInterval.TotalSeconds
-                || request.IntervalSeconds > ScheduledTask.MaximumInterval.TotalSeconds)
+            var target = ScheduleTarget.Create(request.TargetKind, request.TargetId);
+            if (target.IsFailure) { return Failure(target.Error); }
+            if (request.Rule is not null)
+            {
+                if (request.IntervalSeconds is not null || request.FirstRunInSeconds is not null)
+                {
+                    return Failure(new Error("scheduling.rule.invalid", "rule 不能与旧固定间隔或首次延迟字段混用。"));
+                }
+                var rulePlan = await registry.DefineAsync(code.Value, request.Rule, target.Value,
+                    currentUser.UserId ?? string.Empty, cancellationToken);
+                return rulePlan.IsFailure ? Failure(rulePlan.Error)
+                    : responses.Created($"/api/scheduling/tasks/{rulePlan.Value.Id.Value}", new TaskCreatedResponse(rulePlan.Value.Id.Value, rulePlan.Value.Code.Value));
+            }
+            if (request.IntervalSeconds is not { } intervalSeconds || !double.IsFinite(intervalSeconds) || intervalSeconds < ScheduledTask.MinimumInterval.TotalSeconds
+                || intervalSeconds > ScheduledTask.MaximumInterval.TotalSeconds)
             {
                 return Failure(new Error("scheduling.interval.invalid", "执行间隔必须在 1 秒到 366 天之间。"));
             }
@@ -137,12 +170,9 @@ public static class SchedulingModule
                 return Failure(new Error("scheduling.first_run.invalid", "首次延迟必须在 0 秒到 366 天之间。"));
             }
 
-            var target = ScheduleTarget.Create(request.TargetKind, request.TargetId);
-            if (target.IsFailure) { return Failure(target.Error); }
-
             var defined = await registry.DefineAsync(
                 code.Value,
-                TimeSpan.FromSeconds(request.IntervalSeconds),
+                ScheduleRule.NormalizeInterval(intervalSeconds),
                 target.Value, currentUser.UserId ?? string.Empty,
                 request.FirstRunInSeconds is { } delay ? clock.UtcNow + TimeSpan.FromSeconds(delay) : null,
                 cancellationToken);
@@ -152,6 +182,13 @@ public static class SchedulingModule
                 : responses.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new TaskCreatedResponse(defined.Value.Id.Value, defined.Value.Code.Value));
         }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201)
             .RequirePermission("/api/scheduling/tasks", "POST");
+
+        tasks.MapPut("/{id:long}/rule", async (long id, UpdateScheduleRuleRequest request, TaskRegistry registry, CancellationToken cancellationToken) =>
+        {
+            if (request.Rule is null) { return Failure(ScheduleRule.Invalid); }
+            var result = await registry.UpdateRuleAsync(new ScheduledTaskId(id), request.ExpectedVersion, request.Rule, cancellationToken);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/rule", "PUT");
 
         tasks.MapPost("/{id:long}/pause", async (
             long id,
@@ -197,10 +234,26 @@ public static class SchedulingModule
 /// <param name="FirstRunInSeconds">首次执行距现在多少秒；不传则以"现在"起算。</param>
 /// <param name="TargetKind">受支持的目标操作。</param>
 /// <param name="TargetId">目标对象标识。</param>
-internal sealed record DefineTaskRequest(string Code, double IntervalSeconds, double? FirstRunInSeconds, string? TargetKind, Guid TargetId);
+/// <param name="Rule">显式计划规则；与旧间隔和首次延迟字段互斥。</param>
+internal sealed record DefineTaskRequest(string Code, double? IntervalSeconds, double? FirstRunInSeconds, string? TargetKind, Guid TargetId, ScheduleRuleInput? Rule);
 
 internal sealed record TaskCreatedResponse(long TaskId, string Code);
+internal sealed record PreviewScheduleRequest(ScheduleRuleInput? Rule,
+    [property: System.ComponentModel.Description("ISO 日期时间，必须包含 Z 或显式偏移；预览从此时刻之后开始。")]
+    string? After, int Count = 1)
+{
+    public bool TryGetAfter(out DateTimeOffset instant)
+    {
+        instant = default;
+        return After is { Length: >= 20 } value
+            && (value.EndsWith('Z') || value.Length >= 25 && value[^6] is '+' or '-' && value[^3] == ':')
+            && DateTimeOffset.TryParseExact(value, "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out instant);
+    }
+}
 internal sealed record ChangeEnabledRequest(long ExpectedVersion);
+internal sealed record UpdateScheduleRuleRequest(long ExpectedVersion, ScheduleRuleInput? Rule);
 internal sealed record RetryOccurrenceRequest(DateTimeOffset ExpectedDeadLetteredAt);
-internal sealed record TaskItem(long TaskId, string Code, double IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt,
-    DateTimeOffset? NextRunAt, string TargetKind, Guid TargetId, string CreatedBy, long Version);
+internal sealed record TaskItem(long TaskId, string Code, double? IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt,
+    DateTimeOffset? NextRunAt, string TargetKind, Guid TargetId, string CreatedBy, long Version, ScheduleRule Rule, long ScheduleRevision,
+    DateTimeOffset? RetryAt, string? LastSchedulingErrorCode, int SchedulingFailureCount);

@@ -25,7 +25,7 @@ namespace NexusStackNext.Scheduling.Endpoints;
 public sealed partial class SchedulingWorker(IServiceScopeFactory scopes, ILogger<SchedulingWorker> logger) : BackgroundService
 {
     /// <summary>扫描节拍。</summary>
-    public static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(1);
 
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -49,7 +49,7 @@ public sealed partial class SchedulingWorker(IServiceScopeFactory scopes, ILogge
                     LogTick(result.Examined, result.Triggered, result.Skipped);
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -69,6 +69,6 @@ public sealed partial class SchedulingWorker(IServiceScopeFactory scopes, ILogge
     [LoggerMessage(Level = LogLevel.Error, Message = "调度轮次失败，下一轮继续。")]
     private partial void LogTickFailed();
 
-    [LoggerMessage(Level = LogLevel.Error, Message = "计划 {PlanId} 登记触发失败，本次未推进；后续轮次重试。")]
+    [LoggerMessage(Level = LogLevel.Error, Message = "计划 {PlanId} 调度失败；尝试保存退避，后续轮次重试。")]
     private partial void LogPlanFailed(long planId);
 }

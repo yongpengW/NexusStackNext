@@ -33,6 +33,10 @@
 
 ### 已经成立的
 
+- **Scheduling → Costing**：通过 Scheduling.Contracts 的 `ScheduleTriggeredV1` 交付已登记的发生；
+  计划、发生和 Outbox 同事务。Costing 事务保存 Inbox、稳定接受/拒绝回执及自己的重算任务，
+  后续结果沿 Costing → Pricing 传播；调度交付不代表业务完成。
+
 - **Platform → Auditing**：`Platform.Contracts` 的 `SettingCommittedV1` 只传设置标识、提交版本、
   认证 Actor 与关联信息；状态和 Outbox 同事务，Auditing 的 Inbox 与不可变记录同事务。
   不传设置值或说明，调查查询要求显式权限，HTTP 不接受审计写入。
@@ -60,8 +64,7 @@ Platform → Auditing 与业务样板 Costing → Pricing 已使用真实消息�
   `RefreshTokenIssued`、`RefreshTokenRevoked`（这些**领域事件已经存在**，在
   `IdentityDomainEvents.cs` 里），Auditing 消费后落审计。**消费端还没做。**
 - **其余上下文 → Auditing**：尚未接入；不以通用原始载荷替代上下文自己的最小事实契约。
-- **Scheduling → 其他上下文**：计划发出 `TaskDue` 一类的集成事件，由目标上下文自己决定要不要响应——
-  否则 Scheduling 会变成上帝服务。**不存在。**
+- **Scheduling → 其他业务目标**：除已接入的 Costing 重算外，按目标上下文自己的契约逐项扩展。
 
 **谁把这些做出来，请把对应的条目从这一节移到上面那一节。**
 
