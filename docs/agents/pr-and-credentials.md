@@ -27,6 +27,10 @@ gh run view --log-failed     # 红了先读原文，别猜
 真实 broker 与业务协作旅程一并执行；本机配置 `env/test.dev` 后可运行同一套测试。
 `HostIntegration.Tests` 同时禁止 xUnit 测试类之间并行；逐工程串行不能替代这一层。
 竞争测试仍在单个用例内部显式并发，建库/迁移/删库旅程之间则保持串行。
+
+2026-10-03 起，CI 在四台独立托管 runner 之间并行，每组独占依赖且组内串行；
+最后的 **构建与测试** 检查核对完整发现清单、四组结果与全部原有门禁。
+本机共享库仍走默认串行入口。具体边界和验证见 [CI 隔离并行](../ci-testing.md)。
 Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_REDIS` 仍只写入被忽略的测试配置。
 
 所以"本地全绿"是**必要条件**，不是替代品：平台差异（路径分隔符、大小写敏感、换行、区域设置、
@@ -97,7 +101,7 @@ Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_R
 （Linux / 干净检出）—— 这一轮它抓到过"路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文" ✓。
 所以 `dev` 上的直推**也过 CI**：坏提交**立刻**看到红 ✓，不会攒到 `dev → main` 的 PR ✗。
 
-仍然推荐：**推之前先本地跑三段**（`dotnet build` → `scripts/run-tests.ps1` → `scripts/check-format.ps1`，约 100 秒 ✓）
+仍然推荐：**推之前先本地跑三段**（`dotnet build` → `scripts/run-tests.ps1` → `scripts/check-format.ps1`；当前耗时以逐工程报告为准）
 —— 它比 CI 快，能在推送前拦下问题 ✓（这是习惯，不是闸）。
 
 另：`dev` 不要活太久 ✓ —— 每完成一个完整小块就 `dev → main` 一次，PR 才好看、才不容易冲突 ✓。

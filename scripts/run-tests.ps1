@@ -15,13 +15,21 @@
     pwsh -File scripts/run-tests.ps1          # 之后：跑全部测试
     pwsh -File scripts/run-tests.ps1 -Filter 'FullyQualifiedName~Integration'
 #>
+[CmdletBinding()]
 param(
     [switch] $Init,
 
     [string] $Filter,
 
     [ValidateSet('Debug', 'Release')]
-    [string] $Configuration = 'Debug'
+    [string] $Configuration = 'Debug',
+
+    [switch] $NoBuild,
+
+    [ValidateRange(-1, 3)]
+    [int] $CiShard = -1,
+
+    [string] $ReportDirectory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +37,13 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $envFile = Join-Path $repoRoot 'env\test.dev'
 $solution = Join-Path $repoRoot 'NexusStackNext.slnx'
+
+# Fail before reading env/test.dev, building, discovering, or starting any test process.
+if ($CiShard -ge 0) {
+    Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
+    Assert-CiIsolation $repoRoot
+    if ($Init -or $Filter -or -not $NoBuild -or [string]::IsNullOrWhiteSpace($ReportDirectory)) { throw 'CI shards require a preceding build and an unfiltered report directory.' }
+}
 
 # ---------- -Init：生成骨架 ----------
 if ($Init) {
@@ -140,11 +155,13 @@ $env:MSBUILDDISABLENODEREUSE = '1'
 
 # ---------- 先构建 ----------
 Write-Host ''
-Write-Host '构建…' -ForegroundColor Cyan
-& dotnet build $solution --configuration $Configuration --nologo -v q
-if ($LASTEXITCODE -ne 0) {
-    Write-Host '构建失败，测试不跑。' -ForegroundColor Red
-    exit $LASTEXITCODE
+if (-not $NoBuild) {
+    Write-Host '构建…' -ForegroundColor Cyan
+    & dotnet build $solution --configuration $Configuration --nologo -v q
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '构建失败，测试不跑。' -ForegroundColor Red
+        exit $LASTEXITCODE
+    }
 }
 
 # ---------- 逐个项目跑，**一次只跑一个** ----------
@@ -178,6 +195,15 @@ if ($testProjects.Count -eq 0) {
     exit 1
 }
 
+$ciResults = @()
+if ($CiShard -ge 0) {
+    $inventory = @($testProjects | ForEach-Object { Get-DiscoveredTests $_.FullName $Configuration })
+    $plan = @(New-CiTestPlan $inventory)
+    $selected = @($plan | Where-Object Shard -EQ $CiShard)
+    $testProjects = @($testProjects | Where-Object { $_.BaseName -in $selected.Project })
+    Write-Host "CI shard $CiShard/3: $($selected.Count) of $($inventory.Count) discovered tests. Dependencies are isolated to this runner."
+}
+
 $results = @()
 $testReportDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N'))
 foreach ($project in $testProjects) {
@@ -191,11 +217,17 @@ foreach ($project in $testProjects) {
     if ($Filter) {
         $dotnetArgs += @('--filter', $Filter)
     }
+    if ($CiShard -gt 0) {
+        # Exact method matching keeps theory cases together without substring overlaps.
+        $methods = @($selected | Where-Object Project -EQ $name | Select-Object -ExpandProperty Method -Unique)
+        $dotnetArgs += @('--filter', (($methods | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'))
+    }
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $output = & dotnet @dotnetArgs 2>&1
     $testExitCode = $LASTEXITCODE
     $watch.Stop()
+    if ($CiShard -ge 0) { $ciResults += @(Get-TestReportResults $reportPath $name) }
 
     $output | Where-Object { $_ -match '已通过!|失败!|通过!|Passed!|Failed!' } | ForEach-Object {
         Write-Host "  $_"
@@ -246,6 +278,15 @@ if ($failed.Count -gt 0) {
 }
 
 Write-Host ("全部 " + $results.Count + " 个工程通过，合计 " + [math]::Round(($results | Measure-Object -Property Seconds -Sum).Sum, 1) + " 秒。") -ForegroundColor Green
+if ($CiShard -ge 0) {
+    [void][IO.Directory]::CreateDirectory($ReportDirectory)
+    $report = [ordered]@{
+        Shard = $CiShard; Revision = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; Attempt = $env:GITHUB_RUN_ATTEMPT
+        Plan = $plan; Results = $ciResults
+    }
+    # Only identities, hashes, outcomes and timings leave the runner. Raw TRX may contain credentials.
+    [IO.File]::WriteAllText((Join-Path $ReportDirectory "shard-$CiShard.json"), (ConvertTo-Json -InputObject $report -Depth 12), [Text.UTF8Encoding]::new($false))
+}
 exit 0
 
 }

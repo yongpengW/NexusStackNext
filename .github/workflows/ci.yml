@@ -8,7 +8,7 @@ on:
     # 所以 dev 上的直推也过 CI：坏提交**立刻**看到红，而不是攒到 dev → main 的 PR。
     branches: [ main, dev ]
   pull_request:
-  # 手动触发：给"平时不跑的 dev"留一条随时能跑全套的路。
+  # 手动触发同一套完整检查。
   workflow_dispatch:
 
 # **并发取消**：连推几次时只跑最后一次 —— 不改变"每个 PR 都得到一次完整检查"这条保证，
@@ -21,9 +21,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    name: 构建与测试
+  test-shards:
+    name: 隔离测试 / ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [0, 1, 2, 3]
 
     # 每次运行专属的空库，端口仅绑定 runner 本机。trust 只用于这个临时测试容器。
     services:
@@ -49,12 +55,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    # 最小权限：默认令牌权限很宽，这里显式收窄到这条流水线真正需要的两项。
-    # `issues: read` 是给 GitHub 后端的票据检查用的（ADR-0016）——
-    # runner 上 gh 是预装的，但没有登录态，靠 GH_TOKEN 顶上。
+    # 测试分组只需读取代码；票据权限仅授予最后的汇总任务。
     permissions:
       contents: read
-      issues: read
 
     steps:
       # Node 24 的首个大版本（v4 系列跑在 Node 20 上，runner 已在强制升到 24 并给出弃用提示）。
@@ -78,8 +81,11 @@ jobs:
         run: dotnet build NexusStackNext.slnx --no-restore --configuration Release
 
       - name: 测试
-        # 与本机一样串行；真实数据库测试在临时库中执行，不再因缺配置跳过。
+        # 每台 runner 独占依赖，组内仍串行；本机共享数据库不启用此模式。
         shell: pwsh
+        env:
+          NSN_CI_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          NSN_CI_REDIS_CONTAINER: ${{ job.services.redis.id }}
         run: |
           $connection = [System.Data.Common.DbConnectionStringBuilder]::new()
           $connection['Host'] = '127.0.0.1'
@@ -92,7 +98,7 @@ jobs:
           $env:RABBITMQ_DEFAULT_USER = 'nsn-ci'
           $env:RABBITMQ_DEFAULT_PASS = [Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
           Write-Output "::add-mask::$env:RABBITMQ_DEFAULT_PASS"
-          docker run --detach --name nsn-ci-rabbit --env RABBITMQ_DEFAULT_USER --env RABBITMQ_DEFAULT_PASS --publish 127.0.0.1:5672:5672 --publish 127.0.0.1:15672:15672 --health-cmd 'rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity' --health-interval 5s --health-timeout 10s --health-retries 12 rabbitmq:4-management
+          $env:NSN_CI_RABBIT_CONTAINER = docker run --detach --name nsn-ci-rabbit --env RABBITMQ_DEFAULT_USER --env RABBITMQ_DEFAULT_PASS --publish 127.0.0.1:5672:5672 --publish 127.0.0.1:15672:15672 --health-cmd 'rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity' --health-interval 5s --health-timeout 10s --health-retries 12 rabbitmq:4-management
           if ($LASTEXITCODE -ne 0) { throw 'RabbitMQ container startup failed.' }
           $ready = $false
           for ($attempt = 0; $attempt -lt 60; $attempt++) {
@@ -102,9 +108,53 @@ jobs:
           }
           if (-not $ready) { throw 'RabbitMQ was not ready.' }
           $env:NEXUSSTACK_TEST_RABBITMQ = @{ HostName = '127.0.0.1'; Port = 5672; UserName = $env:RABBITMQ_DEFAULT_USER; Password = $env:RABBITMQ_DEFAULT_PASS; VirtualHost = '/' } | ConvertTo-Json -Compress
-          ./scripts/run-tests.ps1 -Configuration Release
+          ./scripts/run-tests.ps1 -Configuration Release -NoBuild -CiShard ${{ matrix.shard }} -ReportDirectory (Join-Path $env:RUNNER_TEMP 'nsn-ci-reports')
           exit $LASTEXITCODE
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-tests-${{ matrix.shard }}
+          path: ${{ runner.temp }}/nsn-ci-reports/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 7
+
+  build-and-test:
+    # Preserve the existing required check name. Missing/failed/cancelled shards fail this gate.
+    name: 构建与测试
+    needs: test-shards
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: 确认所有分组完成
+        shell: pwsh
+        env:
+          SHARD_RESULT: ${{ needs.test-shards.result }}
+        run: |
+          if ($env:SHARD_RESULT -ne 'success') { throw 'One or more test shards did not succeed.' }
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-tests-*
+          path: ${{ runner.temp }}/nsn-ci-reports
+
+      - name: 核对全部测试完整执行
+        shell: pwsh
+        run: ./scripts/ci-test-tools.ps1 -Action Verify -InputPath (Join-Path $env:RUNNER_TEMP 'nsn-ci-reports') -Revision $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -Attempt $env:GITHUB_RUN_ATTEMPT
+
+      - name: 验证分组与安全护栏
+        shell: pwsh
+        run: ./scripts/check-ci-tests.ps1
+
+      - name: 还原格式检查所需依赖
+        run: dotnet restore NexusStackNext.slnx
       - name: 断言格式符合 .editorconfig
         # typecheck（构建）→ tests → format：`resolving-merge-conflicts` 要求的三段自动化检查。
         # 第一次跑它的时候全仓有 448 处违规而构建全绿——"声明了风格"与"检查了风格"是两件事。
