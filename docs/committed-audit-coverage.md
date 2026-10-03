@@ -16,8 +16,8 @@
 | Identity / RefreshToken | 签发、消费、撤销；只记录令牌内部标识，禁止令牌及其哈希/自由文本原因 | PostgreSQL 三类变化与重复撤销经存储端口验证；签发/消费、所属 User 关联及重放造成的会话撤销经真实消息旅程验证 |
 | Files / StoredFile | 登记、存储完成、请求删除、实际字节移除、清理延期 | PostgreSQL / Memory 已接入；HTTP、延期/重复状态、并发拒绝与来源写失败原子性经 `FilesCommittedAuditTests` / `MemoryFilesCommittedAuditTests` 验证；生产存储重启及两种来源真实 RabbitMQ 交付通过；PostgreSQL 容量由 `FilesFactCapacityTests` 验证，Memory 容量与完整故障矩阵待补齐 |
 | Scheduling / ScheduledTask | 创建、规则/间隔变化、启禁用、触发推进、跳过/延期裁决 | Memory / PostgreSQL 已接入，管理变化、日历裁决、退避及故障清除由 `SchedulingCommittedAuditTests` 验证；来源事实失败原子回滚及同作用域重试由 `SchedulingFactAtomicityTests` 验证；真实重启 / RabbitMQ 中央交付通过，PostgreSQL 容量已通过 PR #77 合并，Memory 容量及恢复治理待完成 |
-| Costing / CostSheet | 成本输入创建/修改、计算结果实际应用 | PostgreSQL 来源已接入；实际变化、拒绝/空操作/过期结果、来源故障回滚、保存中取消与租约过期经 ISender 验证；真实生产者重启 / RabbitMQ 交付通过，PostgreSQL 容量由 `CostingFactCapacityTests` 验证，最终发布资格由 #76 的完整检查与独立评审裁决；完整恢复治理待完成 |
-| Pricing / PriceQuote | 手工输入创建/修改、成本消息实际应用、计算结果实际应用 | PostgreSQL 已接入；手工与消息写入的原子性、来源故障/取消/租约失权、同作用域重试经公共端口验证；真实重启与 RabbitMQ 中央交付通过，容量及恢复治理待完成 |
+| Costing / CostSheet | 成本输入创建/修改、计算结果实际应用 | PostgreSQL 来源已接入；实际变化、拒绝/空操作/过期结果、来源故障回滚、保存中取消与租约过期经 ISender 验证；真实生产者重启 / RabbitMQ 交付通过，PostgreSQL 容量已通过 PR #79 的完整检查与独立评审合并；完整恢复治理待完成 |
+| Pricing / PriceQuote | 手工输入创建/修改、成本消息实际应用、计算结果实际应用 | PostgreSQL 已接入；手工与消息写入的原子性、来源故障/取消/租约失权、同作用域重试经公共端口验证；真实重启与 RabbitMQ 中央交付通过；容量新增验收由 #78 的完整检查与独立评审裁决，完整恢复治理待完成 |
 
 菜单节点及授权关联归其聚合根，事实客体版本是根的已提交版本。Auditing 的不可变记录、
 Inbox/Outbox、任务租约/尝试和消息接收凭据使用各自的生命周期证据，不对审计写入再递归生成审计。
@@ -80,7 +80,8 @@ Platform / Identity 的容量模型和冻结的 PostgreSQL 触发器 V1 已提�
 Scheduling PostgreSQL 也接入同一冻结协议；`SchedulingFactCapacityTests` 验证 HTTP 503、空操作、退避拒绝、
 单条载荷上限、并发最后额度、恢复与决定整批回滚、幂等重放、清理释放及真实进程崩溃后重启。
 容量拒绝报告 failed，不伪装成合法 skipped；普通发生消息不占事实额度且不被事实清理删除。
-Costing / Pricing 及 Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
+Costing PostgreSQL 容量已通过 PR #79 合并；Pricing 容量实现与新增验收见 #78，发布资格仍须完整检查裁决。
+Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
 详见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
 Identity 的当前证据为 `IdentityCommittedAuditTests`（HTTP 注册、重复拒绝、错误密码与锁定、来源写失败、进程重启和真实 MQ）
@@ -148,4 +149,7 @@ Pricing 的 `PricingCommittedFactTests` 验证创建、输入变更、成本版�
 `TaskOperationJourneyTests` 的真实 HTTP / RabbitMQ / PostgreSQL 重启旅程验证五个操作与三条 Pricing 事实，
 成本接纳事实引用 Costing 对象，计算事实关联当前后台操作，均保留原始请求且不传金额。
 `PricingFactIngestionTests` 验证固定动作、引用约束、信封身份和不可变重投。恢复版本及清理索引已有 Pricing 独立迁移并在临时库验收，
-来源容量、审计恢复及完整治理尚未完成。
+新增 `PricingFactCapacityTests` 验证容量整批拒绝、升级 UTF-8 回填与策略保留、额度竞争、清理恢复、
+HTTP 503、worker 有限重试/人工恢复及真实 broker 死信保留/重启重驱。
+`PricingFactCapacityObservationTests` 验证 failed 与恢复操作各自独立；`PricingCacheTests` 验证拒绝保留热缓存、
+Redis 故障期间成功提交的持久失效与重启恢复。最终发布资格由 #78 的完整检查与双轴评审裁决；审计恢复及完整治理尚未完成。
