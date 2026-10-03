@@ -108,6 +108,17 @@ Delivered 表示 broker 接管，Accepted 表示 Costing 的本地任务已登�
 失败退避关联本次失败执行，不能误读为目标业务完成。计划、决定、发生和两类消息共享来源提交边界；
 事实写入失败会整体回滚。Memory 与 PostgreSQL 都遵守这个边界，原始规则和业务载荷不进入中央日志。
 
+PostgreSQL 通过 Scheduling 自己的 `fact_capacity` 对计划事实实行条数、UTF-8 总载荷和单条载荷容量准入，
+协议见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。普通 `ScheduleTriggeredV1` 业务消息不计入事实额度。
+容量不足时，管理接口返回 503 / `scheduling.audit_capacity_exhausted`；计划、决定、发生、业务消息和整批事实
+一起回滚。Runner 将该计划列入 `FailedPlanIds`，不计为已触发或合法跳过，也不额外提交另一条退避事实。
+原到期状态保留，后续扫描可在容量恢复后重试；容量长期耗尽时仍会按既有扫描节拍重试，独立等待预算和容量诊断待后续治理。
+相同规则等空操作、已成功决定的幂等重放不增加事实占用；恢复操作会重新计算下次时刻，不能一概视为空操作。
+
+策略和占用由数据库持久化，重启不重置；新迁移从既有计划事实回填占用。
+确认交付不释放容量，只有按保留期清理已确认事实副本才释放；未交付、死信与普通业务消息不会被该清理删除。
+该容量约束目前只接入 PostgreSQL；开发 Memory 模式的容量语义仍由父票据 #64 跟踪。
+
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
 
 ## 故障语义与范围

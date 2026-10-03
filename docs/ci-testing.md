@@ -68,4 +68,7 @@ PR、dev/main push 和手动触发均保留，当前没有路径过滤，也没�
 整体 33 分 5 秒、测试 28 分 9 秒，其中宿主工程 23 分 30 秒；1265 项全部通过。
 优化后的实测与双轴评审记录在[CI 优化票据](https://github.com/yongpengW/NexusStackNext/issues/71)及关联 PR。
 第一轮 [PR #72](https://github.com/yongpengW/NexusStackNext/pull/72) 完整 CI 14 分 26 秒，1265 项通过；
-第二轮初始化复用及后续测量见[票据 #73](https://github.com/yongpengW/NexusStackNext/issues/73)。
+第二轮 [PR #74](https://github.com/yongpengW/NexusStackNext/pull/74) 已合并；
+[CI 37137608993](https://github.com/yongpengW/NexusStackNext/actions/runs/37137608993) 完整耗时 **10 分 11 秒**，
+1265 项全部通过，无跳过、重复或漏跑。相比原基线减少约 69%，相比第一轮减少约 29%。
+后续按慢测试报告维护权重；跨 runner 构建产物复用仍需测量收益后决定。

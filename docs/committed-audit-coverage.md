@@ -76,8 +76,11 @@ Identity PostgreSQL 的整批容量、HTTP 拒绝、同作用域重试、失败�
 Platform / Identity 的容量模型和冻结的 PostgreSQL 触发器 V1 已提取为共用实现，Files 第三个消费者显式接入。
 `FilesFactCapacityTests` 通过 HTTP / 仓储 / Outbox / 清理接口验证上传整批准入、删除拒绝保留下载、
 删除已受理后的 202 恢复、并发最后额度、空操作与同作用域重试。升级的策略保留及 UTF-8 占用回填由
-`FactCapacityUpgradeTests` 分别验证三个上下文。迁移协议冻结依据见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。
-Scheduling / Costing / Pricing 及 Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
+`FactCapacityUpgradeTests` 分别验证四个上下文。迁移协议冻结依据见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。
+Scheduling PostgreSQL 也接入同一冻结协议；`SchedulingFactCapacityTests` 验证 HTTP 503、空操作、退避拒绝、
+单条载荷上限、并发最后额度、恢复与决定整批回滚、幂等重放、清理释放及真实进程崩溃后重启。
+容量拒绝报告 failed，不伪装成合法 skipped；普通发生消息不占事实额度且不被事实清理删除。
+Costing / Pricing 及 Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
 详见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
 Identity 的当前证据为 `IdentityCommittedAuditTests`（HTTP 注册、重复拒绝、错误密码与锁定、来源写失败、进程重启和真实 MQ）
@@ -116,7 +119,8 @@ Scheduling 的 `SchedulingCommittedAuditTests` 覆盖两种存储的管理、退
 `SchedulingOperationTests` 的提交取消只保留既有创建事实；`CalendarSchedulingPersistenceTests` 验证决定提交中进程崩溃
 不留下决定事实，恢复后的 coalesced / skipped 与故障清除各自只提交一次。中央固定动作及引用组合由
 `SchedulingFactIngestionTests` 验证，重复内容保持幂等，变更客体、决定或执行关联拒绝接纳。
-来源积压容量、审计死信恢复仍未完成；已确认副本清理见前文，Occurrence 的业务重试端口明确拒绝审计消息。
+PostgreSQL 来源事实容量与恢复验证见前文；Memory 容量和审计死信恢复仍未完成。
+已确认副本清理见前文，Occurrence 的业务重试端口明确拒绝审计消息。
 
 Costing 的 `CostingCommittedFactTests` 验证输入创建/修改与结果应用、重复/冲突请求、旧版本、过期任务及相同结果，
 并对创建、更新、任务完成三条路径注入来源事实写失败，确认状态、任务和两类 Outbox 同事务回滚且同作用域可重试。

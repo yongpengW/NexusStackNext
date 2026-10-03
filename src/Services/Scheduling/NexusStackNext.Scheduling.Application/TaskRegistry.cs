@@ -35,6 +35,8 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     public static readonly Error Conflict = new("scheduling.version_conflict", "计划已被修改，请读取最新版本。");
     /// <summary>任务编码已有定义。</summary>
     public static readonly Error CodeTaken = new("scheduling.task_code.taken", "任务编码已存在。");
+    /// <summary>提交事实容量不足；对应计划操作未提交，可在容量恢复后重试。</summary>
+    public static readonly Error AuditCapacityExceeded = new("scheduling.audit_capacity_exhausted", "计划审计容量暂不可用，请稍后重试。");
 
     /// <summary>定义显式规则计划；日历首次时刻与预览相同，Interval 立即到期。</summary>
     /// <param name="code">唯一编码。</param>

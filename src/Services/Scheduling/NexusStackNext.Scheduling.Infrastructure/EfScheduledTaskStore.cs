@@ -76,6 +76,11 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
         catch (DbUpdateConcurrencyException) { return Result.Failure(TaskRegistry.Conflict); }
         catch (DbUpdateException error) when (error.InnerException is PostgresException
         {
+            SqlState: "P0001", ConstraintName: "scheduling_fact_capacity_exhausted",
+        })
+        { return Result.Failure(TaskRegistry.AuditCapacityExceeded); }
+        catch (DbUpdateException error) when (error.InnerException is PostgresException
+        {
             SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_plans_code",
         })
         { return Result.Failure(TaskRegistry.CodeTaken); }
