@@ -33,9 +33,17 @@ try {
     $palette = Get-Content (Join-Path $PSScriptRoot '../docs/agents/label-colors.json') -Raw | ConvertFrom-Json
     $labels = @($palette.PSObject.Properties | ForEach-Object { @{ name = $_.Name; color = $_.Value.TrimStart('#') } })
     [IO.File]::WriteAllText((Join-Path $scratch 'labels.json'), (ConvertTo-Json -InputObject $labels))
-    $adapterPath = Join-Path $scratch $(if ($IsWindows) { 'gh.ps1' } else { 'gh' })
-    [IO.File]::WriteAllText($adapterPath, $adapter.Replace("`r`n", "`n"))
+    $scriptPath = Join-Path $scratch 'gh.ps1'
+    [IO.File]::WriteAllText($scriptPath, $adapter.Replace("`r`n", "`n"))
+    $adapterPath = $scriptPath
     if (-not $IsWindows) {
+        # pwsh -File requires a .ps1 extension, even when launched through a shebang.
+        $adapterPath = Join-Path $scratch 'gh'
+        $launcher = @'
+#!/bin/sh
+exec pwsh -NoProfile -File "$0.ps1" "$@"
+'@
+        [IO.File]::WriteAllText($adapterPath, $launcher.Replace("`r`n", "`n"))
         & chmod +x $adapterPath
         if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare CLI adapter.' }
     }

@@ -8,8 +8,8 @@ CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL�
 
 - 最多四个测试任务：0 组执行除 `HostIntegration.Tests` 外的全部工程；1–3 组分担宿主测试。
 - 同一个测试类留在同一组，按历史类耗时分配；新增类按发现的用例数估计权重。
-  `scripts/ci-test-weights.json` 来自 Linux [CI 37134541465](https://github.com/yongpengW/NexusStackNext/actions/runs/37134541465)
-  的 458 条宿主用例报告（80 个类），
+  `scripts/ci-test-weights.json` 来自初始化优化后的 Linux [CI 37136909253](https://github.com/yongpengW/NexusStackNext/actions/runs/37136909253)
+  的 458 条宿主用例报告（80 个类；该运行全部产品测试和覆盖校验通过，随后在票据探针启动器处失败），
   只影响负载均衡，不决定是否执行。权重变旧会影响速度，不会漏测试。
 - `-CiShard` 入口先确认 GitHub 托管 runner、没有 `env/test.dev`、固定回环测试配置，
   再检查工作流传入的三个容器 ID、健康状态及端口绑定。失败时不读取私有配置，不启动测试。
