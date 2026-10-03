@@ -5,7 +5,6 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Domain;
-using Npgsql;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
@@ -29,7 +28,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database, IBackgroun
                 input => ReceiveAsync(envelope, input, cancellationToken), static received => received.Outcome, cancellationToken).ConfigureAwait(false);
             return result.Acknowledged;
         }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: "P0001", ConstraintName: "pricing_fact_capacity_exhausted" })
+        catch (DbUpdateException error) when (PricingFactCapacityFailure.IsExhausted(error))
         {
             // 失败已由观察适配器登记，本地事务已回滚；不得确认消息或保留持久去重结果。
             database.ChangeTracker.Clear();

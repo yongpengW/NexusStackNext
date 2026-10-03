@@ -4,7 +4,6 @@ using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
-using Npgsql;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
@@ -56,7 +55,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database, IExecutionCo
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: "P0001", ConstraintName: "pricing_fact_capacity_exhausted" })
+        catch (DbUpdateException error) when (PricingFactCapacityFailure.IsExhausted(error))
         {
             database.ChangeTracker.Clear();
             return Result.Failure<RecalculationStatus>(PricingErrors.AuditCapacityExceeded);
