@@ -126,3 +126,5 @@ $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::
 if (-not $resolvedScratch.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
     [IO.Path]::GetFileName($resolvedScratch) -notmatch '^nsn-ci-probes-[a-f0-9]{32}$') { throw 'Unexpected probe cleanup target' }
 Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
+# GitHub's pwsh wrapper propagates LASTEXITCODE; expected failing probes must not leak their exit code.
+exit 0
