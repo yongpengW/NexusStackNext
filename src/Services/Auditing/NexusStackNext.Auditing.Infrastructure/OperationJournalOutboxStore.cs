@@ -17,15 +17,22 @@ internal sealed class OperationJournalOutboxStore(IOutboxStore inner) : IOutboxS
     public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
         SafelyAsync(() => inner.MarkDeliveredAsync(id, now, cancellationToken), cancellationToken);
 
-    public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
-        SafelyAsync(() => inner.MarkFailedAsync(id, DeliveryFailed, nextAttemptAt, cancellationToken), cancellationToken);
+    public Task<bool> MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        SafelyAsync(() => inner.MarkFailedAsync(id, DeliveryFailed, nextAttemptAt, expectedRetryRevision, cancellationToken), cancellationToken);
 
-    public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        SafelyAsync(() => inner.MarkDeadLetteredAsync(id, DeliveryFailed, now, cancellationToken), cancellationToken);
+    public Task<bool> MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        SafelyAsync(() => inner.MarkDeadLetteredAsync(id, DeliveryFailed, now, expectedRetryRevision, cancellationToken), cancellationToken);
 
     private static async Task SafelyAsync(Func<Task> operation, CancellationToken cancellationToken)
     {
         try { await operation().ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception) { throw new InvalidOperationException(DeliveryFailed); }
+    }
+
+    private static async Task<bool> SafelyAsync(Func<Task<bool>> operation, CancellationToken cancellationToken)
+    {
+        try { return await operation().ConfigureAwait(false); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception) { throw new InvalidOperationException(DeliveryFailed); }
     }

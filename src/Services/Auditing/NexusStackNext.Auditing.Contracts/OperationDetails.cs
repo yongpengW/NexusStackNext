@@ -7,7 +7,7 @@ public sealed record OperationDetails
 {
     /// <summary>代码声明的稳定动作名称。</summary>
     public required string Action { get; init; }
-    /// <summary>endpoint / proxy / command / task / schedule 区分执行入口；均不是提交事实。</summary>
+    /// <summary>endpoint / proxy / command / task / schedule / recovery / message 区分执行入口；均不是提交事实。</summary>
     public required string ExecutionRole { get; init; }
     /// <summary>代码声明的静态描述，不进行参数插值。</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

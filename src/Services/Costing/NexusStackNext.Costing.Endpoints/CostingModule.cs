@@ -33,6 +33,7 @@ public static class CostingModule
         services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>());
         services.AddSingleton(new CostingConnection(connection));
         services.AddHostedService<CostingStartupCheck>();
+        services.AddCostingFactCleanup(configuration.GetSection("Costing:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         if (configuration.GetValue("Costing:Worker:Enabled", true)) { services.AddHostedService<CostingWorker>(); }
         if (configuration.GetValue("Costing:Messaging:Enabled", false))
         {

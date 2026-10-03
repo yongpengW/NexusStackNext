@@ -48,6 +48,25 @@ public sealed class User : AuditedAggregateRoot<UserId>
 {
     private readonly HashSet<RoleId> _roleIds = [];
 
+    private User(User source) : base(source)
+    {
+        UserName = source.UserName;
+        PasswordHash = source.PasswordHash;
+        Email = source.Email;
+        Phone = source.Phone;
+        IsEnabled = source.IsEnabled;
+        IsBuiltIn = source.IsBuiltIn;
+        SessionVersion = source.SessionVersion;
+        FailedLoginCount = source.FailedLoginCount;
+        LockedUntil = source.LockedUntil;
+        LastLoginAt = source.LastLoginAt;
+        _roleIds.UnionWith(source._roleIds);
+    }
+
+    /// <summary>复制当前状态及版本，不复制待发布事件，后续修改互不影响。</summary>
+    /// <returns>独立快照。</returns>
+    public User Snapshot() => new(this);
+
     private User(UserId id, UserName userName, PasswordHash passwordHash, bool isBuiltIn)
         : base(id)
     {

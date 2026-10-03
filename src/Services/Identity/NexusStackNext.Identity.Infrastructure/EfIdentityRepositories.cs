@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
@@ -163,6 +164,9 @@ public sealed class EfMenuTreeRepository(IdentityDbContext context) : IMenuTreeR
 /// <summary>把 Identity 的端口接到 EF Core 上。</summary>
 public static class IdentityEntityFrameworkServiceCollectionExtensions
 {
+    /// <summary>Identity 所有的事实 Outbox。</summary>
+    public const string OutboxKey = "identity";
+
     /// <summary>宿主的数据库启动检查与就绪探针；普通启动不执行迁移。</summary>
     /// <param name="services">服务集合。</param>
     /// <returns>同一个服务集合。</returns>
@@ -197,10 +201,12 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
         // 用带 `IServiceProvider` 的重载：拦截器（审计字段 + 发件箱）从容器里取依赖。
         // 它们此前**写完了但没有任何注册点**——审计字段在生产里从不写、领域事件也不进发件箱，
         // 而"没写"与"没有要写的"从外面看是一样的。接在装配这一处，新增上下文不必记得它。
+        services.AddScoped<IdentityCommittedFactInterceptor>();
         services.AddDbContext<IdentityDbContext>((provider, options) =>
             options
                 .UseNexusStackPostgres(connectionString, IdentityDbContext.SchemaName)
-                .UseNexusStackInterceptors(provider));
+                .UseNexusStackInterceptors(provider)
+                .AddInterceptors(provider.GetRequiredService<IdentityCommittedFactInterceptor>()));
 
         services.AddScoped<IUserRepository, EfUserRepository>();
         services.AddScoped<IRoleRepository, EfRoleRepository>();
@@ -210,6 +216,7 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
 
         // 工作单元与仓储同生命周期（都持有同一个上下文）。
         services.AddScoped<IIdentityUnitOfWork, EfIdentityUnitOfWork>();
+        services.AddKeyedScoped<IOutboxStore, EfOutboxStore<IdentityDbContext>>(OutboxKey);
 
         services.AddScoped<UserPermissionReader>();
 

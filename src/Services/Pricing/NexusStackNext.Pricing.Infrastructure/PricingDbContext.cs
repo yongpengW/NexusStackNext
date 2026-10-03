@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Pricing.Application;
@@ -32,6 +33,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("pricing");
+        modelBuilder.ConfigureCommittedFactCleanup();
         var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
         invalidation.ToTable("cache_invalidations");
         invalidation.HasKey(x => new { x.ItemId, x.Version });
@@ -103,7 +105,11 @@ public static class PricingDatabase
     {
         var builder = new DbContextOptionsBuilder<PricingDbContext>()
             .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "pricing"));
-        if (services is not null) { builder.UseNexusStackAuditInterceptor(services); }
+        if (services is not null)
+        {
+            builder.UseNexusStackAuditInterceptor(services)
+                .AddInterceptors(services.GetRequiredService<PricingCommittedFactInterceptor>());
+        }
         return new PricingDbContext(builder.Options);
     }
 
@@ -134,6 +140,7 @@ public static class PricingDatabase
             _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Inbox.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.CacheInvalidations.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }

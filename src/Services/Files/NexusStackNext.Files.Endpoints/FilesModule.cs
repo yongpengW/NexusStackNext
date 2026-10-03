@@ -2,10 +2,13 @@ using Microsoft.AspNetCore.Http.Features;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Files.Application;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.Files.Infrastructure;
+using NexusStackNext.Files.Infrastructure.Persistence;
 
 namespace NexusStackNext.Files.Endpoints;
 
@@ -55,7 +58,8 @@ public static class FilesModule
             {
                 throw new InvalidOperationException("Files:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddSingleton<IStoredFileRepository, InMemoryStoredFileRepository>();
+            services.AddFilesInMemoryMetadata();
+            services.AddFilesMemoryFactCleanup(configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -65,6 +69,8 @@ public static class FilesModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Files；开发测试可显式选择 Files:Storage:Provider=Memory。");
             }
             services.AddFilesPostgresMetadata(connection);
+            services.AddCommittedFactCleanup<FilesDbContext>("files", StoredFileCommittedV1.Name,
+                configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else
         {

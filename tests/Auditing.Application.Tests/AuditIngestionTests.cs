@@ -10,7 +10,7 @@ public sealed class AuditIngestionTests
     [Fact]
     public async Task InvestigationOrdersByReceiptTime_EvenWhenIdsWereAllocatedInAnotherOrder()
     {
-        var entries = new InMemoryAuditEntryStore();
+        var entries = new InMemoryAuditEntryStore(new FixedClock(Now));
         var older = new AuditIngestion(entries, new SequentialIdGenerator(9000), new FixedClock(Now));
         var newer = new AuditIngestion(entries, new SequentialIdGenerator(1000), new FixedClock(Now.AddSeconds(1)));
         var first = Message();
@@ -29,7 +29,7 @@ public sealed class AuditIngestionTests
 
     private static (AuditIngestion Ingestion, InMemoryAuditEntryStore Entries) NewIngestion()
     {
-        var entries = new InMemoryAuditEntryStore();
+        var entries = new InMemoryAuditEntryStore(new FixedClock(Now));
         return (new AuditIngestion(entries, new SequentialIdGenerator(5000), new FixedClock(Now)), entries);
     }
 

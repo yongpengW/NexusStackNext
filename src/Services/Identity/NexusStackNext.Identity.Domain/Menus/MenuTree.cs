@@ -110,6 +110,15 @@ public sealed class MenuTree : AuditedAggregateRoot<MenuTreeId>
 
     private readonly List<MenuNode> _nodes = [];
 
+    private MenuTree(MenuTree source) : base(source)
+    {
+        _nodes.AddRange(source._nodes.Select(node => new MenuNode(node.Id, node.ParentId, node.Path, node.Title, node.SortOrder)));
+    }
+
+    /// <summary>复制树及节点当前状态，不共享可变节点或待发布事件。</summary>
+    /// <returns>独立快照。</returns>
+    public MenuTree Snapshot() => new(this);
+
     private MenuTree(MenuTreeId id)
         : base(id)
     {

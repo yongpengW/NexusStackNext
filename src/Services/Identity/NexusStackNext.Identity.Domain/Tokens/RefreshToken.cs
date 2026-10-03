@@ -18,6 +18,21 @@ namespace NexusStackNext.Identity.Domain.Tokens;
 /// </summary>
 public sealed class RefreshToken : AggregateRoot<RefreshTokenId>
 {
+    private RefreshToken(RefreshToken source) : base(source)
+    {
+        UserId = source.UserId;
+        TokenHash = source.TokenHash;
+        IssuedAt = source.IssuedAt;
+        ExpiresAt = source.ExpiresAt;
+        SessionVersion = source.SessionVersion;
+        ConsumedAt = source.ConsumedAt;
+        RevokedAt = source.RevokedAt;
+        RevokedReason = source.RevokedReason;
+    }
+
+    /// <summary>复制当前状态及版本，不复制待发布事件。</summary>
+    /// <returns>独立快照。</returns>
+    public RefreshToken Snapshot() => new(this);
     private RefreshToken(
         RefreshTokenId id,
         UserId userId,

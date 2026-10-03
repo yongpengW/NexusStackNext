@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
@@ -14,7 +15,7 @@ using NexusStackNext.Scheduling.Contracts;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
-internal sealed class ScheduledCostIngestion(CostingDbContext database) : IIntegrationEventProcessor,
+internal sealed class ScheduledCostIngestion(CostingDbContext database, IBackgroundExecutionObservation observations, IExecutionContext execution) : IIntegrationEventProcessor,
     IQueryHandler<GetScheduledCostReceipt, ScheduledCostReceipt>
 {
     private const string ConsumerName = "costing-schedules";
@@ -32,6 +33,14 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
             || string.IsNullOrWhiteSpace(message.CreatedBy) || message.CreatedBy.Length > 128 || message.CreatedBy.Any(char.IsControl)
             || message.ExecutionOrigin is { } origin && !origin.IsValid()) { return false; }
 
+        var result = await observations.ObserveAsync(new MessageExecutionDescriptor("costing.schedule.accept", EventName, envelope.MessageId),
+            () => Task.FromResult(new BackgroundExecutionInput<ScheduleTriggeredV1>(message, message.ExecutionOrigin)),
+            input => ReceiveAsync(input, cancellationToken), static received => received.Outcome, cancellationToken).ConfigureAwait(false);
+        return result.Acknowledged;
+    }
+
+    private async Task<(bool Acknowledged, BackgroundExecutionOutcome Outcome)> ReceiveAsync(ScheduleTriggeredV1 message, CancellationToken cancellationToken)
+    {
         var canonical = FormattableString.Invariant($"{message.PlanId}|{message.TriggerSequence}|{message.ScheduledAt.UtcTicks}|{message.OccurredAt.UtcTicks}|{message.TargetKind}|{message.TargetId:D}|{message.CreatedBy}");
         if (message.ExecutionOrigin is not null) { canonical += "|origin:" + JsonSerializer.Serialize(message.ExecutionOrigin); }
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
@@ -43,7 +52,7 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
         if (!first)
         {
             var existing = await database.ScheduleReceipts.AsNoTracking().SingleAsync(x => x.OccurrenceId == message.EventId, cancellationToken).ConfigureAwait(false);
-            return existing.PayloadHash == hash;
+            return existing.PayloadHash == hash ? (true, BackgroundExecutionOutcome.Duplicate) : (false, BackgroundExecutionOutcome.Rejected);
         }
 
         await database.Database.ExecuteSqlInterpolatedAsync(
@@ -67,7 +76,7 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
                     TaskId = message.EventId,
                     ItemId = id,
                     Origin = "scheduling",
-                    ExecutionOrigin = message.ExecutionOrigin,
+                    ExecutionOrigin = execution.Capture() ?? message.ExecutionOrigin,
                     ExpectedVersion = sheet.Version,
                     PurchaseCost = sheet.PurchaseCost,
                     FreightCost = sheet.FreightCost,
@@ -90,7 +99,7 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database) : IInteg
         });
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return (true, rejection is null ? BackgroundExecutionOutcome.Accepted : BackgroundExecutionOutcome.Rejected);
     }
 
     public async Task<Result<ScheduledCostReceipt>> HandleAsync(GetScheduledCostReceipt query, CancellationToken cancellationToken = default)

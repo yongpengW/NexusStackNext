@@ -5,17 +5,36 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Domain.Entries;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
-internal sealed class EfAuditEntryStore(AuditingDbContext context) : IAuditEntryStore
+internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock) : IAuditEntryStore
 {
     public Task<Result<IngestionOutcome>> AcceptAsync(AuditEntry entry, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(entry.Fact)));
+        var fact = entry.Fact;
+        var legacyFields = new
+        {
+            fact.MessageId,
+            fact.EventName,
+            fact.Source,
+            fact.Action,
+            fact.SubjectType,
+            fact.SubjectId,
+            fact.SubjectVersion,
+            fact.ActorId,
+            fact.OccurredAt,
+            fact.TraceId,
+            fact.CorrelationId,
+        };
+        // 旧消息继续使用原指纹；已接纳事实不能通过重投补造执行来源。
+        object content = fact.Execution is null ? legacyFields : new { Fact = legacyFields, fact.Execution };
+        if (fact.RelatedSubject is not null) { content = new { Fact = legacyFields, fact.Execution, fact.RelatedSubject }; }
+        var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(content)));
         return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             context.ChangeTracker.Clear();
@@ -39,15 +58,18 @@ internal sealed class EfAuditEntryStore(AuditingDbContext context) : IAuditEntry
         });
     }
 
-    public async Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default)
+    public Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default) =>
+        QueryAsync(new AuditQuery(page, limit), cancellationToken);
+
+    public async Task<AuditPage> QueryAsync(AuditQuery query, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, 1000);
-        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
-        var total = await context.Entries.LongCountAsync(cancellationToken).ConfigureAwait(false);
-        var entries = await context.Entries.AsNoTracking().OrderByDescending(item => item.RecordedAt).ThenByDescending(item => item.Id)
-            .Skip((page - 1) * limit).Take(limit).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(query);
+        query = query.Normalize(clock.UtcNow);
+        if (query.Validate().IsFailure) { throw new ArgumentException("事实查询条件无效。", nameof(query)); }
+        var matches = context.Entries.AsNoTracking().Where(query.Predicate());
+        var total = await matches.LongCountAsync(cancellationToken).ConfigureAwait(false);
+        var entries = await matches.OrderByDescending(item => item.RecordedAt).ThenByDescending(item => item.Id)
+            .Skip((query.Page - 1) * query.Limit).Take(query.Limit).ToArrayAsync(cancellationToken).ConfigureAwait(false);
         return new AuditPage(entries, total);
     }
 }

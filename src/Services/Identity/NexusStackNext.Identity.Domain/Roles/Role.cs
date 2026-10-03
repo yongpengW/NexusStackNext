@@ -103,6 +103,19 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
 {
     private readonly HashSet<MenuId> _grantedMenuIds = [];
 
+    private Role(Role source) : base(source)
+    {
+        Code = source.Code;
+        Name = source.Name;
+        Platforms = source.Platforms;
+        IsSystem = source.IsSystem;
+        _grantedMenuIds.UnionWith(source._grantedMenuIds);
+    }
+
+    /// <summary>复制当前状态及版本，不共享授权集合或待发布事件。</summary>
+    /// <returns>独立快照。</returns>
+    public Role Snapshot() => new(this);
+
     private Role(RoleId id, RoleCode code, RoleName name, Platform platforms, bool isSystem)
         : base(id)
     {

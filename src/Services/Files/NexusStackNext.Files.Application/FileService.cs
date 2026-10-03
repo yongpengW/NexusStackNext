@@ -1,4 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Files.Domain.Stored;
@@ -20,6 +21,12 @@ public interface IStoredFileRepository
     /// <returns>已软删除的文件，否则为空。</returns>
     Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default);
 
+    /// <summary>读取首次成功提交删除请求时保存的来源；未知来源保持为空。</summary>
+    /// <param name="id">文件标识。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>只供执行关联使用的来源，不是授权依据。</returns>
+    Task<ExecutionOrigin?> ReadDeletionOriginAsync(StoredFileId id, CancellationToken cancellationToken = default);
+
     /// <summary>按下一次尝试时间获取有界的待清理文件。</summary>
     /// <param name="now">当前时刻。</param>
     /// <param name="limit">最多处理数。</param>
@@ -37,8 +44,9 @@ public interface IStoredFileRepository
     /// <param name="file">文件聚合。</param>
     /// <param name="originalVersion">更新前版本；不允许覆盖其他请求已提交的状态。</param>
     /// <param name="cancellationToken">取消令牌。</param>
+    /// <param name="deletionOrigin">首次删除的来源，与删除状态同提交；后续保存不覆盖它。</param>
     /// <returns>任务。</returns>
-    Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default);
+    Task SaveAsync(StoredFile file, long? originalVersion = null, ExecutionOrigin? deletionOrigin = null, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -56,13 +64,15 @@ public interface IStoredFileRepository
 /// <param name="clock">时钟。</param>
 /// <param name="limits">宿主共享的上传限制。</param>
 /// <param name="recovery">持久删除与恢复。</param>
+/// <param name="execution">当前执行关联。</param>
 public sealed class FileService(
     IFileStore store,
     IStoredFileRepository files,
     IIdGenerator ids,
     IClock clock,
     FileUploadLimits limits,
-    FileRecovery recovery)
+    FileRecovery recovery,
+    IExecutionContext? execution = null)
 {
     /// <summary>上传一个文件。</summary>
     /// <param name="name">文件名（已由领域校验，拒绝路径分隔符）。</param>
@@ -218,7 +228,7 @@ public sealed class FileService(
         {
             var originalVersion = file.Version;
             file.Delete();
-            try { await files.SaveAsync(file, originalVersion, cancellationToken).ConfigureAwait(false); }
+            try { await files.SaveAsync(file, originalVersion, execution?.Capture(), cancellationToken).ConfigureAwait(false); }
             catch (FileMetadataConflictException)
             {
                 // 归属不可变，删除也不能撤销；另一个请求已推进状态时直接观察其持久结果。

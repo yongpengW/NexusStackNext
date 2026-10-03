@@ -31,23 +31,27 @@ public interface IOutboxStore
     /// <param name="id">记录标识。</param>
     /// <param name="failure">失败原因。</param>
     /// <param name="nextAttemptAt">下次尝试时间。</param>
+    /// <param name="expectedRetryRevision">读取待投递记录时的恢复版本；旧版本失败不得修改新预算。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>任务。</returns>
-    Task MarkFailedAsync(
+    /// <returns>实际更新为 true；已交付、已停止、版本过期或来源记录已清理时为 false。</returns>
+    Task<bool> MarkFailedAsync(
         Guid id,
         string failure,
         DateTimeOffset nextAttemptAt,
+        long expectedRetryRevision,
         CancellationToken cancellationToken = default);
 
     /// <summary>标记进入死信，不再重试。</summary>
     /// <param name="id">记录标识。</param>
     /// <param name="failure">最终失败原因。</param>
     /// <param name="now">当前时间。</param>
+    /// <param name="expectedRetryRevision">读取待投递记录时的恢复版本；旧版本失败不得停止新预算。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>任务。</returns>
-    Task MarkDeadLetteredAsync(
+    /// <returns>实际更新为 true；已交付、已停止、版本过期或来源记录已清理时为 false。</returns>
+    Task<bool> MarkDeadLetteredAsync(
         Guid id,
         string failure,
         DateTimeOffset now,
+        long expectedRetryRevision,
         CancellationToken cancellationToken = default);
 }

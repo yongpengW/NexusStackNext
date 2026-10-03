@@ -119,6 +119,7 @@ public sealed class PlatformSettingsAccessTests
             var account = await scope.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(userId));
             Assert.NotNull(account);
             Assert.True(account.Disable(DateTimeOffset.UtcNow).IsSuccess);
+            await scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync();
         }
         else
         {

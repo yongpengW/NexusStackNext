@@ -196,9 +196,10 @@ public sealed class AssignRoleHandler(
             return Result.Failure(new Error("identity.user.not_found", $"用户不存在：{command.UserId}。"));
         }
 
+        var originalVersion = user.Version;
         var result = user.AssignRole(new RoleId(command.RoleId), clock.UtcNow);
 
-        if (result.IsSuccess)
+        if (result.IsSuccess && user.Version != originalVersion)
         {
             // **与菜单授权同一条规则：授权变了，缓存必须失效。**
             //
@@ -298,9 +299,10 @@ public sealed class GrantMenuToRoleHandler(
             return Result.Failure(new Error("identity.role.not_found", $"角色不存在：{command.RoleId}。"));
         }
 
+        var originalVersion = found[0].Version;
         var result = found[0].Grant(new MenuId(command.MenuId), clock.UtcNow);
 
-        if (result.IsSuccess)
+        if (result.IsSuccess && found[0].Version != originalVersion)
         {
             // **授权变了，缓存必须失效。** 而且要在命令成功之后、且在同一个用例里——
             // 把它留给调用方，就会出现"某条路径忘了失效"，而那正是参照仓库 10 小时窗口的成因。

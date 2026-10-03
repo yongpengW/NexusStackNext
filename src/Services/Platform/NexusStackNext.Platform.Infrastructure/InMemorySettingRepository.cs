@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Platform.Application;
 using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Domain.Settings;
@@ -25,6 +27,9 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
     private readonly ConcurrentDictionary<(string Scope, string Name), GlobalSetting> _settings = new();
     private readonly Lock _writes = new();
     private readonly Dictionary<Guid, OutboxEntry> _outbox = new();
+
+    internal ICommittedFactCleanup CreateFactCleanup(CommittedFactCleanupOptions options, IClock clock)
+        => new InMemoryCommittedFactCleanup(_writes, () => _outbox, SettingCommittedV1.Name, options, clock);
 
     /// <inheritdoc />
     public Task<GlobalSetting?> FindAsync(SettingKey key, CancellationToken cancellationToken = default)
@@ -107,17 +112,22 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
     public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
         UpdateAsync(id, entry => entry.MarkDelivered(now), cancellationToken);
     /// <inheritdoc />
-    public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
-        UpdateAsync(id, entry => entry.RecordFailure(failure, nextAttemptAt), cancellationToken);
+    public Task<bool> MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
     /// <inheritdoc />
-    public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        UpdateAsync(id, entry => entry.MarkDeadLettered(failure, now), cancellationToken);
+    public Task<bool> MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
 
-    private Task UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    private Task<bool> UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes) { if (_outbox.TryGetValue(id, out var entry)) { _outbox[id] = update(entry); } }
-        return Task.CompletedTask;
+        lock (_writes)
+        {
+            if (!_outbox.TryGetValue(id, out var entry)) { return Task.FromResult(false); }
+            var updated = update(entry);
+            _outbox[id] = updated;
+            return Task.FromResult(updated != entry);
+        }
     }
 
     /// <inheritdoc />
@@ -155,6 +165,14 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
 /// <summary>把 Platform 的端口接到内存适配器上。</summary>
 public static class PlatformInfrastructureServiceCollectionExtensions
 {
+    /// <summary>显式接入本上下文内存事实副本的维护。</summary>
+    /// <param name="services">容器。</param>
+    /// <param name="options">维护策略。</param>
+    /// <returns>原容器。</returns>
+    public static IServiceCollection AddPlatformMemoryFactCleanup(this IServiceCollection services, CommittedFactCleanupOptions? options = null)
+        => services.AddCommittedFactCleanup(OutboxKey, (provider, policy) => provider.GetRequiredService<InMemorySettingRepository>()
+            .CreateFactCleanup(policy, provider.GetRequiredService<IClock>()), options);
+
     /// <summary>宿主装配时显式选择 Platform 的 Outbox。</summary>
     public const string OutboxKey = "platform";
     /// <summary>注册内存配置存储与读写服务。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。</summary>

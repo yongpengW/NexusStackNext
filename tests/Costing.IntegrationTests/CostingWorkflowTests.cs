@@ -43,14 +43,14 @@ public sealed class CostingWorkflowTests(CostingDatabaseFixture database) : ICla
         var query = read.ServiceProvider.GetRequiredService<ISender>();
         Assert.Equal(100m, (await query.QueryAsync(new GetCostSheet(request.ItemId))).Value.UnitCost);
         var envelope = Assert.Single(await read.ServiceProvider.GetRequiredService<IOutboxStore>()
-            .ReadPendingAsync(10, DateTimeOffset.UtcNow));
+            .ReadPendingAsync(10, DateTimeOffset.UtcNow), entry => entry.EventName == CostCalculatedV1.Name);
         Assert.Equal(request.RequestId, envelope.Id);
         Assert.Equal(CostCalculatedV1.Name, envelope.EventName);
         var store = read.ServiceProvider.GetRequiredService<IOutboxStore>();
         await store.MarkDeliveredAsync(envelope.Id, DateTimeOffset.UtcNow);
         Assert.Equal("Delivered", (await query.QueryAsync(new GetCostDelivery(request.RequestId))).Value.State);
         // 先前失败的投递器晚回来，不能把已经确认的消息改成失败。
-        await store.MarkDeadLetteredAsync(envelope.Id, "late_failure", DateTimeOffset.UtcNow);
+        await store.MarkDeadLetteredAsync(envelope.Id, "late_failure", DateTimeOffset.UtcNow, 0);
         Assert.Equal("Delivered", (await query.QueryAsync(new GetCostDelivery(request.RequestId))).Value.State);
     }
 
@@ -122,12 +122,14 @@ public sealed class CostingWorkflowTests(CostingDatabaseFixture database) : ICla
         Assert.Equal("Superseded", (await sender.QueryAsync(new GetCostCalculation(original.RequestId))).Value.State);
         Assert.True((await sender.QueryAsync(new GetCostDelivery(original.RequestId))).IsFailure);
         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
-        await store.MarkDeadLetteredAsync(current.RequestId, "broker_unavailable", DateTimeOffset.UtcNow);
+        await store.MarkDeadLetteredAsync(current.RequestId, "broker_unavailable", DateTimeOffset.UtcNow, 0);
         var dead = (await sender.QueryAsync(new GetCostDelivery(current.RequestId))).Value;
         Assert.Equal("DeadLettered", dead.State);
         var retry = new RetryCostDelivery(current.RequestId, dead.DeadLetteredAt!.Value);
         Assert.Equal("Pending", (await sender.SendAsync(retry)).Value.State);
         Assert.Equal("costing.delivery_conflict", (await sender.SendAsync(retry)).Error.Code);
-        Assert.Equal(current.RequestId, Assert.Single(await store.ReadPendingAsync(10, DateTimeOffset.UtcNow)).Id);
+        await store.MarkDeadLetteredAsync(current.RequestId, "old publisher failure", DateTimeOffset.UtcNow, 0);
+        Assert.Equal("Pending", (await sender.QueryAsync(new GetCostDelivery(current.RequestId))).Value.State);
+        Assert.Equal(current.RequestId, Assert.Single(await store.ReadPendingAsync(10, DateTimeOffset.UtcNow), entry => entry.EventName == CostCalculatedV1.Name).Id);
     }
 }

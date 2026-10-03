@@ -20,6 +20,27 @@ public sealed class OperationJournalStatus
     private static readonly Meter Meter = new("NexusStackNext.OperationJournal", "1.0.0");
     private static readonly Counter<long> FailedWrites = Meter.CreateCounter<long>("operation_journal.write_failures", "{failure}");
     private long _failureCount;
+    private static readonly Counter<long> FailedCleanups = Meter.CreateCounter<long>("operation_journal.cleanup_failures", "{failure}");
+    private long _cleanupFailures;
+    private int _cleanupDegraded;
+
+    /// <summary>当前进程内的维护失败次数；不同于未保存观察的计数。</summary>
+    public long CleanupFailureCount => Interlocked.Read(ref _cleanupFailures);
+
+    /// <summary>最近一次清理失败；后续成功可恢复，但不能清除观察缺失。</summary>
+    public bool CleanupDegraded => Volatile.Read(ref _cleanupDegraded) != 0;
+
+    /// <summary>记录维护故障，不把它误计为丢失操作观察。</summary>
+    public void ReportCleanupFailure()
+    {
+        Interlocked.Increment(ref _cleanupFailures);
+        Volatile.Write(ref _cleanupDegraded, 1);
+        try { FailedCleanups.Add(1); }
+        catch (Exception) { /* 外部指标监听器故障不改变维护结论。 */ }
+    }
+
+    /// <summary>本轮清理完成，解除当前维护降级；历史失败计数保留。</summary>
+    public void ReportCleanupSuccess() => Volatile.Write(ref _cleanupDegraded, 0);
 
     /// <summary>当前进程运行以来的登记失败次数，重启后从零开始。</summary>
     public long FailureCount => Interlocked.Read(ref _failureCount);

@@ -3,6 +3,7 @@ using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Costing.Application;
+using NexusStackNext.Costing.Contracts;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
@@ -10,7 +11,7 @@ internal sealed class CostDeliveryCommands(CostingDbContext database) : IQueryHa
 {
     public async Task<Result<CostDeliveryStatus>> HandleAsync(GetCostDelivery query, CancellationToken cancellationToken = default)
     {
-        var entry = await database.Outbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == query.TaskId, cancellationToken).ConfigureAwait(false);
+        var entry = await database.Outbox.AsNoTracking().SingleOrDefaultAsync(x => x.Id == query.TaskId && x.EventName == CostCalculatedV1.Name, cancellationToken).ConfigureAwait(false);
         return entry is null ? Result.Failure<CostDeliveryStatus>(new Error("costing.not_found", "尚无可投递结果。")) : Result.Success(ToStatus(entry));
     }
 
@@ -21,12 +22,12 @@ internal sealed class CostDeliveryCommands(CostingDbContext database) : IQueryHa
         var entry = (await database.Outbox.FromSqlInterpolated(
             $"SELECT * FROM costing.outbox WHERE \"Id\" = {command.TaskId} FOR UPDATE")
             .ToListAsync(cancellationToken).ConfigureAwait(false)).SingleOrDefault();
-        if (entry is null || entry.IsDelivered || entry.DeadLetteredAt != command.ExpectedDeadLetteredAt)
+        var retried = entry?.EventName == CostCalculatedV1.Name ? entry.RetryDelivery(command.ExpectedDeadLetteredAt) : null;
+        if (retried is null)
         {
             return Result.Failure<CostDeliveryStatus>(new Error("costing.delivery_conflict", "投递状态已经改变。"));
         }
-        var retried = entry with { DeadLetteredAt = null, NextAttemptAt = null, AttemptCount = 0, LastFailure = null };
-        database.Entry(entry).CurrentValues.SetValues(retried);
+        database.Entry(entry!).CurrentValues.SetValues(retried);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return Result.Success(ToStatus(retried));

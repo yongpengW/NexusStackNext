@@ -18,12 +18,32 @@ public sealed record AuditEntryId : StronglyTypedId<long>
 /// <param name="SubjectType">客体类型。</param>
 /// <param name="SubjectId">客体标识。</param>
 /// <param name="SubjectVersion">提交后的客体版本。</param>
-/// <param name="ActorId">来源服务认证的发起者；系统动作为空。</param>
+/// <param name="ActorId">来源服务认证的当前执行者；系统动作为空。</param>
 /// <param name="OccurredAt">来源服务记录的发生时刻。</param>
 /// <param name="TraceId">来源执行追踪标识；不是授权证据。</param>
 /// <param name="CorrelationId">来源执行关联标识；不是授权证据。</param>
 public sealed record AuditFact(Guid MessageId, string EventName, string Source, string Action, string SubjectType,
-    string SubjectId, long SubjectVersion, string? ActorId, DateTimeOffset OccurredAt, string TraceId, string CorrelationId);
+    string SubjectId, long SubjectVersion, string? ActorId, DateTimeOffset OccurredAt, string TraceId, string CorrelationId)
+{
+    /// <summary>提交发生在哪次执行中；缺少操作观察不否定已提交事实。</summary>
+    public AuditExecution? Execution { get; init; }
+    /// <summary>发生时有明确业务关系的另一客体；不从当前业务状态补造。</summary>
+    public AuditSubjectReference? RelatedSubject { get; init; }
+}
+
+/// <summary>由上下文、类型与内部标识共同确定的关联客体。</summary>
+/// <param name="Context">拥有该客体的上下文。</param>
+/// <param name="Type">该上下文中的客体类型。</param>
+/// <param name="Id">内部标识。</param>
+public sealed record AuditSubjectReference(string Context, string Type, string Id);
+
+/// <summary>事实所属执行与原发起关系；来源业务上下文与执行宿主可以不同。</summary>
+/// <param name="OperationId">当前执行标识。</param>
+/// <param name="Source">当前执行的来源。</param>
+/// <param name="RootOperationId">根操作标识。</param>
+/// <param name="RootSource">根操作来源。</param>
+/// <param name="InitiatorId">原发起人，不代替事实的当前 Actor。</param>
+public sealed record AuditExecution(Guid OperationId, string Source, Guid RootOperationId, string RootSource, string? InitiatorId);
 
 /// <summary>追加且不可修改的审计事实及接收时刻。</summary>
 public sealed class AuditEntry : AggregateRoot<AuditEntryId>
@@ -56,7 +76,11 @@ public sealed class AuditEntry : AggregateRoot<AuditEntryId>
             || !Valid(fact.EventName, 200) || !Valid(fact.Source, 64) || !Valid(fact.Action, 200)
             || !Valid(fact.SubjectType, 100) || !Valid(fact.SubjectId, 200)
             || (fact.ActorId is not null && !Valid(fact.ActorId, 200))
-            || !Valid(fact.TraceId, 128) || !Valid(fact.CorrelationId, 128))
+            || !Valid(fact.TraceId, 128) || !Valid(fact.CorrelationId, 128)
+            || (fact.RelatedSubject is { } related && (!Valid(related.Context, 64) || !Valid(related.Type, 100) || !Valid(related.Id, 200)))
+            || (fact.Execution is { } execution && (execution.OperationId == Guid.Empty || execution.RootOperationId == Guid.Empty
+                || !Valid(execution.Source, 64) || !Valid(execution.RootSource, 64)
+                || (execution.InitiatorId is not null && !Valid(execution.InitiatorId, 200)))))
         {
             return Result.Failure<AuditEntry>(new Error("auditing.fact.invalid", "审计事实缺少有效来源、身份或关联信息。"));
         }

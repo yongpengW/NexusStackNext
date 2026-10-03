@@ -1,5 +1,6 @@
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Contracts;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.Scheduling.Infrastructure;
 using NexusStackNext.TestSupport;
@@ -277,7 +278,7 @@ public sealed class SchedulingTests
         var occurrence = Assert.Single((await store.ReadOccurrencesAsync(due.Id.Value, 0, 100)).Items);
         Assert.Equal(1, occurrence.TriggerSequence);
         Assert.Equal("Pending", occurrence.DeliveryState);
-        Assert.Equal(occurrence.OccurrenceId, Assert.Single(await store.ReadPendingAsync(10, Now)).Id);
+        Assert.Equal(occurrence.OccurrenceId, Assert.Single(await store.ReadPendingAsync(10, Now), item => item.EventName == ScheduleTriggeredV1.Name).Id);
         Assert.Empty((await store.ReadOccurrencesAsync(notYet.Id.Value, 0, 100)).Items);
     }
 

@@ -30,6 +30,10 @@ HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符�
 
 仅 Development / Testing 允许显式选择 `Files__Storage__Provider=Memory`。无库平台演示还需同时选择 Identity、Platform 和 Auditing 的 Memory 模式；内存元数据会在重启后丢失，已有磁盘字节不能因此被认作公开文件。
 
+Memory 保存也会生成行审计和最小生命周期事实；元数据、首次删除来源与整批事实在同一临界区提交，失败或取消不留部分状态。
+各请求使用独立仓储作用域及共享存储，查询返回快照，版本冲突不会覆盖胜者。配置 RabbitMQ 后宿主自动交付 Files Outbox。
+内存中未交付的事实随进程结束丢失；已获 broker 确认的消息可在来源结束后由中央接纳。这仍是开发适配器，不提供持久恢复保证。
+
 ## 上传资源限制
 
 `Files__Upload__MaxBytes` 默认 64 MiB；`Files__Upload__MaxConcurrentUploads` 默认每宿主 4 个。必须为正数。上传逐段读写，不要求请求体可定位，不把整份内容缓存在内存中；缺少 Content-Length 也会按实际字节计数。
@@ -43,6 +47,11 @@ HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符�
 删除先持久停止提供文件，再尝试清除字节。完成时返回 204；存储暂不可用时返回 202，`Location` 指向删除状态接口，响应中的 `completed=false` 表示还有持久待办。只有归属者可以查询；后台在存储恢复或进程重启后继续处理，完成状态也会保存。重复删除已完成的文件返回 204。404 仅表示不可访问，不能作为物理字节已清除的证明。
 
 恢复配置：`Files__Cleanup__IntervalSeconds=30`、`Files__Cleanup__BatchSize=64`、`Files__Cleanup__RetryDelaySeconds=30`、`Files__Cleanup__OrphanAgeSeconds=3600`。每轮只扫描有界候选；失败删除有持久重试时间。每份文件单独提交，不将整批文件并入一个聚合事务。
+
+首次删除请求的安全执行来源与删除状态同事务保存，重复删除不覆盖。后台恢复每次以
+`files.deletion.recover` 记录独立系统操作，并关联原发起人；缺少来源时不根据文件归属者推断。
+`deferred` 表示本次仍未确认清除，`completed` 表示已确认；字节移除事实另由 Files Outbox 可靠交付。
+后台观察、HTTP 202 与业务事实的区别见[操作日志](operation-logging.md)及[文件事实设计](../src/Services/Files/docs/adr/0004-file-facts-follow-the-committed-lifecycle.md)。
 
 尚未尝试的删除优先于到期重试，两个元数据适配器使用一致的空值排序。独立元数据集必须使用各自独占的字节目录；不要让不同数据库的恢复者操作同一目录。
 

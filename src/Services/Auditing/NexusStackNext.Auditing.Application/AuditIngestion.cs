@@ -20,6 +20,12 @@ public interface IAuditEntryStore
     /// <param name="cancellationToken">取消。</param>
     /// <returns>本页和总数。</returns>
     Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default);
+
+    /// <summary>精确过滤并读取有界调查页；默认只查询最近七天。</summary>
+    /// <param name="query">分页、时间和关联过滤。</param>
+    /// <param name="cancellationToken">取消。</param>
+    /// <returns>本页和过滤后的总数。</returns>
+    Task<AuditPage> QueryAsync(AuditQuery query, CancellationToken cancellationToken = default);
 }
 
 /// <summary>受限调查的一页审计事实。</summary>

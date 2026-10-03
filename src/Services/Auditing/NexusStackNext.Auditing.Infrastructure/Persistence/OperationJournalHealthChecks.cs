@@ -25,7 +25,8 @@ internal sealed class OperationJournalStartupCheck(IDbContextFactory<OperationJo
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
-internal sealed class OperationJournalHealthCheck(IDbContextFactory<OperationJournalDbContext> contexts, OperationJournalStatus status) : IHealthCheck
+internal sealed class OperationJournalHealthCheck(IDbContextFactory<OperationJournalDbContext> contexts, OperationJournalStatus status,
+    OperationJournalCapacityOptions capacity) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext healthContext, CancellationToken cancellationToken = default)
     {
@@ -34,9 +35,10 @@ internal sealed class OperationJournalHealthCheck(IDbContextFactory<OperationJou
         try
         {
             await using var context = await contexts.CreateDbContextAsync(timeout.Token).ConfigureAwait(false);
-            await OperationJournalDatabase.CheckSchemaAsync(context, timeout.Token).ConfigureAwait(false);
+            var usage = await OperationJournalDatabase.CheckSchemaAsync(context, timeout.Token).ConfigureAwait(false);
             var stopped = await context.Outbox.AnyAsync(entry => entry.DeadLetteredAt != null, timeout.Token).ConfigureAwait(false);
-            return OperationJournalHealth.Result(status, stopped);
+            var recoveries = await context.Set<OperationJournalRecoveryRecord>().LongCountAsync(timeout.Token).ConfigureAwait(false);
+            return OperationJournalHealth.Result(status, stopped, usage.RecordCount, usage.PayloadBytes, recoveries, capacity);
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException or InvalidOperationException)
         {
@@ -48,19 +50,42 @@ internal sealed class OperationJournalHealthCheck(IDbContextFactory<OperationJou
     }
 }
 
-internal sealed class InMemoryOperationJournalHealthCheck(InMemoryOperationJournal journal, OperationJournalStatus status) : IHealthCheck
+internal sealed class InMemoryOperationJournalHealthCheck(InMemoryOperationJournal journal, OperationJournalStatus status,
+    OperationJournalCapacityOptions capacity) : IHealthCheck
 {
-    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext healthContext, CancellationToken cancellationToken = default) =>
-        Task.FromResult(OperationJournalHealth.Result(status, journal.Outbox.Entries.Any(entry => entry.IsDeadLettered)));
+    public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext healthContext, CancellationToken cancellationToken = default)
+    {
+        var usage = journal.Usage();
+        return Task.FromResult(OperationJournalHealth.Result(status, journal.HasDeadLetters,
+            usage.Records, usage.PayloadBytes, usage.RecoveryRecords, capacity));
+    }
 }
 
 internal static class OperationJournalHealth
 {
-    internal static HealthCheckResult Result(OperationJournalStatus status, bool stopped)
+    internal static HealthCheckResult Result(OperationJournalStatus status, bool stopped, long records, long bytes, long recoveries,
+        OperationJournalCapacityOptions capacity)
     {
-        var data = new Dictionary<string, object> { ["failedWrites"] = status.FailureCount, ["hasDeadLetters"] = stopped, ["storageAvailable"] = true };
-        return status.FailureCount > 0 || stopped
-            ? HealthCheckResult.Degraded("OperationJournal 存在未登记的记录或已停止的投递；后续成功不会消除这些缺口。", data: data)
+        var full = records >= capacity.MaxRecords || bytes >= capacity.MaxPayloadBytes;
+        var recoveryFull = recoveries >= capacity.MaxRecoveryRecords;
+        var data = new Dictionary<string, object>
+        {
+            ["failedWrites"] = status.FailureCount,
+            ["hasDeadLetters"] = stopped,
+            ["storageAvailable"] = true,
+            ["retainedRecords"] = records,
+            ["retainedPayloadBytes"] = bytes,
+            ["maxRecords"] = capacity.MaxRecords,
+            ["maxPayloadBytes"] = capacity.MaxPayloadBytes,
+            ["capacityReached"] = full,
+            ["retainedRecoveryRecords"] = recoveries,
+            ["maxRecoveryRecords"] = capacity.MaxRecoveryRecords,
+            ["recoveryCapacityReached"] = recoveryFull,
+            ["cleanupFailures"] = status.CleanupFailureCount,
+            ["cleanupDegraded"] = status.CleanupDegraded,
+        };
+        return status.FailureCount > 0 || stopped || full || recoveryFull || status.CleanupDegraded
+            ? HealthCheckResult.Degraded("OperationJournal 存在采集缺口、停止投递或容量不足；请检查日志诊断。", data: data)
             : HealthCheckResult.Healthy(data: data);
     }
 }

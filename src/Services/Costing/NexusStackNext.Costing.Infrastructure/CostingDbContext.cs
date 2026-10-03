@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Costing.Application;
@@ -17,6 +18,7 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("costing");
+        modelBuilder.ConfigureCommittedFactCleanup();
         var sheet = modelBuilder.Entity<CostSheet>();
         sheet.ToTable("sheets");
         sheet.HasKey(x => x.Id);
@@ -102,7 +104,11 @@ public static class CostingDatabase
     {
         var builder = new DbContextOptionsBuilder<CostingDbContext>()
             .UseNpgsql(connectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "costing"));
-        if (services is not null) { builder.UseNexusStackAuditInterceptor(services); }
+        if (services is not null)
+        {
+            builder.UseNexusStackAuditInterceptor(services)
+                .AddInterceptors(services.GetRequiredService<CostingCommittedFactInterceptor>());
+        }
         return new CostingDbContext(builder.Options);
     }
 

@@ -52,6 +52,14 @@ internal sealed class EfSettingRepository(PlatformDbContext context, IIntegratio
         }
         catch (DbUpdateException error) when (error.InnerException is PostgresException
         {
+            SqlState: "P0001", ConstraintName: "platform_fact_capacity_exhausted",
+        })
+        {
+            context.ChangeTracker.Clear();
+            return Result.Failure(SettingStore.AuditCapacityExhausted);
+        }
+        catch (DbUpdateException error) when (error.InnerException is PostgresException
+        {
             SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: "ux_global_settings_key",
         })
         {

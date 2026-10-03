@@ -11,7 +11,7 @@ using Npgsql;
 
 namespace NexusStackNext.Scheduling.Infrastructure;
 
-internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegrationEventSerializer serializer) : IScheduledTaskStore
+internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegrationEventSerializer serializer, ScheduledPlanCommittedFacts facts) : IScheduledTaskStore
 {
     public async Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default) =>
         await context.Plans.AsNoTracking().Where(task => task.IsEnabled && task.NextRunAt <= now && (task.RetryAt == null || task.RetryAt <= now))
@@ -35,23 +35,35 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
         return new(items, total);
     }
 
-    public Task<Result> AddAsync(ScheduledTask task, ExecutionOrigin? origin = null, CancellationToken cancellationToken = default)
+    public async Task<Result> AddAsync(ScheduledTask task, ExecutionOrigin? origin = null, CancellationToken cancellationToken = default)
     {
-        context.Plans.Add(task);
-        context.Entry(task).Property<ExecutionOrigin?>(SchedulingDbContext.ExecutionOriginProperty).CurrentValue = origin;
-        return CommitAsync(cancellationToken);
+        try
+        {
+            context.Plans.Add(task);
+            context.Entry(task).Property<ExecutionOrigin?>(SchedulingDbContext.ExecutionOriginProperty).CurrentValue = origin;
+            context.Outbox.AddRange(facts.Create(null, task));
+            return await CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally { context.ChangeTracker.Clear(); }
     }
 
     public Task<ExecutionOrigin?> ReadExecutionOriginAsync(ScheduledTaskId id, CancellationToken cancellationToken = default) =>
         context.Plans.AsNoTracking().Where(task => task.Id == id)
             .Select(task => EF.Property<ExecutionOrigin?>(task, SchedulingDbContext.ExecutionOriginProperty)).SingleOrDefaultAsync(cancellationToken);
 
-    public Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default)
+    public async Task<Result> SaveAsync(ScheduledTask task, long expectedVersion, CancellationToken cancellationToken = default)
     {
         context.ChangeTracker.Clear();
-        var entry = context.Update(task);
-        entry.Property(value => value.Version).OriginalValue = expectedVersion;
-        return CommitAsync(cancellationToken);
+        try
+        {
+            var before = await context.Plans.AsNoTracking().SingleOrDefaultAsync(item => item.Id == task.Id, cancellationToken).ConfigureAwait(false);
+            if (before is null || before.Version != expectedVersion) { return Result.Failure(TaskRegistry.Conflict); }
+            var entry = context.Update(task);
+            entry.Property(value => value.Version).OriginalValue = expectedVersion;
+            context.Outbox.AddRange(facts.Create(before, task));
+            return await CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally { context.ChangeTracker.Clear(); }
     }
 
     private async Task<Result> CommitAsync(CancellationToken cancellationToken)
@@ -87,16 +99,23 @@ internal sealed class EfScheduledTaskStore(SchedulingDbContext context, IIntegra
                     ? await context.Occurrences.AsNoTracking().SingleOrDefaultAsync(item => item.OccurrenceId == id, cancellationToken).ConfigureAwait(false) : null;
                 return existing == decision && original == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict);
             }
-            // 计划、决定、可选发生与 Outbox 使用同一次 SaveChanges 的事务；重试不再次推进聚合。
-            var entry = context.Update(task.Snapshot());
-            entry.Property(value => value.Version).OriginalValue = expectedVersion;
-            context.Decisions.Add(decision);
-            if (occurrence is not null)
+            try
             {
-                context.Occurrences.Add(occurrence);
-                context.Outbox.Add(OutboxEntry.From(occurrence.ToEvent(), serializer));
+                var before = await context.Plans.AsNoTracking().SingleOrDefaultAsync(item => item.Id == task.Id, cancellationToken).ConfigureAwait(false);
+                if (before is null || before.Version != expectedVersion) { return Result.Failure(TaskRegistry.Conflict); }
+                // 计划、决定、可选发生与全部 Outbox 使用同一次 SaveChanges 的事务；重试不再次推进聚合。
+                var entry = context.Update(task.Snapshot());
+                entry.Property(value => value.Version).OriginalValue = expectedVersion;
+                context.Decisions.Add(decision);
+                if (occurrence is not null)
+                {
+                    context.Occurrences.Add(occurrence);
+                    context.Outbox.Add(OutboxEntry.From(occurrence.ToEvent(), serializer));
+                }
+                context.Outbox.AddRange(facts.Create(before, task, decision));
+                return await CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            return await CommitAsync(cancellationToken).ConfigureAwait(false);
+            finally { context.ChangeTracker.Clear(); }
         });
 
     public async Task<ScheduleDecisionPage> ReadDecisionsAsync(long planId, long offset, int limit, CancellationToken cancellationToken = default)
@@ -155,6 +174,7 @@ public static class SchedulingPersistenceServiceCollectionExtensions
         services.AddDbContext<SchedulingDbContext>((provider, options) => options
             .UseNexusStackPostgres(connectionString, SchedulingDbContext.SchemaName).UseNexusStackInterceptors(provider));
         services.AddScoped<IScheduledTaskStore, EfScheduledTaskStore>();
+        services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddKeyedScoped<IOutboxStore, EfOutboxStore<SchedulingDbContext>>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey);
         services.AddScoped<TaskRegistry>();
         services.AddScoped<ScheduleRunner>();

@@ -87,6 +87,7 @@ public abstract class NexusStackDbContext(DbContextOptions options, string schem
             entity.Property(entry => entry.EventName).HasMaxLength(200).IsRequired();
             entity.Property(entry => entry.Payload).IsRequired();
             entity.Property(entry => entry.LastFailure).HasMaxLength(2000);
+            entity.Property(entry => entry.RetryRevision).HasDefaultValue(0L);
 
             // 投递循环的查询形状就是这三个条件。**索引与查询成对出现**，
             // 否则它只是装饰——而这个查询每几秒就要跑一次。

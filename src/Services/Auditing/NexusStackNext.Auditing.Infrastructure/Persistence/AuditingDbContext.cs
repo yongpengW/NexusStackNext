@@ -44,6 +44,26 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
             fact.Property(item => item.OccurredAt).HasColumnName("OccurredAt");
             fact.Property(item => item.TraceId).HasColumnName("TraceId").HasMaxLength(128);
             fact.Property(item => item.CorrelationId).HasColumnName("CorrelationId").HasMaxLength(128);
+            fact.OwnsOne(item => item.RelatedSubject, related =>
+            {
+                related.Property(item => item.Context).HasColumnName("RelatedContext").HasMaxLength(64);
+                related.Property(item => item.Type).HasColumnName("RelatedSubjectType").HasMaxLength(100);
+                related.Property(item => item.Id).HasColumnName("RelatedSubjectId").HasMaxLength(200);
+                related.HasIndex(item => new { item.Context, item.Type, item.Id }).HasDatabaseName("ix_audit_entries_related");
+            });
+            fact.OwnsOne(item => item.Execution, execution =>
+            {
+                execution.Property(item => item.OperationId).HasColumnName("OperationId");
+                execution.Property(item => item.Source).HasColumnName("OperationSource").HasMaxLength(64);
+                execution.Property(item => item.RootOperationId).HasColumnName("RootOperationId");
+                execution.Property(item => item.RootSource).HasColumnName("RootSource").HasMaxLength(64);
+                execution.Property(item => item.InitiatorId).HasColumnName("InitiatorId").HasMaxLength(200);
+                execution.HasIndex(item => new { item.OperationId, item.Source }).HasDatabaseName("ix_audit_entries_operation");
+                execution.HasIndex(item => new { item.RootOperationId, item.RootSource }).HasDatabaseName("ix_audit_entries_root");
+            });
+            fact.HasIndex(item => item.OccurredAt).HasDatabaseName("ix_audit_entries_occurred");
+            fact.HasIndex(item => new { item.SubjectType, item.SubjectId, item.OccurredAt }).HasDatabaseName("ix_audit_entries_subject");
+            fact.HasIndex(item => new { item.ActorId, item.OccurredAt }).HasDatabaseName("ix_audit_entries_actor");
             fact.HasIndex(item => new { item.EventName, item.MessageId }).IsUnique();
         });
         entry.Navigation(item => item.Fact).IsRequired();
@@ -90,6 +110,9 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
                 metadata.Property(item => item.SchedulePlanId).HasColumnName("SchedulePlanId");
                 metadata.Property(item => item.ScheduleExpectedVersion).HasColumnName("ScheduleExpectedVersion");
                 metadata.Property(item => item.ScheduleDecisionId).HasColumnName("ScheduleDecisionId");
+                metadata.HasIndex(item => new { item.SubjectType, item.SubjectId }).HasDatabaseName("ix_operation_observations_subject");
+                metadata.HasIndex(item => new { item.TaskId, item.TaskEpoch }).HasDatabaseName("ix_operation_observations_task");
+                metadata.HasIndex(item => new { item.RootOperationId, item.RootSource }).HasDatabaseName("ix_operation_observations_root");
             });
             data.HasIndex(item => new { item.Source, item.OperationId, item.Phase }).IsUnique().HasDatabaseName("ux_operation_observations_phase");
             data.HasIndex(item => new { item.OccurredAt, item.Source, item.OperationId }).HasDatabaseName("ix_operation_observations_time");

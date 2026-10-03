@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Domain;
@@ -15,6 +17,13 @@ namespace NexusStackNext.Costing.Infrastructure;
 /// <summary>显式装配 Costing 的 PostgreSQL 命令与查询适配器。</summary>
 public static class CostingServices
 {
+    /// <summary>显式启动本上下文已交付审计事实副本的维护。</summary>
+    /// <param name="services">容器。</param>
+    /// <param name="options">本上下文保留与维护策略。</param>
+    /// <returns>原容器。</returns>
+    public static IServiceCollection AddCostingFactCleanup(this IServiceCollection services, CommittedFactCleanupOptions? options = null)
+        => services.AddCommittedFactCleanup<CostingDbContext>("costing", NexusStackNext.Costing.Contracts.CostSheetCommittedV1.Name, options);
+
     /// <summary>注册持久化成本核算模块。</summary>
     /// <param name="services">容器。</param>
     /// <param name="connectionString">所属数据库的连接配置。</param>
@@ -27,6 +36,8 @@ public static class CostingServices
         var policy = options ?? new CostingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
+        services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
+        services.AddScoped<CostingCommittedFactInterceptor>();
         services.AddScoped(provider => CostingDatabase.CreateContext(connectionString, provider));
         services.AddScoped<IOutboxStore, EfOutboxStore<CostingDbContext>>();
         services.AddScoped<IQueryHandler<GetCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();

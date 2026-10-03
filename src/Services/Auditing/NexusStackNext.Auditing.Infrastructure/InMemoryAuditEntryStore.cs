@@ -1,12 +1,14 @@
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Domain.Entries;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
 /// <summary>开发测试适配器：同一把锁原子登记事实身份与记录，读取返回不可变事实。</summary>
-public sealed class InMemoryAuditEntryStore : IAuditEntryStore
+/// <param name="clock">默认调查窗口的时钟。</param>
+public sealed class InMemoryAuditEntryStore(IClock clock) : IAuditEntryStore
 {
     private readonly Dictionary<(string EventName, Guid MessageId), AuditEntry> _entries = new();
     private readonly Lock _writes = new();
@@ -30,17 +32,21 @@ public sealed class InMemoryAuditEntryStore : IAuditEntryStore
     }
 
     /// <inheritdoc />
-    public Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default)
+    public Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default) =>
+        QueryAsync(new AuditQuery(page, limit), cancellationToken);
+
+    /// <inheritdoc />
+    public Task<AuditPage> QueryAsync(AuditQuery query, CancellationToken cancellationToken = default)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(page, 1000);
-        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
+        ArgumentNullException.ThrowIfNull(query);
+        query = query.Normalize(clock.UtcNow);
+        if (query.Validate().IsFailure) { throw new ArgumentException("事实查询条件无效。", nameof(query)); }
         cancellationToken.ThrowIfCancellationRequested();
         lock (_writes)
         {
-            return Task.FromResult(new AuditPage(_entries.Values.OrderByDescending(static entry => entry.RecordedAt).ThenByDescending(static entry => entry.Id.Value)
-                .Skip((page - 1) * limit).Take(limit).ToArray(), _entries.Count));
+            var matches = _entries.Values.AsQueryable().Where(query.Predicate()).ToArray();
+            return Task.FromResult(new AuditPage(matches.OrderByDescending(static entry => entry.RecordedAt).ThenByDescending(static entry => entry.Id.Value)
+                .Skip((query.Page - 1) * query.Limit).Take(query.Limit).ToArray(), matches.LongLength));
         }
     }
 }

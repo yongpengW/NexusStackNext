@@ -7,6 +7,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
@@ -34,12 +35,15 @@ public static class PricingModule
         if (cache?.Enabled == true) { services.AddPricingCacheInvalidationWorker(); }
         services.AddSingleton(new PricingConnection(connection));
         services.AddHostedService<PricingStartupCheck>();
+        services.AddPricingFactCleanup(configuration.GetSection("Pricing:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         if (configuration.GetValue("Pricing:Worker:Enabled", true)) { services.AddHostedService<PricingWorker>(); }
         if (configuration.GetValue("Pricing:Messaging:Enabled", false))
         {
             var broker = configuration.GetSection("RabbitMq").Get<RabbitMqOptions>()
                 ?? throw new InvalidOperationException("必须配置 RabbitMq。");
             broker.Validate();
+            services.AddSingleton(configuration.GetSection("Pricing:Delivery").Get<OutboxDeliveryOptions>() ?? new OutboxDeliveryOptions());
+            services.AddNexusStackRabbitMqEventBus(broker);
             var consumer = configuration.GetValue<string>("Pricing:Messaging:ConsumerName") ?? "pricing-cost";
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = consumer });

@@ -79,7 +79,8 @@ public sealed class AuditPersistenceJourneyTests
         Assert.Equal(0, migration.ExitCode);
         Assert.Contains("Auditing migrations applied.", migration.Output, StringComparison.Ordinal);
         var fact = new AuditFact(Guid.NewGuid(), "platform.setting-committed.v1", "platform", "platform.setting.changed",
-            "global-setting", "1001", 2, "42", DateTimeOffset.Parse("2026-10-02T01:02:03.123456Z", System.Globalization.CultureInfo.InvariantCulture), "trace-1", "correlation-1");
+            "global-setting", "1001", 2, "42", DateTimeOffset.Parse("2026-10-02T01:02:03.123456Z", System.Globalization.CultureInfo.InvariantCulture), "trace-1", "correlation-1")
+        { Execution = new AuditExecution(Guid.NewGuid(), "platform-host", Guid.NewGuid(), "gateway", "original-user") };
         await using (var first = new PersistentIdentityApp(database.ConnectionString, "audit-root-password"))
         {
             using var client = first.CreateClient();
@@ -93,14 +94,27 @@ public sealed class AuditPersistenceJourneyTests
             var ingestion = scope.ServiceProvider.GetRequiredService<AuditIngestion>();
             Assert.Equal(IngestionOutcome.Duplicate, (await ingestion.IngestAsync(fact)).Value);
             Assert.Equal("auditing.message_conflict", (await ingestion.IngestAsync(fact with { ActorId = "forged" })).Error.Code);
+            foreach (var replacement in new AuditExecution?[]
+            {
+                null,
+                fact.Execution with { OperationId = Guid.NewGuid() },
+                fact.Execution with { Source = "another-host" },
+                fact.Execution with { RootOperationId = Guid.NewGuid() },
+                fact.Execution with { RootSource = "another-root" },
+                fact.Execution with { InitiatorId = "another-user" },
+            })
+            {
+                Assert.Equal("auditing.message_conflict", (await ingestion.IngestAsync(fact with { Execution = replacement })).Error.Code);
+            }
         }
         await PlatformSettingsAccessTests.LoginAsync(reader, "journey-root", "audit-root-password");
-        using var response = await reader.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
+        using var response = await reader.GetAsync(new Uri("/api/auditing/entries?from=2026-10-02T00:00:00Z&to=2026-10-03T00:00:00Z", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var page = await response.Content.ReadFromJsonAsync<JsonElement>();
         var saved = Assert.Single(page.GetProperty("data").EnumerateArray()).GetProperty("fact");
         Assert.Equal(fact.MessageId, saved.GetProperty("messageId").GetGuid());
         Assert.Equal("42", saved.GetProperty("actorId").GetString());
         Assert.Equal(fact.OccurredAt, saved.GetProperty("occurredAt").GetDateTimeOffset());
+        Assert.Equal(fact.Execution.OperationId, saved.GetProperty("execution").GetProperty("operationId").GetGuid());
     }
 }

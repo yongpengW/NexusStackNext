@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -8,22 +9,32 @@ using NexusStackNext.Scheduling.Domain.Tasks;
 namespace NexusStackNext.Scheduling.Infrastructure;
 
 /// <summary>开发用计划存储。读取隔离快照，编码唯一性和版本提交在同一把锁内裁决。</summary>
-public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer) : IScheduledTaskStore, IOutboxStore
+public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxStore
 {
-    private readonly Dictionary<long, ScheduledTask> _tasks = [];
-    private readonly Lock _writes = new();
-    private readonly Dictionary<Guid, ScheduleOccurrence> _occurrences = [];
-    private readonly Dictionary<Guid, ScheduleDecision> _decisions = [];
-    private readonly Dictionary<Guid, OutboxEntry> _outbox = [];
-    private readonly Dictionary<long, ExecutionOrigin?> _origins = [];
+    private readonly SchedulingMemoryState _state;
+    private readonly IIntegrationEventSerializer _serializer;
+    private readonly ScheduledPlanCommittedFacts _facts;
+
+    /// <summary>创建独立的内存存储；宿主装配使用共享状态及每次调用的事实上下文。</summary>
+    /// <param name="serializer">消息序列化。</param>
+    /// <param name="clock">独立应用的事实时钟。</param>
+    public InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, IClock? clock = null)
+        : this(serializer, new SchedulingMemoryState(), new ScheduledPlanCommittedFacts(clock ?? new SystemClock(), serializer)) { }
+
+    internal InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, SchedulingMemoryState state, ScheduledPlanCommittedFacts facts)
+    {
+        _serializer = serializer;
+        _state = state;
+        _facts = facts;
+    }
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            return Task.FromResult<IReadOnlyList<ScheduledTask>>(_tasks.Values.Where(task => task.IsDue(now))
+            return Task.FromResult<IReadOnlyList<ScheduledTask>>(_state.Tasks.Values.Where(task => task.IsDue(now))
                 .OrderBy(task => task.NextRunAt).ThenBy(task => task.Id.Value).Take(batchSize).Select(task => task.Snapshot()).ToArray());
         }
     }
@@ -32,9 +43,9 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     public Task<IReadOnlyList<ScheduledTask>> ListAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            return Task.FromResult<IReadOnlyList<ScheduledTask>>(_tasks.Values.OrderBy(task => task.Code.Value, StringComparer.Ordinal)
+            return Task.FromResult<IReadOnlyList<ScheduledTask>>(_state.Tasks.Values.OrderBy(task => task.Code.Value, StringComparer.Ordinal)
                 .Select(task => task.Snapshot()).ToArray());
         }
     }
@@ -44,7 +55,7 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes) { return Task.FromResult(_tasks.GetValueOrDefault(id.Value)?.Snapshot()); }
+        lock (_state.Writes) { return Task.FromResult(_state.Tasks.GetValueOrDefault(id.Value)?.Snapshot()); }
     }
 
     /// <inheritdoc />
@@ -55,10 +66,10 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, TaskRegistry.MaximumPageSize);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            return Task.FromResult(new ScheduledTaskPage(_tasks.Values.OrderBy(task => task.Id.Value)
-                .Skip((page - 1) * limit).Take(limit).Select(task => task.Snapshot()).ToArray(), _tasks.Count));
+            return Task.FromResult(new ScheduledTaskPage(_state.Tasks.Values.OrderBy(task => task.Id.Value)
+                .Skip((page - 1) * limit).Take(limit).Select(task => task.Snapshot()).ToArray(), _state.Tasks.Count));
         }
     }
 
@@ -67,14 +78,16 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     {
         ArgumentNullException.ThrowIfNull(task);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            if (_tasks.ContainsKey(task.Id.Value) || _tasks.Values.Any(existing => existing.Code.Equals(task.Code)))
+            if (_state.Tasks.ContainsKey(task.Id.Value) || _state.Tasks.Values.Any(existing => existing.Code.Equals(task.Code)))
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.CodeTaken));
             }
-            _tasks.Add(task.Id.Value, task.Snapshot());
-            _origins.Add(task.Id.Value, origin);
+            var facts = _facts.Create(null, task);
+            _state.Tasks.Add(task.Id.Value, task.Snapshot());
+            _state.Origins.Add(task.Id.Value, origin);
+            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -84,7 +97,7 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes) { return Task.FromResult(_origins.GetValueOrDefault(id.Value)); }
+        lock (_state.Writes) { return Task.FromResult(_state.Origins.GetValueOrDefault(id.Value)); }
     }
 
     /// <inheritdoc />
@@ -92,13 +105,15 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     {
         ArgumentNullException.ThrowIfNull(task);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            if (!_tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion)
+            if (!_state.Tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion)
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.Conflict));
             }
-            _tasks[task.Id.Value] = task.Snapshot();
+            var facts = _facts.Create(current, task);
+            _state.Tasks[task.Id.Value] = task.Snapshot();
+            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -110,25 +125,27 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
         ArgumentNullException.ThrowIfNull(decision);
         cancellationToken.ThrowIfCancellationRequested();
         if (decision.OccurrenceId != occurrence?.OccurrenceId) { return Task.FromResult(Result.Failure(TaskRegistry.Conflict)); }
-        var pending = occurrence is null ? null : OutboxEntry.From(occurrence.ToEvent(), serializer);
-        lock (_writes)
+        var pending = occurrence is null ? null : OutboxEntry.From(occurrence.ToEvent(), _serializer);
+        lock (_state.Writes)
         {
-            if (_decisions.TryGetValue(decision.DecisionId, out var existing))
+            if (_state.Decisions.TryGetValue(decision.DecisionId, out var existing))
             {
-                var original = decision.OccurrenceId is { } id ? _occurrences.GetValueOrDefault(id) : null;
+                var original = decision.OccurrenceId is { } id ? _state.Occurrences.GetValueOrDefault(id) : null;
                 return Task.FromResult(existing == decision && original == occurrence ? Result.Success() : Result.Failure(TaskRegistry.Conflict));
             }
-            if (!_tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion
-                || occurrence is not null && _occurrences.ContainsKey(occurrence.OccurrenceId))
+            if (!_state.Tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion
+                || occurrence is not null && _state.Occurrences.ContainsKey(occurrence.OccurrenceId))
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.Conflict));
             }
-            _tasks[task.Id.Value] = task.Snapshot();
-            _decisions.Add(decision.DecisionId, decision);
+            var facts = _facts.Create(current, task, decision);
+            _state.Tasks[task.Id.Value] = task.Snapshot();
+            _state.Decisions.Add(decision.DecisionId, decision);
+            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
             if (occurrence is not null)
             {
-                _occurrences.Add(occurrence.OccurrenceId, occurrence);
-                _outbox.Add(pending!.Id, pending);
+                _state.Occurrences.Add(occurrence.OccurrenceId, occurrence);
+                _state.Outbox.Add(pending!.Id, pending);
             }
             return Task.FromResult(Result.Success());
         }
@@ -141,9 +158,9 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            var query = _decisions.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.PlanVersion);
+            var query = _state.Decisions.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.PlanVersion);
             return Task.FromResult(new ScheduleDecisionPage(query.Skip((int)Math.Min(offset, int.MaxValue)).Take(limit).ToArray(), query.LongCount()));
         }
     }
@@ -155,11 +172,11 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            var query = _occurrences.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.TriggerSequence);
+            var query = _state.Occurrences.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.TriggerSequence);
             return Task.FromResult(new ScheduleOccurrencePage(query.Skip((int)Math.Min(offset, int.MaxValue)).Take(limit)
-                .Select(item => ScheduleOccurrenceDelivery.From(item, _outbox[item.OccurrenceId])).ToArray(), query.LongCount()));
+                .Select(item => ScheduleOccurrenceDelivery.From(item, _state.Outbox[item.OccurrenceId])).ToArray(), query.LongCount()));
         }
     }
 
@@ -168,9 +185,9 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            return Task.FromResult<IReadOnlyList<OutboxEntry>>(_outbox.Values.Where(entry => entry.IsPending
+            return Task.FromResult<IReadOnlyList<OutboxEntry>>(_state.Outbox.Values.Where(entry => entry.IsPending
                 && (entry.NextAttemptAt is null || entry.NextAttemptAt <= now)).OrderBy(entry => entry.OccurredAt)
                 .ThenBy(entry => entry.Id).Take(batchSize).ToArray());
         }
@@ -179,32 +196,47 @@ public sealed class InMemoryScheduledTaskStore(IIntegrationEventSerializer seria
     public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
         UpdateDeliveryAsync(id, entry => entry.MarkDelivered(now), cancellationToken);
     /// <inheritdoc />
-    public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
-        UpdateDeliveryAsync(id, entry => entry.RecordFailure(failure, nextAttemptAt), cancellationToken);
+    public Task<bool> MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateDeliveryAsync(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
     /// <inheritdoc />
-    public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        UpdateDeliveryAsync(id, entry => entry.MarkDeadLettered(failure, now), cancellationToken);
+    public Task<bool> MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateDeliveryAsync(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
 
-    private Task UpdateDeliveryAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    private Task<bool> UpdateDeliveryAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes) { if (_outbox.TryGetValue(id, out var entry)) { _outbox[id] = update(entry); } }
-        return Task.CompletedTask;
+        lock (_state.Writes)
+        {
+            if (!_state.Outbox.TryGetValue(id, out var entry)) { return Task.FromResult(false); }
+            var updated = update(entry);
+            _state.Outbox[id] = updated;
+            return Task.FromResult(updated != entry);
+        }
     }
 
     /// <inheritdoc />
     public Task<Result<ScheduleOccurrenceDelivery>> RetryOccurrenceAsync(Guid occurrenceId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        lock (_state.Writes)
         {
-            _outbox.TryGetValue(occurrenceId, out var entry);
+            _state.Outbox.TryGetValue(occurrenceId, out var entry);
             var retry = ScheduleOccurrenceDelivery.Retry(entry, expectedDeadLetteredAt);
             if (retry.IsFailure) { return Task.FromResult(Result.Failure<ScheduleOccurrenceDelivery>(retry.Error)); }
-            _outbox[occurrenceId] = retry.Value;
-            return Task.FromResult(Result.Success(ScheduleOccurrenceDelivery.From(_occurrences[occurrenceId], retry.Value)));
+            _state.Outbox[occurrenceId] = retry.Value;
+            return Task.FromResult(Result.Success(ScheduleOccurrenceDelivery.From(_state.Occurrences[occurrenceId], retry.Value)));
         }
     }
+}
+
+internal sealed class SchedulingMemoryState
+{
+    internal Dictionary<long, ScheduledTask> Tasks { get; } = [];
+    internal Lock Writes { get; } = new();
+    internal Dictionary<Guid, ScheduleOccurrence> Occurrences { get; } = [];
+    internal Dictionary<Guid, ScheduleDecision> Decisions { get; } = [];
+    internal Dictionary<Guid, OutboxEntry> Outbox { get; } = [];
+    internal Dictionary<long, ExecutionOrigin?> Origins { get; } = [];
 }
 
 /// <summary>Scheduling 开发存储的显式装配。</summary>
@@ -218,9 +250,12 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton<InMemoryScheduledTaskStore>();
-        services.AddSingleton<IScheduledTaskStore>(provider => provider.GetRequiredService<InMemoryScheduledTaskStore>());
-        services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemoryScheduledTaskStore>());
+        services.AddSingleton<SchedulingMemoryState>();
+        services.AddScoped<ScheduledPlanCommittedFacts>();
+        services.AddScoped(provider => new InMemoryScheduledTaskStore(provider.GetRequiredService<IIntegrationEventSerializer>(),
+            provider.GetRequiredService<SchedulingMemoryState>(), provider.GetRequiredService<ScheduledPlanCommittedFacts>()));
+        services.AddScoped<IScheduledTaskStore>(provider => provider.GetRequiredService<InMemoryScheduledTaskStore>());
+        services.AddKeyedScoped<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemoryScheduledTaskStore>());
         services.AddScoped<ScheduleRunner>();
         services.AddScoped<TaskRegistry>();
         return services;

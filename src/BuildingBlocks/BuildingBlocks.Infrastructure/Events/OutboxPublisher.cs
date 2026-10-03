@@ -91,21 +91,22 @@ public sealed class OutboxPublisher
 
             if (attemptCount >= _options.MaxAttempts)
             {
-                await _store
-                    .MarkDeadLetteredAsync(entry.Id, failure, _clock.UtcNow, cancellationToken)
+                var applied = await _store
+                    .MarkDeadLetteredAsync(entry.Id, failure, _clock.UtcNow, entry.RetryRevision, cancellationToken)
                     .ConfigureAwait(false);
-                deadLettered++;
+                if (applied) { deadLettered++; }
             }
             else
             {
-                await _store
+                var applied = await _store
                     .MarkFailedAsync(
                         entry.Id,
                         failure,
                         _clock.UtcNow + _options.BackoffFor(attemptCount),
+                        entry.RetryRevision,
                         cancellationToken)
                     .ConfigureAwait(false);
-                retried++;
+                if (applied) { retried++; }
             }
         }
 

@@ -21,6 +21,11 @@ using Yarp.ReverseProxy.Configuration;
 using Yarp.ReverseProxy.Configuration.RouteValidators;
 using Yarp.ReverseProxy.Model;
 
+if (args is ["operation-journal", ..])
+{
+    return await OperationJournalCommand.RunAsync(args[1..]);
+}
+
 if (args is ["migrate-operation-journal"])
 {
     return await OperationJournalModule.MigrateOperationJournalAsync();

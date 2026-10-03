@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
@@ -24,11 +25,17 @@ public sealed class ScheduledCostBusinessJourneyTests
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await TaskOperationJourneyTests.MigrateJournalAsync(typeof(CostingHostMarker).Assembly.Location, database.ConnectionString);
+        await using var central = await IdentityJourneyDatabase.CreateAsync();
+        await central.MigrateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-schedule-crash", ClientName = prefix };
         var subscription = new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = prefix + "-costing" };
-        var topology = EventTopology.Create(broker.ExchangeName, [subscription]);
-        var settings = AuditBusinessJourneyTests.Settings(broker, prefix + "-unused-audit");
+        var facts = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-audit" };
+        var operations = new EventSubscription { EventName = OperationObservedV1.Name, ConsumerName = prefix + "-operations" };
+        var topology = EventTopology.Create(broker.ExchangeName, [subscription, facts, operations]);
+        var settings = AuditBusinessJourneyTests.Settings(broker, facts.ConsumerName);
+        settings["Auditing__Messaging__OperationConsumerName"] = operations.ConsumerName;
         settings["Costing__Messaging__Enabled"] = "true";
         settings["Costing__Scheduling__ConsumerName"] = subscription.ConsumerName;
         var message = new ScheduleTriggeredV1
@@ -45,6 +52,12 @@ public sealed class ScheduledCostBusinessJourneyTests
         try
         {
             Assert.True((await new RabbitMqTopologyBootstrapper(broker).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+            await using var reader = await PlatformHostProcess.StartAsync(central.ConnectionString, "schedule-observation-root", settings: settings);
+            await PlatformSettingsAccessTests.LoginAsync(reader.Client, "journey-root", "schedule-observation-root");
+            settings["OperationJournal__Storage__Provider"] = "Postgres";
+            settings["ConnectionStrings__OperationJournal"] = database.ConnectionString;
+            var observationPath = $"/api/auditing/operations?source=costing&subjectType={ScheduleTriggeredV1.Name}&subjectId={message.EventId:D}";
+            Guid interruptedOperation;
             await using (var pause = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString) { Pooling = false }.ConnectionString))
             await using (var first = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString, settings: settings))
             {
@@ -76,6 +89,10 @@ public sealed class ScheduledCostBusinessJourneyTests
                 Assert.Equal(HttpStatusCode.NotFound, noReceipt.StatusCode);
                 using var noTask = await first.Client.GetAsync(Relative($"/api/costing/tasks/{message.EventId}"));
                 Assert.Equal(HttpStatusCode.NotFound, noTask.StatusCode);
+                var observed = await WaitAsync(reader.Client, observationPath, data => data.GetArrayLength() == 1);
+                var started = Assert.Single(observed.EnumerateArray());
+                Assert.Equal("unconfirmed", started.GetProperty("outcome").GetString());
+                interruptedOperation = started.GetProperty("operationId").GetGuid();
                 // BusinessProcess 的释放直接终止进程；先终止消费者，再释放外部故障屏障。
             }
             await using var recovered = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString, settings: settings);
@@ -84,6 +101,16 @@ public sealed class ScheduledCostBusinessJourneyTests
             Assert.Equal(message.EventId, receipt.GetProperty("taskId").GetGuid());
             var task = await WaitAsync(recovered.Client, $"/api/costing/tasks/{message.EventId}", _ => true);
             Assert.Equal("Pending", task.GetProperty("state").GetString());
+            var observations = await WaitAsync(reader.Client, observationPath, data => data.GetArrayLength() == 2
+                && data.EnumerateArray().Any(item => item.GetProperty("outcome").GetString() == "accepted"));
+            var abandoned = Assert.Single(observations.EnumerateArray(), item => item.GetProperty("operationId").GetGuid() == interruptedOperation);
+            Assert.Equal("unconfirmed", abandoned.GetProperty("outcome").GetString());
+            Assert.Equal(JsonValueKind.Null, abandoned.GetProperty("finishedAt").ValueKind);
+            var accepted = Assert.Single(observations.EnumerateArray(), item => item.GetProperty("outcome").GetString() == "accepted");
+            Assert.Equal(JsonValueKind.Null, accepted.GetProperty("actorId").ValueKind);
+            Assert.Equal("costing.schedule.accept", accepted.GetProperty("metadata").GetProperty("action").GetString());
+            Assert.Equal(JsonValueKind.Null, accepted.GetProperty("metadata").GetProperty("initiatorId").ValueKind);
+            Assert.Equal(accepted.GetProperty("operationId").GetGuid(), task.GetProperty("executionOrigin").GetProperty("operationId").GetGuid());
         }
         finally { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
     }
@@ -189,7 +216,7 @@ public sealed class ScheduledCostBusinessJourneyTests
             await PlatformSettingsAccessTests.LoginAsync(recoveredGateway.Client, "journey-root", "schedule-root-password");
             var receipt = await WaitAsync(recoveredGateway.Client, $"/api/costing/schedule-receipts/{occurrenceId}", data => data.GetProperty("decision").GetString() == "Accepted");
             Assert.Equal(occurrenceId, receipt.GetProperty("taskId").GetGuid());
-            await WaitAsync(recoveredGateway.Client, $"/api/costing/tasks/{occurrenceId}", data => data.GetProperty("state").GetString() == "Succeeded");
+            var scheduledTask = await WaitAsync(recoveredGateway.Client, $"/api/costing/tasks/{occurrenceId}", data => data.GetProperty("state").GetString() == "Succeeded");
             await WaitAsync(recoveredGateway.Client, $"/api/costing/tasks/{occurrenceId}/delivery", data => data.GetProperty("state").GetString() == "Delivered");
             var costAfter = await WaitAsync(recoveredGateway.Client, $"/api/costing/items/{itemId}", _ => true);
             Assert.Equal(costBefore.GetProperty("version").ReadHttpInt64(), costAfter.GetProperty("version").ReadHttpInt64());
@@ -210,6 +237,34 @@ public sealed class ScheduledCostBusinessJourneyTests
             var advanced = await WaitAsync(recoveredGateway.Client, $"/api/pricing/items/{itemId}", data =>
                 data.GetProperty("costingRevision").ReadHttpInt64() == 2 && data.GetProperty("breakEvenPrice").GetDecimal() == 120m);
             Assert.Equal(priceBefore.GetProperty("version").ReadHttpInt64() + 2, advanced.GetProperty("version").ReadHttpInt64());
+            var origin = scheduledTask.GetProperty("executionOrigin");
+            var rootId = origin.GetProperty("rootOperationId").GetGuid();
+            var chain = await WaitAsync(recoveredGateway.Client, $"/api/auditing/operations?rootSource=platform&rootOperationId={rootId:D}", data =>
+                data.EnumerateArray().Any(item => item.GetProperty("source").GetString() == "pricing" && item.GetProperty("outcome").GetString() == "skipped"));
+            var operations = chain.EnumerateArray().ToArray();
+            var definitionOperation = Assert.Single(operations, item => item.GetProperty("operationId").GetGuid() == rootId);
+            Assert.Equal("http", definitionOperation.GetProperty("kind").GetString());
+            var creator = definitionOperation.GetProperty("actorId").GetString();
+            Assert.Equal(receipt.GetProperty("createdBy").GetString(), creator);
+            var decisionOperation = Assert.Single(operations, item => item.GetProperty("kind").GetString() == "schedule");
+            var received = Assert.Single(operations, item => item.GetProperty("source").GetString() == "costing" && item.GetProperty("kind").GetString() == "message");
+            Assert.Equal("accepted", received.GetProperty("outcome").GetString());
+            Assert.Equal(occurrenceId.ToString("D"), received.GetProperty("metadata").GetProperty("subjectId").GetString());
+            Assert.Equal(ScheduleTriggeredV1.Name, received.GetProperty("metadata").GetProperty("subjectType").GetString());
+            Assert.Equal(decisionOperation.GetProperty("operationId").GetGuid(), received.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
+            Assert.Equal(received.GetProperty("operationId").GetGuid(), origin.GetProperty("operationId").GetGuid());
+            var calculated = Assert.Single(operations, item => item.GetProperty("kind").GetString() == "task");
+            Assert.Equal("costing", calculated.GetProperty("source").GetString());
+            Assert.Equal("completed", calculated.GetProperty("outcome").GetString());
+            Assert.Equal(received.GetProperty("operationId").GetGuid(), calculated.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
+            var ignoredResult = Assert.Single(operations, item => item.GetProperty("source").GetString() == "pricing");
+            Assert.Equal("message", ignoredResult.GetProperty("kind").GetString());
+            Assert.Equal(calculated.GetProperty("operationId").GetGuid(), ignoredResult.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
+            Assert.All(operations.Where(item => item.GetProperty("kind").GetString() != "http"), item =>
+            {
+                Assert.Equal(JsonValueKind.Null, item.GetProperty("actorId").ValueKind);
+                Assert.Equal(creator, item.GetProperty("metadata").GetProperty("initiatorId").GetString());
+            });
         }
         finally
         {

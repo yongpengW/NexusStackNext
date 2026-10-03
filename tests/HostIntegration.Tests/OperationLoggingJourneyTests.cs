@@ -3,20 +3,105 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
+using NexusStackNext.Auditing.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
+using NexusStackNext.TestSupport;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
 public sealed class OperationLoggingJourneyTests
 {
+    [AuditBrokerFact]
+    public async Task RecoveredJournal_CanBeCleanedWhileCentralIsOffline_AndBrokerReplayRemainsIdempotent()
+    {
+        await using var central = await IdentityJourneyDatabase.CreateAsync();
+        await central.MigrateAsync();
+        await using var source = await IdentityJourneyDatabase.CreateAsync();
+        await OperationJournalDatabase.MigrateAsync(source.ConnectionString);
+        var now = DateTimeOffset.UtcNow;
+        // PostgreSQL 的时刻精度为微秒；管理请求应回传查询所得的时间，而不是本地未保存的 tick。
+        var stoppedAt = new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero);
+        var message = new OperationObservedV1
+        {
+            EventId = Guid.NewGuid(),
+            OperationId = Guid.NewGuid(),
+            Source = "pricing",
+            Kind = "http",
+            Phase = "finished",
+            Outcome = "accepted",
+            StatusCode = 202,
+            DurationMs = 1,
+            TraceId = "recovered-delivery",
+            HttpMethod = "POST",
+            RouteTemplate = "/api/pricing/cost",
+            OccurredAt = now,
+        };
+        var prefix = RabbitMqTestBroker.UniquePrefix();
+        var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-recovery", ClientName = prefix };
+        var facts = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-facts" };
+        var operations = new EventSubscription { EventName = OperationObservedV1.Name, ConsumerName = prefix + "-operations" };
+        var topology = EventTopology.Create(broker.ExchangeName, [facts, operations]);
+        try
+        {
+            Assert.True((await new RabbitMqTopologyBootstrapper(broker).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+            await using (var original = RecoverySource(source.ConnectionString, now))
+            await using (var seed = original.CreateAsyncScope())
+            {
+                Assert.True((await seed.ServiceProvider.GetRequiredService<IOperationJournal>().AppendAsync(message)).IsSuccess);
+                await seed.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey)
+                    .MarkDeadLetteredAsync(message.EventId, "stopped", stoppedAt, 0);
+            }
+            await using var bus = new RabbitMqEventBus(broker);
+            await using var recovered = RecoverySource(source.ConnectionString, now.AddDays(2));
+            await using var scope = recovered.CreateAsyncScope();
+            var maintenance = scope.ServiceProvider.GetRequiredService<IOperationJournalMaintenance>();
+            var stopped = (await maintenance.GetDeliveryAsync(message.EventId)).Value;
+            Assert.True((await maintenance.RetryDeliveryAsync(
+                new(Guid.NewGuid(), message.EventId, stopped.DeadLetteredAt!.Value, stopped.RetryRevision, "dependency-restored"),
+                new("test-operator", "test-host"))).IsSuccess);
+            var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+            var publisher = new OutboxPublisher(outbox, bus, new FixedClock(now), new());
+            Assert.Equal(1, (await publisher.PublishPendingAsync()).Delivered);
+            Assert.Equal(1, await maintenance.CleanupDeliveredAsync());
+            Assert.Equal(OperationJournalDeliveryErrors.NotFound, (await maintenance.GetDeliveryAsync(message.EventId)).Error);
+            // 发布确认后来源副本已清理，此时中央还没有启动；消息必须仍由真实 broker 保管。
+            var settings = AuditBusinessJourneyTests.Settings(broker, facts.ConsumerName);
+            settings["Auditing__Messaging__OperationConsumerName"] = operations.ConsumerName;
+            await using var reader = await PlatformHostProcess.StartAsync(central.ConnectionString, "operation-root-password", settings: settings);
+            await PlatformSettingsAccessTests.LoginAsync(reader.Client, "journey-root", "operation-root-password");
+            await WaitForOperationAsync(reader.Client, message.OperationId, "accepted");
+            Assert.True((await scope.ServiceProvider.GetRequiredService<IOperationJournal>().AppendAsync(message)).IsSuccess);
+            Assert.Equal(1, (await publisher.PublishPendingAsync()).Delivered);
+            var barrier = message with { EventId = Guid.NewGuid(), OperationId = Guid.NewGuid() };
+            Assert.True((await bus.PublishAsync(OutboxEntry.From(barrier, new SystemTextJsonIntegrationEventSerializer()).ToEnvelope())).IsSuccess);
+            await WaitForOperationAsync(reader.Client, barrier.OperationId, "accepted");
+            using var response = await reader.Client.GetAsync(new Uri($"/api/auditing/operations?operationId={message.OperationId}", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            var page = await response.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(1, page.GetProperty("total").ReadHttpInt64());
+            Assert.Single(page.GetProperty("data").EnumerateArray());
+        }
+        finally { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
+    }
+
+    private static ServiceProvider RecoverySource(string connectionString, DateTimeOffset now)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<NexusStackNext.BuildingBlocks.Application.Time.IClock>(new FixedClock(now));
+        services.AddOperationJournalPostgresStorage(connectionString);
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+    }
+
     [AuditBrokerFact]
     public async Task PricingJournal_SurvivesProducerRestart_AndBrokerRedeliveryIsIdempotent()
     {

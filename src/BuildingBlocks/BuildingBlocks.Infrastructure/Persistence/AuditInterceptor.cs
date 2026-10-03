@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -24,9 +25,10 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 /// </summary>
 /// <param name="clock">时钟。</param>
 /// <param name="currentUser">当前发起者。</param>
+/// <param name="execution">显式系统执行不能继承环境中的用户身份。</param>
 public sealed class AuditInterceptor(
     IClock clock,
-    ICurrentUser currentUser) : SaveChangesInterceptor
+    ICurrentUser currentUser, IExecutionContext? execution = null) : SaveChangesInterceptor
 {
     /// <inheritdoc />
     public override InterceptionResult<int> SavingChanges(
@@ -59,7 +61,7 @@ public sealed class AuditInterceptor(
         }
 
         var now = clock.UtcNow.ToUniversalTime();
-        var user = currentUser.UserId;
+        var user = execution?.IsSystem == true ? null : currentUser.UserId;
 
         foreach (var entry in context.ChangeTracker.Entries<IAuditedEntity>())
         {

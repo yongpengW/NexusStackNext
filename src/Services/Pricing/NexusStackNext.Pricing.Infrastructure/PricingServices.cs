@@ -1,9 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
@@ -13,6 +16,13 @@ namespace NexusStackNext.Pricing.Infrastructure;
 /// <summary>显式装配 Pricing 的 PostgreSQL 命令与查询适配器。</summary>
 public static class PricingServices
 {
+    /// <summary>显式启动本上下文已交付审计事实副本的维护。</summary>
+    /// <param name="services">容器。</param>
+    /// <param name="options">本上下文保留与维护策略。</param>
+    /// <returns>原容器。</returns>
+    public static IServiceCollection AddPricingFactCleanup(this IServiceCollection services, CommittedFactCleanupOptions? options = null)
+        => services.AddCommittedFactCleanup<PricingDbContext>("pricing", NexusStackNext.Pricing.Contracts.PriceQuoteCommittedV1.Name, options);
+
     /// <summary>宿主显式启动失效投递器；查询容器本身不隐式启动后台工作。</summary>
     /// <param name="services">容器。</param>
     /// <returns>容器。</returns>
@@ -36,6 +46,8 @@ public static class PricingServices
         var policy = options ?? new PricingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
+        services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
+        services.AddScoped<PricingCommittedFactInterceptor>();
         var cache = cacheOptions ?? new PricingCacheOptions();
         cache.Validate();
         services.AddSingleton(cache);
@@ -43,6 +55,7 @@ public static class PricingServices
         services.AddLogging();
         services.AddSingleton<PricingRedisCache>();
         services.AddScoped(provider => PricingDatabase.CreateContext(connectionString, provider));
+        services.AddScoped<IOutboxStore, EfOutboxStore<PricingDbContext>>();
         services.AddKeyedScoped<IIntegrationEventProcessor, PricingCostIngestion>(CostCalculatedV1.Name);
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();

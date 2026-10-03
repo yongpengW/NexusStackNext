@@ -11,6 +11,7 @@
   </Folder>
 
   <Folder Name="/src/Services/Identity/">
+    <Project Path="src/Services/Identity/NexusStackNext.Identity.Contracts/NexusStackNext.Identity.Contracts.csproj" />
     <Project Path="src/Services/Identity/NexusStackNext.Identity.Domain/NexusStackNext.Identity.Domain.csproj" />
     <Project Path="src/Services/Identity/NexusStackNext.Identity.Application/NexusStackNext.Identity.Application.csproj" />
     <Project Path="src/Services/Identity/NexusStackNext.Identity.Infrastructure/NexusStackNext.Identity.Infrastructure.csproj" />
@@ -26,6 +27,7 @@
   </Folder>
   <Folder Name="/src/Services/Pricing/">
     <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
+    <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Contracts/NexusStackNext.Pricing.Contracts.csproj" />
     <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
     <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Endpoints/NexusStackNext.Pricing.Endpoints.csproj" />
     <Project Path="src/Services/Pricing/NexusStackNext.Pricing.Infrastructure/NexusStackNext.Pricing.Infrastructure.csproj" />
@@ -56,6 +58,7 @@
   </Folder>
 
   <Folder Name="/src/Services/Files/">
+    <Project Path="src/Services/Files/NexusStackNext.Files.Contracts/NexusStackNext.Files.Contracts.csproj" />
     <Project Path="src/Services/Files/NexusStackNext.Files.Domain/NexusStackNext.Files.Domain.csproj" />
     <Project Path="src/Services/Files/NexusStackNext.Files.Application/NexusStackNext.Files.Application.csproj" />
     <Project Path="src/Services/Files/NexusStackNext.Files.Infrastructure/NexusStackNext.Files.Infrastructure.csproj" />

@@ -14,12 +14,20 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Ids;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Composition;
 using NexusStackNext.Files.Endpoints;
+using NexusStackNext.Files.Infrastructure;
 using NexusStackNext.Identity.Endpoints;
+using NexusStackNext.Identity.Infrastructure;
 using NexusStackNext.Platform.Endpoints;
 using NexusStackNext.Platform.Infrastructure;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
 using NexusStackNext.Scheduling.Infrastructure;
+
+if (args is ["operation-journal", ..])
+{
+    Environment.ExitCode = await OperationJournalCommand.RunAsync(args[1..]);
+    return;
+}
 
 if (args is ["migrate-operation-journal"])
 {
@@ -99,6 +107,10 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
         builder.Configuration.GetSection("Scheduling:Delivery").Get<OutboxDeliveryOptions>());
     builder.Services.AddNexusStackOutboxDelivery(OperationJournalServiceCollectionExtensions.OutboxKey,
         builder.Configuration.GetSection("OperationJournal:Delivery").Get<OutboxDeliveryOptions>());
+    builder.Services.AddNexusStackOutboxDelivery(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("Identity:Delivery").Get<OutboxDeliveryOptions>());
+    builder.Services.AddNexusStackOutboxDelivery(FilesPersistenceServiceCollectionExtensions.OutboxKey,
+        builder.Configuration.GetSection("Files:Delivery").Get<OutboxDeliveryOptions>());
 }
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。

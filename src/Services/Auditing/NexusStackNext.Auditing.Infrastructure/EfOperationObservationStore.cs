@@ -5,12 +5,13 @@ using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Domain.Operations;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
-internal sealed class EfOperationObservationStore(AuditingDbContext context) : IOperationObservationStore
+internal sealed class EfOperationObservationStore(AuditingDbContext context, IClock clock) : IOperationObservationStore
 {
     public Task<Result<IngestionOutcome>> AcceptAsync(OperationObservation observation, CancellationToken cancellationToken = default)
     {
@@ -96,34 +97,13 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context) : I
     public async Task<OperationPage> QueryAsync(OperationQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);
+        query = query.Normalize(clock.UtcNow);
         if (query.Validate().IsFailure) { throw new ArgumentException("操作查询条件无效。", nameof(query)); }
         // 每个操作选择完成记录；没有完成时才选择开始记录，不依赖投递顺序。
         var operations = context.OperationObservations.AsNoTracking().Where(item => item.Data.Phase == "finished"
             || !context.OperationObservations.Any(other => other.Data.Source == item.Data.Source
                 && other.Data.OperationId == item.Data.OperationId && other.Data.Phase == "finished"));
-        if (query.Source is { } source) { operations = operations.Where(item => item.Data.Source == source); }
-        if (query.OperationId is { } operationId)
-        {
-            var selectedOperation = new OperationId(operationId);
-            operations = operations.Where(item => item.Data.OperationId == selectedOperation);
-        }
-        if (query.ActorId is { } actor) { operations = operations.Where(item => item.Data.ActorId == actor); }
-        if (query.TraceId is { } trace) { operations = operations.Where(item => item.Data.TraceId == trace); }
-        if (query.From is { } from)
-        {
-            var utcFrom = from.ToUniversalTime();
-            operations = operations.Where(item => item.Data.OccurredAt >= utcFrom);
-        }
-        if (query.To is { } to)
-        {
-            var utcTo = to.ToUniversalTime();
-            operations = operations.Where(item => item.Data.OccurredAt <= utcTo);
-        }
-        if (query.Outcome is { } outcome)
-        {
-            operations = outcome == "unconfirmed" ? operations.Where(item => item.Data.Phase == "started")
-                : operations.Where(item => item.Data.Outcome == outcome);
-        }
+        operations = operations.Where(query.Predicate());
         var total = await operations.LongCountAsync(cancellationToken).ConfigureAwait(false);
         var page = await operations.OrderByDescending(item => item.Data.OccurredAt)
             .ThenBy(item => item.Data.Source).ThenBy(item => item.Data.OperationId)

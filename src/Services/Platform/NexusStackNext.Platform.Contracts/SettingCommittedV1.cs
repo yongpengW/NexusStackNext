@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.Platform.Contracts;
 
@@ -21,4 +23,7 @@ public sealed record SettingCommittedV1 : IntegrationEvent
     public required string TraceId { get; init; }
     /// <summary>来源执行关联标识。</summary>
     public required string CorrelationId { get; init; }
+    /// <summary>实际提交所处的操作；旧消息或没有执行作用域时为空。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExecutionOrigin? Execution { get; init; }
 }

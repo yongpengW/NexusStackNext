@@ -2,8 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Contracts;
+using NexusStackNext.Scheduling.Infrastructure;
 using NexusStackNext.TestSupport;
 using Npgsql;
 
@@ -145,6 +148,10 @@ public sealed class CalendarSchedulingPersistenceTests
                 using var response = await client.GetAsync(new Uri($"/api/scheduling/tasks/{id}/{history}", UriKind.Relative));
                 Assert.Empty((await response.Content.ReadApiDataAsync()).EnumerateArray());
             }
+            var onlyFact = Assert.Single(await ReadFactsAsync(observer.Services));
+            Assert.Equal(id, onlyFact.PlanId);
+            Assert.Equal("created", onlyFact.Operation);
+            Assert.Equal(1, onlyFact.Version);
         }
         await using var secondHost = await PlatformHostProcess.StartAsync(database.ConnectionString, "calendar-root-password");
         await PlatformSettingsAccessTests.LoginAsync(secondHost.Client, "journey-root", "calendar-root-password");
@@ -316,6 +323,12 @@ public sealed class CalendarSchedulingPersistenceTests
             var history = await client.GetFromJsonAsync<JsonElement>(new Uri($"/api/scheduling/tasks/{id}/occurrences", UriKind.Relative));
             Assert.Empty(history.GetProperty("data").EnumerateArray());
         }
+        var rolledBack = await ReadFactsAsync(app.Services);
+        Assert.Equal(4, rolledBack.Count);
+        foreach (var id in ids)
+        {
+            Assert.Equal(new[] { "created", "deferred" }, rolledBack.Where(fact => fact.PlanId == id).OrderBy(fact => fact.Version).Select(fact => fact.Operation));
+        }
         var before = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         Assert.All(before.GetProperty("data").EnumerateArray(), plan =>
         {
@@ -355,6 +368,8 @@ public sealed class CalendarSchedulingPersistenceTests
         await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "calendar-root-password",
             settings: new Dictionary<string, string>(StringComparer.Ordinal) { ["Scheduling__Worker__Enabled"] = "false" });
         await PlatformSettingsAccessTests.LoginAsync(restarted.Client, "journey-root", "calendar-root-password");
+        var committed = await ReadFactsAsync(app.Services);
+        Assert.Equal(8, committed.Count);
         for (var index = 0; index < ids.Count; index++)
         {
             var id = ids[index];
@@ -366,6 +381,11 @@ public sealed class CalendarSchedulingPersistenceTests
             Assert.Equal("Etc/UTC", decision.GetProperty("rule").GetProperty("timeZoneId").GetString());
             var history = await restarted.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/scheduling/tasks/{id}/occurrences", UriKind.Relative));
             Assert.Equal(index == 0 ? 1 : 0, history.GetProperty("data").GetArrayLength());
+            var decided = Assert.Single(committed, fact => fact.PlanId == id && fact.Operation == (index == 0 ? "coalesced" : "skipped"));
+            Assert.Equal(3, decided.Version);
+            Assert.Equal(decision.GetProperty("decisionId").GetGuid(), decided.DecisionId);
+            Assert.Null(decided.ActorId);
+            Assert.Equal(decided.Execution!.OperationId, Assert.Single(committed, fact => fact.PlanId == id && fact.Operation == "failure-cleared").Execution!.OperationId);
         }
         var recovered = await restarted.Client.GetFromJsonAsync<JsonElement>(new Uri("/api/scheduling/tasks/", UriKind.Relative));
         Assert.All(recovered.GetProperty("data").EnumerateArray(), plan =>
@@ -375,6 +395,15 @@ public sealed class CalendarSchedulingPersistenceTests
             Assert.Equal(0, plan.GetProperty("schedulingFailureCount").GetInt32());
             Assert.Equal("2026-10-02T00:05:00+00:00", plan.GetProperty("nextRunAt").GetString());
         });
+    }
+
+    private static async Task<IReadOnlyList<PlanCommittedV1>> ReadFactsAsync(IServiceProvider services)
+    {
+        await using var scope = services.CreateAsyncScope();
+        var pending = await scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey)
+            .ReadPendingAsync(100, DateTimeOffset.UtcNow);
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        return pending.Where(entry => entry.EventName == PlanCommittedV1.Name).Select(entry => serializer.Deserialize<PlanCommittedV1>(entry.Payload)).ToArray();
     }
 
     [PostgresFact]

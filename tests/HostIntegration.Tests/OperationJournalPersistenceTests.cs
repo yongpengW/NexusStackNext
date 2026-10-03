@@ -18,7 +18,7 @@ public sealed class OperationJournalPersistenceTests
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
-        await using var app = CreateApplication(database.ConnectionString);
+        await using var app = CreateApplication(database.ConnectionString, new() { MaxRecords = 1 });
         await using var scope = app.CreateAsyncScope();
         var journal = scope.ServiceProvider.GetRequiredService<IOperationJournal>();
         var pending = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
@@ -147,11 +147,11 @@ public sealed class OperationJournalPersistenceTests
         OccurredAt = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero),
     };
 
-    private static ServiceProvider CreateApplication(string connectionString)
+    private static ServiceProvider CreateApplication(string connectionString, OperationJournalCapacityOptions? capacity = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddOperationJournalPostgresStorage(connectionString);
+        services.AddOperationJournalPostgresStorage(connectionString, capacity);
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
     }
 }
