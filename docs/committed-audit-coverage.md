@@ -15,8 +15,8 @@
 | Identity / ApiResource | API 资源登记及删除 | PostgreSQL 登记、所属 Menu 与非法输入拒绝经 ISender 验证，登记关联经真实消息旅程验证；现有仓储没有删除入口，未来生命周期入口须连同删除事实验收 |
 | Identity / RefreshToken | 签发、消费、撤销；只记录令牌内部标识，禁止令牌及其哈希/自由文本原因 | PostgreSQL 三类变化与重复撤销经存储端口验证；签发/消费、所属 User 关联及重放造成的会话撤销经真实消息旅程验证 |
 | Files / StoredFile | 登记、存储完成、请求删除、实际字节移除、清理延期 | PostgreSQL / Memory 已接入；HTTP、延期/重复状态、并发拒绝与来源写失败原子性经 `FilesCommittedAuditTests` / `MemoryFilesCommittedAuditTests` 验证；生产存储重启及两种来源真实 RabbitMQ 交付通过；PostgreSQL 容量由 `FilesFactCapacityTests` 验证，Memory 容量与完整故障矩阵待补齐 |
-| Scheduling / ScheduledTask | 创建、规则/间隔变化、启禁用、触发推进、跳过/延期裁决 | Memory / PostgreSQL 已接入，管理变化、日历裁决、退避及故障清除由 `SchedulingCommittedAuditTests` 验证；来源事实失败原子回滚及同作用域重试由 `SchedulingFactAtomicityTests` 验证；真实重启 / RabbitMQ 中央交付通过，来源容量及恢复治理待完成 |
-| Costing / CostSheet | 成本输入创建/修改、计算结果实际应用 | PostgreSQL 来源已接入；实际变化、拒绝/空操作/过期结果、来源故障回滚、保存中取消与租约过期经 ISender 验证；真实生产者重启 / RabbitMQ 交付通过，来源容量及完整恢复治理待完成 |
+| Scheduling / ScheduledTask | 创建、规则/间隔变化、启禁用、触发推进、跳过/延期裁决 | Memory / PostgreSQL 已接入，管理变化、日历裁决、退避及故障清除由 `SchedulingCommittedAuditTests` 验证；来源事实失败原子回滚及同作用域重试由 `SchedulingFactAtomicityTests` 验证；真实重启 / RabbitMQ 中央交付通过，PostgreSQL 容量已通过 PR #77 合并，Memory 容量及恢复治理待完成 |
+| Costing / CostSheet | 成本输入创建/修改、计算结果实际应用 | PostgreSQL 来源已接入；实际变化、拒绝/空操作/过期结果、来源故障回滚、保存中取消与租约过期经 ISender 验证；真实生产者重启 / RabbitMQ 交付通过，PostgreSQL 容量由 `CostingFactCapacityTests` 验证，最终发布资格由 #76 的完整检查与独立评审裁决；完整恢复治理待完成 |
 | Pricing / PriceQuote | 手工输入创建/修改、成本消息实际应用、计算结果实际应用 | PostgreSQL 已接入；手工与消息写入的原子性、来源故障/取消/租约失权、同作用域重试经公共端口验证；真实重启与 RabbitMQ 中央交付通过，容量及恢复治理待完成 |
 
 菜单节点及授权关联归其聚合根，事实客体版本是根的已提交版本。Auditing 的不可变记录、
@@ -130,7 +130,11 @@ Costing 的 `CostingCommittedFactTests` 验证输入创建/修改与结果应用
 `CostingFactIngestionTests` 验证固定动作、信封身份与内容校验、精确调查和不可变重投；未知执行关联不能事后补造。
 CostDelivery 查询与重试拒绝审计消息。共享保存生命周期由 Identity 和 Costing 两个适配器使用，
 `SerializationInterruptedMidBatch_CommitsNothing_AndSameScopeRetryDoesNotDuplicateFacts` 验证批次构造中断后的原子性。
-来源容量、专门的审计恢复和完整故障矩阵仍需完成；恢复版本及清理索引已有 Costing 独立迁移并在临时库验收。
+PostgreSQL 来源容量已实现；`CostingFactCapacityTests` 验证输入/结果/任务/消息原子拒绝、UTF-8 历史回填、单条/总量边界、
+最后额度竞争、过期确认清理及真实宿主重启后的有限重试/人工恢复。计划消息受理既有成本快照不消耗新事实额度。
+`CostingFactCapacityObservationTests` 验证容量拒绝记 failed，恢复成功是另一次 completed 操作，并保留原发起关联。
+发布资格由 #76 的完整检查与双轴评审裁决；专门的审计恢复和完整故障矩阵仍需完成。
+恢复版本及清理索引已有 Costing 独立迁移并在临时库验收。
 
 `ScheduledCostMessageOperationTests` 验证计划消息消费的独立操作、并发去重、稳定拒绝及失败/取消回滚。
 拒绝回执也须提交后才确认消息；任务只关联首次成功受理，重投和重启不覆盖来源，旧消息不从委托人补造执行身份。

@@ -76,7 +76,7 @@ public static class CostingModule
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415)
+        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415, 503)
             .WithMetadata(new OperationDescription("costing.cost.update", "更新成本组成并申请重算"));
         group.MapGet("/tasks/{taskId:guid}/delivery", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
@@ -125,6 +125,7 @@ public static class CostingModule
         statusCode: error.Code switch
         {
             "costing.not_found" => StatusCodes.Status404NotFound,
+            "costing.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

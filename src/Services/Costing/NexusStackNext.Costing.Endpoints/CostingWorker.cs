@@ -26,6 +26,7 @@ internal sealed partial class CostingWorker(IServiceScopeFactory scopes, Costing
         while (!stoppingToken.IsCancellationRequested)
         {
             CostingWorkLease? lease = null;
+            var failed = false;
             try
             {
                 await using var scope = scopes.CreateAsyncScope();
@@ -34,7 +35,12 @@ internal sealed partial class CostingWorker(IServiceScopeFactory scopes, Costing
                 if (lease is not null)
                 {
                     var completed = await sender.SendAsync(new CompleteCostingWork(lease.TaskId, lease.Epoch), stoppingToken).ConfigureAwait(false);
-                    WorkCompleted(logger, lease.TaskId, lease.Epoch, completed.Value);
+                    if (completed.IsFailure)
+                    {
+                        WorkRefused(logger, lease.TaskId, lease.Epoch, completed.Error.Code);
+                        failed = true;
+                    }
+                    else { WorkCompleted(logger, lease.TaskId, lease.Epoch, completed.Value); }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
@@ -42,18 +48,19 @@ internal sealed partial class CostingWorker(IServiceScopeFactory scopes, Costing
             {
                 // 数据库或计算异常不写入载荷、连接配置或任务错误正文；记录稳定标识用于追踪。
                 WorkFailed(logger, lease?.TaskId);
-                if (lease is not null)
+                failed = true;
+            }
+            if (failed && lease is not null)
+            {
+                try
                 {
-                    try
-                    {
-                        await using var scope = scopes.CreateAsyncScope();
-                        await scope.ServiceProvider.GetRequiredService<ISender>()
-                            .SendAsync(new FailCostingWork(lease.TaskId, lease.Epoch), stoppingToken).ConfigureAwait(false);
-                    }
-                    catch (Exception) when (!stoppingToken.IsCancellationRequested)
-                    {
-                        FailureRecordFailed(logger, lease.TaskId);
-                    }
+                    await using var scope = scopes.CreateAsyncScope();
+                    await scope.ServiceProvider.GetRequiredService<ISender>()
+                        .SendAsync(new FailCostingWork(lease.TaskId, lease.Epoch), stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (!stoppingToken.IsCancellationRequested)
+                {
+                    FailureRecordFailed(logger, lease.TaskId);
                 }
             }
             try { await Task.Delay(options.PollInterval, stoppingToken).ConfigureAwait(false); }
@@ -67,4 +74,6 @@ internal sealed partial class CostingWorker(IServiceScopeFactory scopes, Costing
     private static partial void WorkFailed(ILogger logger, Guid? taskId);
     [LoggerMessage(3, LogLevel.Warning, "Costing task {TaskId} failure could not be recorded; waiting for lease expiry.")]
     private static partial void FailureRecordFailed(ILogger logger, Guid taskId);
+    [LoggerMessage(4, LogLevel.Warning, "Costing task {TaskId} epoch {Epoch} refused with {ErrorCode}; durable retry recovery remains active.")]
+    private static partial void WorkRefused(ILogger logger, Guid taskId, long epoch, string errorCode);
 }

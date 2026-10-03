@@ -79,10 +79,28 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 
 `/health/live` 只查进程；`/health/ready` 查数据库与迁移，启用消息时还查 broker 认证及交换机。
 它不证明下游完成或死信为空，还需观察投递查询和 broker 指标。当前每个服务配置一个投递循环；
-多实例投递协调、保留清理和完整运维面板留后续运营能力。
+来源事实的已确认副本有独立保留清理；多实例投递协调、普通业务消息保留及完整运维面板留后续运营能力。
+
+## 成本提交事实容量
+
+Costing 的 PostgreSQL `fact_capacity` 随正常增量迁移创建，回填全部保留的 `CostSheetCommittedV1` 条数及 UTF-8 字节。
+协议复用冻结的 [V1](adr/0025-context-owned-fact-capacity.md)，数据库持有额度和占用，宿主启动及重复迁移不覆盖策略。
+普通 `CostCalculatedV1` 不占事实额度；默认额度为十万条、总载荷 256 MiB、单条 16 KiB。
+
+创建或改变成本输入遇到容量拒绝时，成本版本、输入修订、任务受理与事实一起回滚，HTTP 返回
+`503 / costing.audit_capacity_exhausted`。结果提交的拒绝还会回滚计算修订、任务终态及普通结果消息，
+`CompleteCostingWork` 返回失败，不能作为完成或租约丢失解释。执行观察保留失败；worker 识别稳定错误码，
+通过原有失败协议安排有限重试，预算耗尽后沿用 `expectedEpoch` 人工重驱。策略恢复或过期清理后可重试，
+重复完成不重复提交结果。任务失败查询仍沿用既有 `costing.calculation_failed` 错误码，具体容量拒绝可由应用结果及 worker 日志区分。
+
+重复请求、相同成本输入/计算结果和只受理既有成本快照的计划消息没有新成本变化事实，不因额度满而被无差别拒绝。
+交付确认不释放额度，默认保留七天后的已确认事实副本清理才释放；待投递、死信及普通结果消息保留。
+容量策略修改审计、诊断与独立等待预算继续由 #64/#60 跟踪；Pricing 容量沿自身消费事务另轮补齐。
 
 ## 验证
 
 测试使用临时独立数据库、真实 RabbitMQ 与宿主进程。结果经 HTTP / ISender / 消息端口断言，
 SQL 只用于故障注入和确认屏障命中。覆盖网关入口、Outbox 提交后重启、消费事务中杀进程、重复/乱序、
-租约及结果回滚。CI 同样提供专属 PostgreSQL、RabbitMQ，串行测试；这些不证明多节点容灾或生产容量。
+租约及结果回滚。`CostingFactCapacityTests` 覆盖原子拒绝、字节回填与边界、竞争、清理、快照受理及真实宿主重启/人工恢复，
+`CostingFactCapacityObservationTests` 验证失败与恢复成功各自的执行观察。CI 在独立 runner 之间并行，各组独占依赖且组内串行；
+这些不证明多节点容灾或生产容量。
