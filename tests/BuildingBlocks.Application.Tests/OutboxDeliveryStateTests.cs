@@ -45,7 +45,9 @@ public sealed class OutboxDeliveryStateTests
         Assert.Null(stopped.RetryDelivery(Now.AddSeconds(1)));
 
         var retried = Assert.IsType<OutboxEntry>(stopped.RetryDelivery(Now));
-        Assert.Equal(pending, retried);
+        Assert.Equal(pending.ToEnvelope(), retried.ToEnvelope());
+        Assert.Equal(1, retried.RetryRevision);
+        Assert.Equal(0, retried.AttemptCount);
         Assert.Null(retried.RetryDelivery(Now));
     }
 }

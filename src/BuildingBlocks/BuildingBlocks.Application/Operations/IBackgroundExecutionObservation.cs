@@ -10,6 +10,20 @@ public abstract record BackgroundExecutionDescriptor(string Action);
 /// <param name="Epoch">本次持有的执行代次。</param>
 public sealed record TaskExecutionDescriptor(string Action, Guid TaskId, long Epoch) : BackgroundExecutionDescriptor(Action);
 
+/// <summary>一次已识别业务消息的消费尝试；消息身份不是任务租约。</summary>
+/// <param name="Action">消费端代码声明的稳定动作。</param>
+/// <param name="EventName">已验证的版本化事件名，作为消息客体类型。</param>
+/// <param name="MessageId">消息标识，同一消息的不同投递尝试分别观察。</param>
+public sealed record MessageExecutionDescriptor(string Action, string EventName, Guid MessageId) : BackgroundExecutionDescriptor(Action);
+
+/// <summary>围绕已持久化客体的一次恢复尝试；没有业务任务租约或计划裁决。</summary>
+/// <param name="Action">代码声明的动作名称。</param>
+/// <param name="SubjectType">客体类型。</param>
+/// <param name="SubjectIdKind">guid 或 int64。</param>
+/// <param name="SubjectId">规范化客体标识。</param>
+public sealed record RecoveryExecutionDescriptor(string Action, string SubjectType, string SubjectIdKind, string SubjectId)
+    : BackgroundExecutionDescriptor(Action);
+
 /// <summary>一次计划裁决的描述；计划版本与业务任务租约含义不同。</summary>
 /// <param name="Action">代码声明的动作名称。</param>
 /// <param name="PlanId">计划标识。</param>
@@ -36,12 +50,16 @@ public enum BackgroundExecutionOutcome
     LeaseLost,
     /// <summary>已登记下游工作意图，不代表下游完成。</summary>
     Accepted,
-    /// <summary>已按计划策略登记跳过决定。</summary>
+    /// <summary>已按计划策略登记跳过决定，或已接收消息但无需新增业务工作。</summary>
     Skipped,
-    /// <summary>执行条件不满足，本次未提交。</summary>
+    /// <summary>业务意图未被接受或执行；拒绝凭据可能已经提交。</summary>
     Rejected,
     /// <summary>执行失败，未得到预期结果。</summary>
     Failed,
+    /// <summary>仍需后续恢复，当前尝试没有确认完成。</summary>
+    Deferred,
+    /// <summary>同一消息身份及内容此前已经接纳，本次未重复提交业务。</summary>
+    Duplicate,
 }
 
 /// <summary>围绕真实后台执行采集观察；不改变执行返回值、异常或重试政策。</summary>

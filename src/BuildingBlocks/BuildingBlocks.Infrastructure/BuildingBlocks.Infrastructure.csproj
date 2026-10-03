@@ -14,6 +14,7 @@
     <!-- DI 抽象：基础设施注册用。 -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
 
     <!--
       EF Core 基座（票据 19）。Relational 是显式引用的，不靠传递：

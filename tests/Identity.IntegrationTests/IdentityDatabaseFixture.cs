@@ -78,8 +78,16 @@ public sealed class IdentityDatabaseFixture : IAsyncLifetime
         var list = string.Join(", ", DataTables.Select(static table => $"{IdentityDbContext.SchemaName}.{table}"));
 
         await using var connection = await Database.OpenAsync();
-        await using var command = new Npgsql.NpgsqlCommand($"truncate table {list} cascade", connection);
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var command = new Npgsql.NpgsqlCommand($"truncate table {list} cascade", connection, transaction);
         await command.ExecuteNonQueryAsync();
+        // Test reset bypasses DELETE triggers; reset the corresponding ledger in the same transaction.
+        await using var capacity = new Npgsql.NpgsqlCommand("""
+            UPDATE identity.fact_capacity SET "RetainedRecords" = 0, "RetainedPayloadBytes" = 0,
+                "MaxRecords" = 100000, "MaxPayloadBytes" = 268435456, "MaxRecordPayloadBytes" = 16384
+            """, connection, transaction);
+        Assert.Equal(1, await capacity.ExecuteNonQueryAsync());
+        await transaction.CommitAsync();
     }
 
     /// <summary>给需要独立上下文的测试用。</summary>

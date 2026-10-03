@@ -15,6 +15,11 @@ using NexusStackNext.Composition;
 using NexusStackNext.Pricing.Endpoints;
 using NexusStackNext.Pricing.Infrastructure;
 
+if (args is ["operation-journal", ..])
+{
+    return await OperationJournalCommand.RunAsync(args[1..]);
+}
+
 if (args is ["migrate-operation-journal"])
 {
     return await OperationJournalModule.MigrateOperationJournalAsync();

@@ -36,6 +36,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        modelBuilder.ConfigureCommittedFactCleanup();
         var plan = modelBuilder.Entity<ScheduledTask>();
         plan.ToTable("plans");
         plan.HasKey(task => task.Id);

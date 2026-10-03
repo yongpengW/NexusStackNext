@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using NexusStackNext.BuildingBlocks.Application.Ids;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -55,10 +56,15 @@ public interface ISettingRepository
 /// <param name="ids">标识生成器——<b>由调用方注入，不在构造函数里取全局状态</b>（架构不变量 6）。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="currentUser">可信执行身份。</param>
-public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, IClock clock, ICurrentUser currentUser)
+/// <param name="execution">当前执行的安全关联；没有采集模块时可为空。</param>
+public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, IClock clock, ICurrentUser currentUser,
+    IExecutionContext? execution = null)
 {
     /// <summary>当前版本或稳定键已被其他写入改变。</summary>
     public static readonly Error Conflict = new("platform.setting.conflict", "配置已被其他操作修改，请重新读取后再提交。");
+
+    /// <summary>审计事实保留额度不足，本次业务变更没有提交。</summary>
+    public static readonly Error AuditCapacityExhausted = new("platform.audit_capacity.exhausted", "审计事实存储容量不足，本次变更未提交，请稍后重试。");
 
     /// <summary>读取配置的值、说明与版本；未注册时返回空。</summary>
     /// <param name="key">配置键。</param>
@@ -133,17 +139,19 @@ public sealed class SettingStore(ISettingRepository settings, IIdGenerator ids, 
 
     private SettingCommittedV1 Fact(GlobalSetting setting, string operation)
     {
-        var trace = Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
+        var origin = execution?.Capture();
+        var trace = origin?.TraceId ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
         return new SettingCommittedV1
         {
             Key = setting.Key.Value,
             Operation = operation,
             Version = setting.Version,
-            ActorId = currentUser.UserId,
+            ActorId = execution?.IsSystem == true ? null : currentUser.UserId,
             OccurredAt = clock.UtcNow,
             TraceId = trace,
-            // 来源执行的事件标识关联，不从用户自报的 Actor/Source/关联字段取证。
-            CorrelationId = trace,
+            // 关联字段不是身份凭据；Actor 始终来自可信会话。
+            CorrelationId = origin?.CorrelationId ?? trace,
+            Execution = origin,
         };
     }
 

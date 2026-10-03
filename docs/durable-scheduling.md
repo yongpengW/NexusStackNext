@@ -103,6 +103,11 @@ Delivered 表示 broker 接管，Accepted 表示 Costing 的本地任务已登�
 
 计划列表沿用 `lastRunAt` 字段兼容原 HTTP 契约；它表示上次登记触发的时刻。领域方法和事件使用 Triggered 命名，业务完成必须查询 Costing 的任务状态。
 
+计划的已提交状态变化还通过 `PlanCommittedV1` 交付 Auditing，中央按 `source=scheduling`、
+`subjectType=scheduled-task`、计划标识及版本查询。触发、合并和跳过携带 ScheduleDecision 的关联，
+失败退避关联本次失败执行，不能误读为目标业务完成。计划、决定、发生和两类消息共享来源提交边界；
+事实写入失败会整体回滚。Memory 与 PostgreSQL 都遵守这个边界，原始规则和业务载荷不进入中央日志。
+
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
 
 ## 故障语义与范围
@@ -112,5 +117,11 @@ Delivered 表示 broker 接管，Accepted 表示 Costing 的本地任务已登�
 计算或登记失败保留原 NextRunAt、LastRunAt 和发生序号，另按版本保存 retryAt、lastSchedulingErrorCode、schedulingFailureCount。退避为 1、2、4、8、16、32 分钟，之后每小时重试；连续坏计划不会一直占满前 50 个位置。成功决定、有效规则变更或恢复清除故障状态；暂停清除 retryAt 并保留诊断，重复同规则更新不清除故障。重启读取持久化退避。数据库完全不可用时连退避也可能保存不了，此时报告失败并继续后续轮次，不报告已触发；错误码与日志不包含异常文本或业务载荷。
 
 消息采用至少一次交付。Costing 在本地事务中保存 Inbox、内容指纹、接受结论及任务；重复消息只对应一份工作，相同身份换内容会被拒绝。提交前崩溃不留下接受记录或任务，恢复后由原消息重投。手工请求与计划发生不能悄悄复用任务身份。
+
+Costing 消费有效发生消息时建立独立 `message` 操作，固定动作 `costing.schedule.accept`，
+通过固定事件名和发生 GUID 调查。稳定拒绝可以 ACK，但操作结论仍为 rejected；重投为 duplicate，
+异常与取消为 failed / canceled。任务的直接来源是首次成功受理操作，上游调度操作为父级，
+后台 Actor 为空，原发起人只作关联。独立 journal 在提交前崩溃时保留 Started，中央显示 unconfirmed；
+重投成功产生新操作，不改写旧证据。设计见 [Costing ADR-0004](../src/Services/Costing/docs/adr/0004-observe-schedule-message-acceptance.md)。
 
 日历规则和故障验收由 [#45](https://github.com/yongpengW/NexusStackNext/issues/45) 跟踪；本文随实现更新，不代替票据中的测试与评审结论。长任务续租和多机部署由后续票据处理。验收入口为 `CalendarScheduling*Tests`、`Scheduling*Tests`、`ScheduledCostingTests` 和 `ScheduledCostBusinessJourneyTests`，仍按仓库脚本串行运行。

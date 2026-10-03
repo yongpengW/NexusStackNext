@@ -2,9 +2,12 @@ using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Contracts;
 using NexusStackNext.Identity.Infrastructure;
+using NexusStackNext.Identity.Infrastructure.Persistence;
 
 namespace NexusStackNext.Identity.Endpoints;
 
@@ -53,6 +56,7 @@ public static class IdentityModule
             }
 
             services.AddIdentityInMemoryStorage();
+            services.AddIdentityMemoryFactCleanup(configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -64,6 +68,8 @@ public static class IdentityModule
 
             services.AddIdentityEntityFrameworkStorage(connection);
             services.AddIdentityDatabaseChecks();
+            services.AddCommittedFactCleanup<IdentityDbContext>("identity", IdentityEntityCommittedV1.Name,
+                configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else
         {
@@ -91,7 +97,7 @@ public static class IdentityModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        var identity = endpoints.MapGroup("/api/identity").ProducesApiErrors(400, 401, 403, 500);
+        var identity = endpoints.MapGroup("/api/identity").ProducesApiErrors(400, 401, 403, 500, 503);
 
         // **授权过滤器挂在整个分组上**，于是"这个模块的端点默认都要过一遍授权"是结构性的，
         // 而不是每个端点各自的记性。公开的端点由框架的 `AllowAnonymous()` 显式标注。
@@ -323,6 +329,7 @@ public static class IdentityModule
         {
             "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
+            "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
         },
         title: error.Message,

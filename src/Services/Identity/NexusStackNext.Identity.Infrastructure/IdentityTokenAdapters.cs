@@ -195,7 +195,8 @@ public sealed class EfRefreshTokenRepository(IdentityDbContext context) : IRefre
 /// <summary>内存版刷新令牌仓储。</summary>
 public sealed class InMemoryRefreshTokenRepository : IRefreshTokenRepository
 {
-    private readonly List<RefreshToken> _tokens = [];
+    private readonly IdentityMemorySession _session;
+    internal InMemoryRefreshTokenRepository(IdentityMemorySession session) => _session = session;
 
     /// <inheritdoc />
     public Task<RefreshToken?> FindByHashAsync(
@@ -204,7 +205,7 @@ public sealed class InMemoryRefreshTokenRepository : IRefreshTokenRepository
     {
         ArgumentNullException.ThrowIfNull(tokenHash);
 
-        return Task.FromResult(_tokens.FirstOrDefault(token => token.TokenHash.Equals(tokenHash)));
+        return Task.FromResult(_session.Data(cancellationToken).Tokens.Values.FirstOrDefault(token => token.TokenHash.Equals(tokenHash)));
     }
 
     /// <inheritdoc />
@@ -212,12 +213,12 @@ public sealed class InMemoryRefreshTokenRepository : IRefreshTokenRepository
     {
         ArgumentNullException.ThrowIfNull(token);
 
-        // 内存版保存的是实例本身（见 `InMemoryIdentityStores` 的说明），
-        // 所以更新已经在集合里了——只要不在就补进去。
-        if (!_tokens.Contains(token))
+        var tokens = _session.Data(cancellationToken).Tokens;
+        if (tokens.TryGetValue(token.Id, out var tracked) && !ReferenceEquals(tracked, token))
         {
-            _tokens.Add(token);
+            throw new InvalidOperationException("该令牌已有工作副本，不能替换为未跟踪状态。");
         }
+        tokens[token.Id] = token;
 
         return Task.CompletedTask;
     }
@@ -231,7 +232,7 @@ public sealed class InMemoryRefreshTokenRepository : IRefreshTokenRepository
     {
         ArgumentNullException.ThrowIfNull(userId);
 
-        var live = _tokens.Where(token => token.UserId.Equals(userId) && token.RevokedAt is null).ToList();
+        var live = _session.Data(cancellationToken).Tokens.Values.Where(token => token.UserId.Equals(userId) && token.RevokedAt is null).ToList();
 
         foreach (var token in live)
         {

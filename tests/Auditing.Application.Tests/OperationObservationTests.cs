@@ -16,6 +16,156 @@ public sealed class OperationObservationTests
     private static readonly DateTimeOffset StartedAt = new(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
 
     [Theory]
+    [InlineData("accepted")]
+    [InlineData("duplicate")]
+    [InlineData("skipped")]
+    [InlineData("rejected")]
+    [InlineData("failed")]
+    [InlineData("canceled")]
+    public async Task MessageOutcomes_AreQueryable_WithImmutableMessageIdentity(string outcome)
+    {
+        await using var app = CreateApplication();
+        await using var scope = app.CreateAsyncScope();
+        var started = MessageConsumption();
+        var finished = started with { EventId = Guid.NewGuid(), Phase = "finished", Outcome = outcome, DurationMs = 5 };
+        Assert.True(await DeliverAsync(scope.ServiceProvider, finished));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, started));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, finished));
+        Assert.False(await DeliverAsync(scope.ServiceProvider, finished with { Metadata = finished.Metadata! with { SubjectId = Guid.NewGuid().ToString("D") } }));
+        var query = new OperationQuery(1, 20, Outcome: outcome)
+        { SubjectType = started.Metadata!.SubjectType, SubjectId = started.Metadata.SubjectId };
+        Assert.True(query.Normalize(StartedAt.AddDays(1)).Validate().IsSuccess);
+        var operation = Assert.Single((await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(query)).Operations);
+        Assert.Equal("message", operation.Kind);
+        Assert.Equal(outcome, operation.Outcome);
+        Assert.Null(operation.ActorId);
+        Assert.Null(operation.Metadata!.TaskId);
+        Assert.NotNull(operation.StartedAt);
+    }
+
+    [Theory]
+    [InlineData("actor")]
+    [InlineData("task")]
+    [InlineData("schedule")]
+    [InlineData("http")]
+    [InlineData("subject")]
+    [InlineData("root")]
+    [InlineData("outcome")]
+    public async Task MessageObservation_RejectsInventedExecutionEvidence(string invalidField)
+    {
+        await using var app = CreateApplication();
+        await using var scope = app.CreateAsyncScope();
+        var valid = MessageConsumption();
+        var invalid = invalidField switch
+        {
+            "actor" => valid with { ActorId = "impersonated" },
+            "task" => valid with { Metadata = valid.Metadata! with { TaskId = Guid.NewGuid(), TaskEpoch = 1 } },
+            "schedule" => valid with { Metadata = valid.Metadata! with { SchedulePlanId = 1, ScheduleExpectedVersion = 1, ScheduleDecisionId = Guid.NewGuid() } },
+            "http" => valid with { HttpMethod = "POST" },
+            "subject" => valid with { Metadata = valid.Metadata! with { SubjectIdKind = "int64", SubjectId = "42" } },
+            "root" => valid with { Metadata = valid.Metadata! with { RootOperationId = null, RootSource = null } },
+            "outcome" => valid with { Phase = "finished", Outcome = "completed", DurationMs = 1 },
+            _ => throw new ArgumentException("Unknown case", nameof(invalidField)),
+        };
+        Assert.False(await DeliverAsync(scope.ServiceProvider, invalid));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, valid));
+        Assert.Single((await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(new OperationQuery(1, 20))).Operations);
+    }
+
+    private static OperationObservedV1 MessageConsumption()
+    {
+        var message = Started();
+        return message with
+        {
+            Kind = "message",
+            HttpMethod = null,
+            RouteTemplate = null,
+            Metadata = new OperationDetails
+            {
+                Action = "pricing.cost.accept",
+                ExecutionRole = "message",
+                SubjectType = "costing.cost-calculated.v1",
+                SubjectIdKind = "guid",
+                SubjectId = Guid.NewGuid().ToString("D"),
+                RootOperationId = message.OperationId,
+                RootSource = message.Source,
+            },
+        };
+    }
+
+    [Theory]
+    [InlineData("completed")]
+    [InlineData("deferred")]
+    [InlineData("failed")]
+    [InlineData("canceled")]
+    public async Task RecoveryOutcomes_AreQueryableAfterDuplicateAndReorderedDelivery(string outcome)
+    {
+        await using var application = CreateApplication();
+        await using var scope = application.CreateAsyncScope();
+        var started = Recovery();
+        var finished = started with { EventId = Guid.NewGuid(), Phase = "finished", Outcome = outcome, DurationMs = 10 };
+        Assert.True(await DeliverAsync(scope.ServiceProvider, finished));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, started));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, finished));
+        var query = new OperationQuery(1, 100, Outcome: outcome) { SubjectType = "stored-file", SubjectId = "42" };
+        Assert.True(query.Normalize(StartedAt.AddDays(1)).Validate().IsSuccess);
+        var found = Assert.Single((await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(query)).Operations);
+        Assert.Equal(outcome, found.Outcome);
+        Assert.Equal("recovery", found.Kind);
+        Assert.Null(found.ActorId);
+        Assert.NotNull(found.StartedAt);
+        Assert.NotNull(found.FinishedAt);
+    }
+
+    [Theory]
+    [InlineData("actor")]
+    [InlineData("subject")]
+    [InlineData("task")]
+    [InlineData("schedule")]
+    [InlineData("http")]
+    [InlineData("outcome")]
+    public async Task RecoveryRejectsFalseExecutionEvidence_WithoutConsumingMessageIdentity(string invalidField)
+    {
+        await using var application = CreateApplication();
+        await using var scope = application.CreateAsyncScope();
+        var valid = Recovery();
+        var invalid = invalidField switch
+        {
+            "actor" => valid with { ActorId = "impersonated-user" },
+            "subject" => valid with { Metadata = valid.Metadata! with { SubjectType = null, SubjectIdKind = null, SubjectId = null } },
+            "task" => valid with { Metadata = valid.Metadata! with { TaskId = Guid.NewGuid(), TaskEpoch = 1 } },
+            "schedule" => valid with { Metadata = valid.Metadata! with { SchedulePlanId = 1, ScheduleExpectedVersion = 1, ScheduleDecisionId = Guid.NewGuid() } },
+            "http" => valid with { HttpMethod = "DELETE" },
+            "outcome" => valid with { Phase = "finished", DurationMs = 10, Outcome = "accepted" },
+            _ => throw new ArgumentException("Unknown case", nameof(invalidField)),
+        };
+        Assert.False(await DeliverAsync(scope.ServiceProvider, invalid));
+        Assert.True(await DeliverAsync(scope.ServiceProvider, valid));
+        Assert.Single((await scope.ServiceProvider.GetRequiredService<IOperationObservationStore>().QueryAsync(new OperationQuery(1, 100))).Operations);
+    }
+
+    private static OperationObservedV1 Recovery()
+    {
+        var started = Started();
+        return started with
+        {
+            Kind = "recovery",
+            HttpMethod = null,
+            RouteTemplate = null,
+            Metadata = new OperationDetails
+            {
+                Action = "files.deletion.recover",
+                ExecutionRole = "recovery",
+                SubjectType = "stored-file",
+                SubjectIdKind = "int64",
+                SubjectId = "42",
+                RootOperationId = started.OperationId,
+                RootSource = started.Source,
+            },
+        };
+    }
+
+    [Theory]
     [InlineData("action", "")]
     [InlineData("action", "bad\nvalue")]
     [InlineData("executionRole", "committed")]

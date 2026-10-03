@@ -67,6 +67,7 @@
     <ProjectReference Include="../../src/Services/Costing/NexusStackNext.Costing.Endpoints/NexusStackNext.Costing.Endpoints.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Application/NexusStackNext.Pricing.Application.csproj" />
+    <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Contracts/NexusStackNext.Pricing.Contracts.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Infrastructure/NexusStackNext.Pricing.Infrastructure.csproj" />
     <ProjectReference Include="../../src/Services/Pricing/NexusStackNext.Pricing.Endpoints/NexusStackNext.Pricing.Endpoints.csproj" />
   </ItemGroup>

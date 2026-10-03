@@ -26,6 +26,9 @@ public sealed record ExecutionOrigin(Guid OperationId, string Source, Guid RootO
 /// <summary>读取当前调用链的安全来源；不读取 HTTP 参数，不授予调用身份。</summary>
 public interface IExecutionContext
 {
+    /// <summary>当前显式执行是否为系统操作；只用于归属记录，不授予权限。</summary>
+    bool IsSystem { get; }
+
     /// <summary>取得可随所属业务记录持久化的快照；无当前操作时为空。</summary>
     /// <returns>来源快照。</returns>
     ExecutionOrigin? Capture();
@@ -33,5 +36,6 @@ public interface IExecutionContext
 
 internal sealed class EmptyExecutionContext : IExecutionContext
 {
+    public bool IsSystem => false;
     public ExecutionOrigin? Capture() => null;
 }

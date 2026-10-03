@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Contracts;
@@ -7,7 +8,7 @@ using NexusStackNext.Pricing.Domain;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
-internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegrationEventProcessor
+internal sealed class PricingCostIngestion(PricingDbContext database, IBackgroundExecutionObservation observations, IExecutionContext execution) : IIntegrationEventProcessor
 {
     public string EventName => CostCalculatedV1.Name;
     public async Task<bool> HandleAsync(EventEnvelope envelope, CancellationToken cancellationToken = default)
@@ -20,6 +21,14 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
         if (cost.EventId != envelope.MessageId || cost.ItemId == Guid.Empty || cost.CostRevision <= 0
             || !PriceQuote.IsValidInput(cost.UnitCost, 0) || cost.ExecutionOrigin is { } origin && !origin.IsValid()) { return false; }
 
+        var result = await observations.ObserveAsync(new MessageExecutionDescriptor("pricing.cost.accept", EventName, envelope.MessageId),
+            () => Task.FromResult(new BackgroundExecutionInput<CostCalculatedV1>(cost, cost.ExecutionOrigin)),
+            input => ReceiveAsync(envelope, input, cancellationToken), static received => received.Outcome, cancellationToken).ConfigureAwait(false);
+        return result.Acknowledged;
+    }
+
+    private async Task<(bool Acknowledged, BackgroundExecutionOutcome Outcome)> ReceiveAsync(EventEnvelope envelope, CostCalculatedV1 cost, CancellationToken cancellationToken)
+    {
         database.ChangeTracker.Clear();
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var now = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
@@ -32,13 +41,16 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
         var canonical = FormattableString.Invariant($"{cost.ItemId:D}|{cost.CostRevision}|{cost.UnitCost:G29}|{cost.OccurredAt.UtcTicks}");
         if (cost.ExecutionOrigin is not null) { canonical += "|origin:" + System.Text.Json.JsonSerializer.Serialize(cost.ExecutionOrigin); }
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical)));
-        if (!first) { return fingerprint.CurrentValue == hash; }
+        if (!first)
+        {
+            return fingerprint.CurrentValue == hash ? (true, BackgroundExecutionOutcome.Duplicate) : (false, BackgroundExecutionOutcome.Rejected);
+        }
         // 包括被忽略的旧版本：同一身份以后也不能换成另一项工作。
         fingerprint.CurrentValue = hash;
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-request/" + envelope.MessageId}, 0))", cancellationToken).ConfigureAwait(false);
         // 手工请求与上游事件不能共用一个任务标识。
-        if (await database.Tasks.AnyAsync(x => x.TaskId == envelope.MessageId, cancellationToken).ConfigureAwait(false)) { return false; }
+        if (await database.Tasks.AnyAsync(x => x.TaskId == envelope.MessageId, cancellationToken).ConfigureAwait(false)) { return (false, BackgroundExecutionOutcome.Rejected); }
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + cost.ItemId}, 0))", cancellationToken).ConfigureAwait(false);
         var id = new PriceId(cost.ItemId);
@@ -50,7 +62,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
             database.Quotes.Add(quote);
         }
         var applied = quote.ApplyCostingCost(cost.CostRevision, cost.UnitCost);
-        if (applied.IsFailure) { return false; }
+        if (applied.IsFailure) { return (false, BackgroundExecutionOutcome.Rejected); }
         if (applied.Value)
         {
             database.Tasks.Add(new RecalculationEntry
@@ -58,7 +70,7 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
                 TaskId = envelope.MessageId,
                 ItemId = id,
                 Origin = "costing",
-                ExecutionOrigin = cost.ExecutionOrigin,
+                ExecutionOrigin = execution.Capture() ?? cost.ExecutionOrigin,
                 Cost = quote.Cost,
                 FeeRate = quote.FeeRate,
                 InputRevision = quote.InputRevision,
@@ -66,6 +78,6 @@ internal sealed class PricingCostIngestion(PricingDbContext database) : IIntegra
         }
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        return (true, applied.Value ? BackgroundExecutionOutcome.Accepted : BackgroundExecutionOutcome.Skipped);
     }
 }

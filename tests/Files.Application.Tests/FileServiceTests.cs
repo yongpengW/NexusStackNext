@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.Files.Infrastructure;
@@ -29,6 +30,26 @@ public sealed class FileServiceTests
 
     private static MemoryStream Content(string text = "hello") => new(System.Text.Encoding.UTF8.GetBytes(text));
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FirstDeletionOrigin_RemainsStableAcrossLaterRecoveryAndConflicts(bool knownOrigin)
+    {
+        var files = new InMemoryStoredFileRepository();
+        var file = StoredFile.Register(new StoredFileId(7400), FileName.Create("origin.bin").Value, "application/octet-stream", Owner, Now).Value;
+        var operation = Guid.NewGuid();
+        var origin = new ExecutionOrigin(operation, "platform", operation, "platform", Owner, "origin-trace");
+        var later = origin with { OperationId = Guid.NewGuid(), InitiatorId = "someone-else" };
+        await files.SaveAsync(file);
+        file.Delete();
+        await files.SaveAsync(file, 1, knownOrigin ? origin : null);
+        file.PostponeCleanup(Now.AddMinutes(1));
+        await files.SaveAsync(file, 2, later);
+        await files.SaveAsync(file, 3);
+        await Assert.ThrowsAsync<FileMetadataConflictException>(() => files.SaveAsync(file, 1, later));
+        Assert.Equal(knownOrigin ? origin : null, await files.ReadDeletionOriginAsync(file.Id));
+    }
+
     [Fact]
     public async Task FailedMetadataUpdate_DoesNotHideThePreviouslyCommittedFile()
     {
@@ -52,12 +73,13 @@ public sealed class FileServiceTests
     {
         public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default) => inner.FindAsync(id, cancellationToken);
         public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default) => inner.FindDeletedAsync(id, cancellationToken);
+        public Task<ExecutionOrigin?> ReadDeletionOriginAsync(StoredFileId id, CancellationToken cancellationToken = default) => inner.ReadDeletionOriginAsync(id, cancellationToken);
         public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default) =>
             inner.PendingDeletionsAsync(now, limit, cancellationToken);
         public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default) =>
             inner.RetireUnreferencedStorageAsync(storageKey, cancellationToken);
-        public Task SaveAsync(StoredFile file, long? originalVersion = null, CancellationToken cancellationToken = default) =>
-            originalVersion is null ? inner.SaveAsync(file, cancellationToken: cancellationToken) : throw new IOException("Simulated metadata failure");
+        public Task SaveAsync(StoredFile file, long? originalVersion = null, ExecutionOrigin? deletionOrigin = null, CancellationToken cancellationToken = default) =>
+            originalVersion is null ? inner.SaveAsync(file, cancellationToken: cancellationToken, deletionOrigin: deletionOrigin) : throw new IOException("Simulated metadata failure");
     }
 
     [Fact]

@@ -1,10 +1,13 @@
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Platform.Application;
+using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Domain.Settings;
 using NexusStackNext.Platform.Infrastructure;
+using NexusStackNext.Platform.Infrastructure.Persistence;
 
 namespace NexusStackNext.Platform.Endpoints;
 
@@ -36,6 +39,7 @@ public static class PlatformModule
                 throw new InvalidOperationException("Platform:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
             services.AddPlatformInMemoryStorage();
+            services.AddPlatformMemoryFactCleanup(configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -45,6 +49,8 @@ public static class PlatformModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Platform；开发测试可显式选择 Platform:Storage:Provider=Memory。");
             }
             services.AddPlatformPostgresStorage(connection);
+            services.AddCommittedFactCleanup<PlatformDbContext>("platform", SettingCommittedV1.Name,
+                configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else
         {
@@ -113,7 +119,7 @@ public static class PlatformModule
             var written = await store.WriteAsync(parsed.Value, request.Value, request.Description, request.ExpectedVersion, cancellationToken);
 
             return written.IsFailure ? Failure(written.Error) : Results.NoContent();
-        }).ProducesApiErrors(415).Produces(204).RequirePermission("/api/platform/settings/{key}", "PUT");
+        }).ProducesApiErrors(415, 503).Produces(204).RequirePermission("/api/platform/settings/{key}", "PUT");
 
         // 清空一个配置值。**不删除配置项本身**——"没有值"与"没注册过"是不同的状态。
         settings.MapDelete("/{key}", async (string key, long? expectedVersion, SettingStore store, CancellationToken cancellationToken) =>
@@ -127,7 +133,7 @@ public static class PlatformModule
             var cleared = await store.WriteAsync(parsed.Value, value: null, cancellationToken: cancellationToken, expectedVersion: expectedVersion);
 
             return cleared.IsFailure ? Failure(cleared.Error) : Results.NoContent();
-        }).Produces(204).RequirePermission("/api/platform/settings/{key}", "DELETE");
+        }).ProducesApiErrors(503).Produces(204).RequirePermission("/api/platform/settings/{key}", "DELETE");
 
         var deliveries = endpoints.MapGroup("/api/platform/audit-deliveries").RequireAuthorization()
             .ProducesApiErrors(400, 401, 403, 409, 500);
@@ -159,7 +165,8 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
+        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code ? StatusCodes.Status503ServiceUnavailable
+            : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 

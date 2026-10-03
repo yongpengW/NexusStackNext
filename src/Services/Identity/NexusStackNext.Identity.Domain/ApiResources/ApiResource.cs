@@ -20,6 +20,17 @@ public sealed class ApiResource : AuditedAggregateRoot<ApiResourceId>
     private static readonly HashSet<string> AllowedMethods =
         new(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"], StringComparer.Ordinal);
 
+    private ApiResource(ApiResource source) : base(source)
+    {
+        RoutePattern = source.RoutePattern;
+        HttpMethod = source.HttpMethod;
+        MenuId = source.MenuId;
+    }
+
+    /// <summary>复制资源及其审计元数据，不共享可变元数据。</summary>
+    /// <returns>独立快照。</returns>
+    public ApiResource Snapshot() => new(this);
+
     private ApiResource(ApiResourceId id, RoutePattern routePattern, string httpMethod, MenuId? menuId)
         : base(id)
     {

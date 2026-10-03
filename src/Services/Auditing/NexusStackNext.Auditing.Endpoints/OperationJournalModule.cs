@@ -35,6 +35,8 @@ public static class OperationJournalModule
             throw new InvalidOperationException("OperationJournal:WriteTimeout 必须在 50 毫秒到 5 秒之间。");
         }
         services.AddSingleton(new OperationCaptureOptions(source, timeout));
+        var capacity = configuration.GetSection("OperationJournal:Capacity").Get<OperationJournalCapacityOptions>() ?? new();
+        var cleanup = configuration.GetSection("OperationJournal:Cleanup").Get<OperationJournalCleanupOptions>() ?? new();
         services.TryAddSingleton<OperationExecutionContext>();
         services.AddScoped<OperationObservationWriter>();
         services.AddScoped<ObservedCommandExecution>();
@@ -49,7 +51,9 @@ public static class OperationJournalModule
             {
                 throw new InvalidOperationException("OperationJournal:Storage:Provider=Memory 仅允许开发测试使用。");
             }
-            return services.AddOperationJournalMemoryStorage();
+            services.AddOperationJournalMemoryStorage(capacity, cleanup);
+            if (cleanup.Enabled) { services.AddHostedService<OperationJournalCleanupWorker>(); }
+            return services;
         }
         if (!string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -60,7 +64,9 @@ public static class OperationJournalModule
         {
             throw new InvalidOperationException("必须配置 ConnectionStrings:OperationJournal；开发测试可显式选择 OperationJournal:Storage:Provider=Memory。");
         }
-        return services.AddOperationJournalPostgresStorage(connection);
+        services.AddOperationJournalPostgresStorage(connection, capacity, cleanup);
+        if (cleanup.Enabled) { services.AddHostedService<OperationJournalCleanupWorker>(); }
+        return services;
     }
 
     /// <summary>在路由后、异常处理和认证授权前捕获，观察完整的 HTTP 处理结果。</summary>
@@ -134,7 +140,7 @@ internal sealed class OperationLoggingMiddleware(OperationObservationWriter writ
             TraceId = Activity.Current?.TraceId.ToString() ?? operationId.ToString("N"),
             HttpMethod = ClassifyMethod(context.Request.Method),
             RouteTemplate = SafeRouteTemplate(context.GetEndpoint() as RouteEndpoint),
-            Metadata = Describe(context),
+            Metadata = Describe(context, operationId, options.Source),
         };
         var timer = Stopwatch.StartNew();
         await writer.WriteAsync(started).ConfigureAwait(false);
@@ -181,7 +187,7 @@ internal sealed class OperationLoggingMiddleware(OperationObservationWriter writ
         }
     }
 
-    private static OperationDetails Describe(HttpContext context)
+    private static OperationDetails Describe(HttpContext context, Guid operationId, string source)
     {
         var declaration = context.GetEndpoint()?.Metadata.GetMetadata<OperationDescription>();
         var subject = declaration?.Subject;
@@ -208,6 +214,8 @@ internal sealed class OperationLoggingMiddleware(OperationObservationWriter writ
             Action = declaration?.Action ?? "http." + ClassifyMethod(context.Request.Method).ToLowerInvariant(),
             Description = declaration?.Description,
             ExecutionRole = declaration?.IsProxy == true ? "proxy" : "endpoint",
+            RootOperationId = operationId,
+            RootSource = source,
             SubjectType = subjectId is null ? null : subject!.Type,
             SubjectIdKind = subjectKind,
             SubjectId = subjectId,

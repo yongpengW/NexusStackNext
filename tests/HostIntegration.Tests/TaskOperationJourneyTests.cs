@@ -222,9 +222,9 @@ public sealed class TaskOperationJourneyTests
             await WaitForDataAsync(pricing.Client, $"/api/pricing/items/{itemId}", data =>
                 data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 80m, allowNotFound: true);
             var observations = await WaitForDataAsync(reader.Client, $"/api/auditing/operations?traceId={traceId}", data =>
-                data.GetArrayLength() == 4 && data.EnumerateArray().All(item => item.GetProperty("finishedAt").ValueKind != JsonValueKind.Null));
+                data.GetArrayLength() == 5 && data.EnumerateArray().All(item => item.GetProperty("finishedAt").ValueKind != JsonValueKind.Null));
             var items = observations.EnumerateArray().ToArray();
-            Assert.Equal(4, items.Select(item => item.GetProperty("operationId").GetGuid()).Distinct().Count());
+            Assert.Equal(5, items.Select(item => item.GetProperty("operationId").GetGuid()).Distinct().Count());
             Assert.Equal(2, items.Count(item => item.GetProperty("kind").GetString() == "http"));
             var acceptedCost = Assert.Single(items, item => item.GetProperty("operationId").GetGuid() == rootOperation);
             Assert.Equal("accepted", acceptedCost.GetProperty("outcome").GetString());
@@ -234,7 +234,14 @@ public sealed class TaskOperationJourneyTests
             var costAttempt = Assert.Single(attempts, item => item.GetProperty("source").GetString() == "costing");
             var priceAttempt = Assert.Single(attempts, item => item.GetProperty("source").GetString() == "pricing");
             Assert.Equal(rootOperation, costAttempt.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
-            Assert.Equal(costAttempt.GetProperty("operationId").GetGuid(), priceAttempt.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
+            var consumption = Assert.Single(items, item => item.GetProperty("kind").GetString() == "message");
+            Assert.Equal("accepted", consumption.GetProperty("outcome").GetString());
+            Assert.Equal("pricing", consumption.GetProperty("source").GetString());
+            Assert.Equal(JsonValueKind.Null, consumption.GetProperty("actorId").ValueKind);
+            Assert.Equal(CostCalculatedV1.Name, consumption.GetProperty("metadata").GetProperty("subjectType").GetString());
+            Assert.Equal(requestId.ToString("D"), consumption.GetProperty("metadata").GetProperty("subjectId").GetString());
+            Assert.Equal(costAttempt.GetProperty("operationId").GetGuid(), consumption.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
+            Assert.Equal(consumption.GetProperty("operationId").GetGuid(), priceAttempt.GetProperty("metadata").GetProperty("parentOperationId").GetGuid());
             foreach (var attempt in attempts)
             {
                 Assert.Equal("completed", attempt.GetProperty("outcome").GetString());
@@ -244,11 +251,31 @@ public sealed class TaskOperationJourneyTests
                 Assert.Equal("test-operator", metadata.GetProperty("initiatorId").GetString());
                 Assert.Equal(rootOperation, metadata.GetProperty("rootOperationId").GetGuid());
                 Assert.Equal("costing", metadata.GetProperty("rootSource").GetString());
-                Assert.Equal("costing", metadata.GetProperty("parentSource").GetString());
+                Assert.Equal(attempt.GetProperty("source").GetString(), metadata.GetProperty("parentSource").GetString());
                 Assert.Equal(requestId, metadata.GetProperty("taskId").GetGuid());
                 Assert.Equal(1, metadata.GetProperty("taskEpoch").ReadHttpInt64());
                 Assert.Equal("task-chain-63", metadata.GetProperty("correlationId").GetString());
             }
+            var committed = await WaitForDataAsync(reader.Client, $"/api/auditing/entries?source=pricing&subjectId={itemId:D}", data => data.GetArrayLength() == 3);
+            var priceFacts = committed.EnumerateArray().Select(item => item.GetProperty("fact")).ToArray();
+            Assert.All(priceFacts, fact =>
+            {
+                Assert.Equal(JsonValueKind.Null, fact.GetProperty("actorId").ValueKind);
+                Assert.Equal(rootOperation, fact.GetProperty("execution").GetProperty("rootOperationId").GetGuid());
+                Assert.Equal("test-operator", fact.GetProperty("execution").GetProperty("initiatorId").GetString());
+                Assert.Equal("task-chain-63", fact.GetProperty("correlationId").GetString());
+                Assert.DoesNotContain("feeRate", fact.GetRawText(), StringComparison.Ordinal);
+                Assert.DoesNotContain("breakEvenPrice", fact.GetRawText(), StringComparison.Ordinal);
+            });
+            var result = Assert.Single(priceFacts, fact => fact.GetProperty("action").GetString() == "pricing.price-quote.result-applied");
+            Assert.Equal(3, result.GetProperty("subjectVersion").ReadHttpInt64());
+            Assert.Equal(priceAttempt.GetProperty("operationId").GetGuid(), result.GetProperty("execution").GetProperty("operationId").GetGuid());
+            var imported = Assert.Single(priceFacts, fact => fact.GetProperty("action").GetString() == "pricing.price-quote.costing-applied");
+            Assert.Equal("costing", imported.GetProperty("relatedSubject").GetProperty("context").GetString());
+            Assert.Equal("cost-sheet", imported.GetProperty("relatedSubject").GetProperty("type").GetString());
+            Assert.Equal(itemId.ToString("D"), imported.GetProperty("relatedSubject").GetProperty("id").GetString());
+            Assert.Equal(consumption.GetProperty("operationId").GetGuid(), imported.GetProperty("execution").GetProperty("operationId").GetGuid());
+            Assert.Single(priceFacts, fact => fact.GetProperty("action").GetString() == "pricing.price-quote.created");
         }
         finally
         {
@@ -257,7 +284,7 @@ public sealed class TaskOperationJourneyTests
         }
     }
 
-    private static async Task MigrateJournalAsync(string assembly, string connection)
+    internal static async Task MigrateJournalAsync(string assembly, string connection)
     {
         var start = BusinessProcess.StartInfo(assembly, "OperationJournal", connection);
         start.ArgumentList.Add("migrate-operation-journal");

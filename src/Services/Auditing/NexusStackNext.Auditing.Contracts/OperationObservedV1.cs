@@ -14,11 +14,11 @@ public sealed record OperationObservedV1 : IntegrationEvent
     public required Guid OperationId { get; init; }
     /// <summary>宿主配置的可信来源名称。</summary>
     public required string Source { get; init; }
-    /// <summary>执行入口种类；当前契约接纳 http。</summary>
+    /// <summary>执行入口种类：http、command、task、schedule、recovery 或 message。</summary>
     public required string Kind { get; init; }
     /// <summary>观察阶段：started 或 finished。</summary>
     public required string Phase { get; init; }
-    /// <summary>完成观察：completed、accepted、rejected、failed 或 canceled；开始时为空。</summary>
+    /// <summary>入口实际观察的固定结果；开始时为空，各入口单独限制可用结果。</summary>
     public string? Outcome { get; init; }
     /// <summary>认证后的当前执行者；未认证或系统执行为空。</summary>
     public string? ActorId { get; init; }

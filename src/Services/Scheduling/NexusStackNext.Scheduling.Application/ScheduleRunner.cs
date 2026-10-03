@@ -147,7 +147,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
 
                 var id = Guid.NewGuid();
                 var attempt = observations is null
-                    ? await DecideAsync(task, original, id, now,
+                    ? await DecideOrDeferAsync(task, original, id, now,
                         await store.ReadExecutionOriginAsync(task.Id, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false)
                     : await observations.ObserveAsync(new ScheduleExecutionDescriptor("scheduling.decide", task.Id.Value, task.Version, id, task.DelegatedBy),
                         async () =>
@@ -155,7 +155,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
                             var origin = await store.ReadExecutionOriginAsync(task.Id, cancellationToken).ConfigureAwait(false);
                             return new BackgroundExecutionInput<ExecutionOrigin?>(origin, origin);
                         },
-                        origin => DecideAsync(task, original, id, now, origin, cancellationToken),
+                        origin => DecideOrDeferAsync(task, original, id, now, origin, cancellationToken),
                         static result => result switch
                         {
                             DecisionResult.Triggered => BackgroundExecutionOutcome.Accepted,
@@ -177,6 +177,19 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
 
         var result = new ScheduleRunResult(due.Count, triggered, skipped);
         return failed.Count == 0 ? result : result with { FailedPlanIds = failed.ToArray() };
+    }
+
+    private async Task<DecisionResult> DecideOrDeferAsync(ScheduledTask task, ScheduledTask original, Guid id, DateTimeOffset now,
+        ExecutionOrigin? origin, CancellationToken cancellationToken)
+    {
+        try { return await DecideAsync(task, original, id, now, origin, cancellationToken).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception)
+        {
+            // 退避是本次失败执行提交的状态：在观察作用域结束前保存，保留当前操作与原发起关联。
+            await DeferAsync(original, now, "scheduling.commit.failed", cancellationToken).ConfigureAwait(false);
+            return DecisionResult.Failed;
+        }
     }
 
     private async Task<DecisionResult> DecideAsync(ScheduledTask task, ScheduledTask original, Guid id, DateTimeOffset now,

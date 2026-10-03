@@ -62,6 +62,18 @@ public sealed class OperationObservation : Entity<OperationObservationId>
             && data.Metadata is { ExecutionRole: "task", TaskId: not null, TaskEpoch: > 0, RootOperationId: not null },
         "schedule" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null && data.ActorId is null
             && data.Metadata is { ExecutionRole: "schedule", SchedulePlanId: > 0, ScheduleExpectedVersion: > 0, ScheduleDecisionId: not null, RootOperationId: not null },
+        "recovery" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null && data.ActorId is null
+            && data.Metadata is
+            {
+                ExecutionRole: "recovery", SubjectType: not null, SubjectId: not null, RootOperationId: not null,
+                TaskId: null, TaskEpoch: null, SchedulePlanId: null, ScheduleExpectedVersion: null, ScheduleDecisionId: null
+            },
+        "message" => data.HttpMethod is null && data.RouteTemplate is null && data.StatusCode is null && data.ActorId is null
+            && data.Metadata is
+            {
+                ExecutionRole: "message", SubjectType: not null, SubjectIdKind: "guid", SubjectId: not null, RootOperationId: not null,
+                TaskId: null, TaskEpoch: null, SchedulePlanId: null, ScheduleExpectedVersion: null, ScheduleDecisionId: null
+            },
         _ => false,
     };
 
@@ -74,6 +86,10 @@ public sealed class OperationObservation : Entity<OperationObservationId>
             && data.Outcome is "completed" or "superseded" or "lease_lost" or "failed" or "canceled",
         "finished" when data.Kind == "schedule" => data.DurationMs is >= 0
             && data.Outcome is "accepted" or "skipped" or "rejected" or "failed" or "canceled",
+        "finished" when data.Kind == "recovery" => data.DurationMs is >= 0
+            && data.Outcome is "completed" or "deferred" or "failed" or "canceled",
+        "finished" when data.Kind == "message" => data.DurationMs is >= 0
+            && data.Outcome is "accepted" or "duplicate" or "skipped" or "rejected" or "failed" or "canceled",
         "finished" => data.DurationMs is >= 0 && (data.Outcome switch
         {
             "accepted" => data.StatusCode == 202,

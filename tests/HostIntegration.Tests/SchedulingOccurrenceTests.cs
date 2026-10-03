@@ -6,6 +6,8 @@ using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Contracts;
+using NexusStackNext.Scheduling.Infrastructure;
 using NexusStackNext.TestSupport;
 using Npgsql;
 
@@ -75,6 +77,14 @@ public sealed class SchedulingOccurrenceTests
             Assert.NotNull(phase.Metadata.InitiatorId);
             Assert.Equal(accepted.Metadata.RootOperationId, phase.Metadata.RootOperationId);
         });
+        var pending = await observationScope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey)
+            .ReadPendingAsync(100, DateTimeOffset.UtcNow);
+        var serializer = observationScope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        var facts = pending.Where(item => item.EventName == PlanCommittedV1.Name).Select(item => serializer.Deserialize<PlanCommittedV1>(item.Payload)).ToArray();
+        Assert.Equal(2, facts.Length);
+        var triggered = Assert.Single(facts, item => item.Operation == "triggered");
+        Assert.Equal(accepted.OperationId, triggered.Execution!.OperationId);
+        Assert.Equal(accepted.Metadata.ScheduleDecisionId, triggered.DecisionId);
     }
 
     [PostgresFact]
@@ -92,7 +102,7 @@ public sealed class SchedulingOccurrenceTests
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
         // 只对该临时库注入故障；结论仍从应用入口及 HTTP 查询观察。
-        await using (var fail = new NpgsqlCommand($"ALTER TABLE scheduling.outbox ADD CONSTRAINT test_reject_plan CHECK ((\"Payload\"::jsonb ->> 'planId')::bigint <> {broken})", connection))
+        await using (var fail = new NpgsqlCommand($"ALTER TABLE scheduling.outbox ADD CONSTRAINT test_reject_plan CHECK (\"EventName\" <> 'scheduling.schedule-triggered.v1' OR (\"Payload\"::jsonb ->> 'planId')::bigint <> {broken})", connection))
         {
             await fail.ExecuteNonQueryAsync();
         }
@@ -128,6 +138,22 @@ public sealed class SchedulingOccurrenceTests
         Assert.Equal(4, phases.Length);
         var failed = Assert.Single(phases, item => item.Outcome == "failed");
         var accepted = Assert.Single(phases, item => item.Outcome == "accepted");
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        var pending = await scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey)
+            .ReadPendingAsync(100, DateTimeOffset.UtcNow);
+        var facts = pending.Where(item => item.EventName == PlanCommittedV1.Name)
+            .Select(item => serializer.Deserialize<PlanCommittedV1>(item.Payload)).Where(item => item.PlanId == broken).ToArray();
+        var deferred = Assert.Single(facts, item => item.Operation == "deferred");
+        Assert.NotNull(deferred.Execution);
+        Assert.Equal(failed.OperationId, deferred.Execution.OperationId);
+        Assert.Equal(failed.Metadata!.RootOperationId, deferred.Execution.RootOperationId);
+        Assert.Null(deferred.ActorId);
+        Assert.Null(deferred.DecisionId);
+        var triggered = Assert.Single(facts, item => item.Operation == "triggered");
+        Assert.Equal(accepted.OperationId, triggered.Execution!.OperationId);
+        Assert.Equal(accepted.Metadata!.ScheduleDecisionId, triggered.DecisionId);
+        Assert.Equal(accepted.OperationId, Assert.Single(facts, item => item.Operation == "failure-cleared").Execution!.OperationId);
+        Assert.Equal(4, facts.Length);
         Assert.NotEqual(failed.OperationId, accepted.OperationId);
         Assert.Equal(1, failed.Metadata!.ScheduleExpectedVersion);
         Assert.Equal(2, accepted.Metadata!.ScheduleExpectedVersion);

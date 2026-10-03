@@ -3,10 +3,16 @@ using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
+using NexusStackNext.Costing.Contracts;
+using NexusStackNext.Files.Contracts;
+using NexusStackNext.Identity.Contracts;
 using NexusStackNext.Platform.Contracts;
+using NexusStackNext.Pricing.Contracts;
+using NexusStackNext.Scheduling.Contracts;
 
 namespace NexusStackNext.Auditing.Endpoints;
 
@@ -24,6 +30,11 @@ public static class AuditingModule
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
         services.AddKeyedScoped<IIntegrationEventProcessor, PlatformAuditIngestion>(SettingCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, IdentityAuditIngestion>(IdentityEntityCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, FilesAuditIngestion>(StoredFileCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, SchedulingAuditIngestion>(PlanCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, CostingAuditIngestion>(CostSheetCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, PricingAuditIngestion>(PriceQuoteCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, OperationObservationIngestion>(OperationObservedV1.Name);
         var broker = configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
         if (broker is not null && !string.IsNullOrWhiteSpace(broker.HostName) && configuration.GetValue("Auditing:Messaging:Enabled", true))
@@ -32,6 +43,11 @@ public static class AuditingModule
             var consumer = configuration.GetValue<string>("Auditing:Messaging:ConsumerName") ?? AuditIngestion.ConsumerName;
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingCommittedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = IdentityEntityCommittedV1.Name, ConsumerName = consumer + "-identity" });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = StoredFileCommittedV1.Name, ConsumerName = consumer + "-files" });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = PlanCommittedV1.Name, ConsumerName = consumer + "-scheduling" });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = CostSheetCommittedV1.Name, ConsumerName = consumer + "-costing" });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = PriceQuoteCommittedV1.Name, ConsumerName = consumer + "-pricing" });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription
             {
                 EventName = OperationObservedV1.Name,
@@ -72,25 +88,64 @@ public static class AuditingModule
         var group = endpoints.MapGroup("/api/auditing").RequireAuthorization()
             .ProducesApiErrors(400, 401, 403, 500);
         group.AddEndpointFilter<NexusStackAuthorizationFilter>();
-        group.MapGet("/entries", async (IAuditEntryStore entries, ApiResponses responses,
-            [AsParameters] ApiPageRequest paging, CancellationToken cancellationToken) =>
+        group.MapGet("/entries", async (IAuditEntryStore entries, ApiResponses responses, IClock clock,
+            [AsParameters] ApiPageRequest paging, string? source, string? action, string? subjectType, string? subjectId,
+            string? relatedContext, string? relatedSubjectType, string? relatedSubjectId,
+            string? actorId, string? traceId, string? correlationId, Guid? operationId, string? operationSource,
+            Guid? rootOperationId, string? rootSource, string? initiatorId, DateTimeOffset? from, DateTimeOffset? to,
+            CancellationToken cancellationToken) =>
         {
-            if (paging.Page is < 1 or > 1000 || paging.Limit is < 1 or > 100)
+            var query = new AuditQuery(paging.Page, paging.Limit)
             {
-                return Results.Problem(title: "审计查询 page 必须在 1 到 1000，limit 必须在 1 到 100。",
-                    statusCode: StatusCodes.Status400BadRequest,
-                    extensions: new Dictionary<string, object?> { ["errorCode"] = "auditing.pagination.invalid" });
+                Source = source,
+                Action = action,
+                SubjectType = subjectType,
+                SubjectId = subjectId,
+                RelatedContext = relatedContext,
+                RelatedSubjectType = relatedSubjectType,
+                RelatedSubjectId = relatedSubjectId,
+                ActorId = actorId,
+                TraceId = traceId,
+                CorrelationId = correlationId,
+                OperationId = operationId,
+                OperationSource = operationSource,
+                RootOperationId = rootOperationId,
+                RootSource = rootSource,
+                InitiatorId = initiatorId,
+                From = from,
+                To = to,
+            }.Normalize(clock.UtcNow);
+            var validation = query.Validate();
+            if (validation.IsFailure)
+            {
+                return Results.Problem(title: validation.Error.Message, statusCode: StatusCodes.Status400BadRequest,
+                    extensions: new Dictionary<string, object?> { ["errorCode"] = validation.Error.Code });
             }
-            var found = await entries.QueryAsync(paging.Page, paging.Limit, cancellationToken).ConfigureAwait(false);
+            var found = await entries.QueryAsync(query, cancellationToken).ConfigureAwait(false);
             return (IResult)responses.Page(found.Entries.Select(static entry => new AuditEntryResponse(
                 entry.Id.Value, entry.Fact, entry.RecordedAt)).ToArray(), found.Total, paging);
         }).RequirePermission("/api/auditing/entries", "GET").Produces<ApiPage<AuditEntryResponse>>()
             .WithMetadata(new OperationLogSuppression("调查查询不产生新的操作观察，避免查询放大日志。"));
-        group.MapGet("/operations", async (IOperationObservationStore observations, ApiResponses responses,
+        group.MapGet("/operations", async (IOperationObservationStore observations, ApiResponses responses, IClock clock,
             [AsParameters] ApiPageRequest paging, string? source, Guid? operationId, string? outcome, string? actorId,
-            string? traceId, DateTimeOffset? from, DateTimeOffset? to, CancellationToken cancellationToken) =>
+            string? traceId, DateTimeOffset? from, DateTimeOffset? to, string? action, string? subjectType, string? subjectId,
+            string? correlationId, string? initiatorId, Guid? rootOperationId, string? rootSource,
+            Guid? parentOperationId, string? parentSource, Guid? taskId, long? taskEpoch, CancellationToken cancellationToken) =>
         {
-            var query = new OperationQuery(paging.Page, paging.Limit, source, operationId, outcome, actorId, traceId, from, to);
+            var query = new OperationQuery(paging.Page, paging.Limit, source, operationId, outcome, actorId, traceId, from, to)
+            {
+                Action = action,
+                SubjectType = subjectType,
+                SubjectId = subjectId,
+                CorrelationId = correlationId,
+                InitiatorId = initiatorId,
+                RootOperationId = rootOperationId,
+                RootSource = rootSource,
+                ParentOperationId = parentOperationId,
+                ParentSource = parentSource,
+                TaskId = taskId,
+                TaskEpoch = taskEpoch,
+            }.Normalize(clock.UtcNow);
             var validation = query.Validate();
             if (validation.IsFailure)
             {

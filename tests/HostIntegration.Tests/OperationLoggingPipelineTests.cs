@@ -84,6 +84,11 @@ public sealed class OperationLoggingPipelineTests
         var finished = await journal.Finished.Task.WaitAsync(TimeSpan.FromSeconds(3));
         var correlation = Assert.Single(response.Headers.GetValues("X-Correlation-Id"));
         Assert.Equal(correlation, finished.Metadata?.CorrelationId);
+        Assert.Equal(finished.OperationId, finished.Metadata!.RootOperationId);
+        Assert.Equal(finished.Source, finished.Metadata.RootSource);
+        var started = await journal.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(finished.Metadata.RootOperationId, started.Metadata!.RootOperationId);
+        Assert.Equal(finished.Metadata.RootSource, started.Metadata.RootSource);
         if (incoming == "order-62.safe_ID") { Assert.Equal(incoming, correlation); }
         else { Assert.True(Guid.TryParseExact(correlation, "N", out _)); }
         Assert.Null(finished.ActorId);
@@ -228,10 +233,12 @@ public sealed class OperationLoggingPipelineTests
     {
         private int _appendCount;
         public int AppendCount => Volatile.Read(ref _appendCount);
+        public TaskCompletionSource<OperationObservedV1> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<OperationObservedV1> Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<Result> AppendAsync(OperationObservedV1 observation, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _appendCount);
+            if (observation.Phase == "started") { Started.TrySetResult(observation); }
             if (observation.Phase == "finished") { Finished.TrySetResult(observation); }
             return Task.FromResult(fail ? Result.Failure(new Error("probe.journal_failure", "injected")) : Result.Success());
         }

@@ -76,3 +76,9 @@ _Avoid_: 登录会话、每次执行重新登录
 **OccurrenceDelivery**:
 一次触发交给消息系统的进度。完成交付不代表目标业务已经接受或完成工作。
 _Avoid_: 业务成功、成本计算结果
+
+**PlanCommittedFact**:
+计划实际提交的最小状态变化。管理变化、失败退避和调度决定分别记录，客体版本是提交后的计划版本；
+触发、合并、跳过关联本上下文的 ScheduleDecision。当前后台执行者为空，首次定义的发起关系独立保留。
+不包含计划编码、规则或业务目标载荷，通过 Scheduling.Contracts 交给 Auditing 调查。
+_Avoid_: 业务完成、请求成功、OccurrenceDelivery

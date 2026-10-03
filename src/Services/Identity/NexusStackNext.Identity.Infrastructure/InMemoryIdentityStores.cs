@@ -1,5 +1,5 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
@@ -10,24 +10,18 @@ using NexusStackNext.Identity.Domain.ValueObjects;
 
 namespace NexusStackNext.Identity.Infrastructure;
 
-/// <summary>
-/// 内存用户仓储。
-/// <para>
-/// <b>它保存的是聚合实例本身，不做拷贝。</b>这在开发与测试里是对的（同一个进程、同一个对象图），
-/// 但它意味着外部改动聚合会直接反映到"存储"里——真实持久化不会有这个性质。
-/// 这条差异写在这里，免得有人拿它当生产实现。
-/// </para>
-/// </summary>
+/// <summary>开发用用户仓储；工作副本由同作用域的 Identity 工作单元提交。</summary>
 public sealed class InMemoryUserRepository : IUserRepository
 {
-    private readonly ConcurrentDictionary<long, User> _users = new();
+    private readonly IdentityMemorySession _session;
+    internal InMemoryUserRepository(IdentityMemorySession session) => _session = session;
 
     /// <inheritdoc />
     public Task<User?> FindAsync(UserId id, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(id);
 
-        return Task.FromResult(_users.TryGetValue(id.Value, out var user) ? user : null);
+        return Task.FromResult(_session.Data(cancellationToken).Users.GetValueOrDefault(id));
     }
 
     /// <inheritdoc />
@@ -35,7 +29,7 @@ public sealed class InMemoryUserRepository : IUserRepository
     {
         ArgumentNullException.ThrowIfNull(userName);
 
-        return Task.FromResult(_users.Values.FirstOrDefault(user => user.UserName.Equals(userName)));
+        return Task.FromResult(_session.Data(cancellationToken).Users.Values.FirstOrDefault(user => user.UserName.Equals(userName)));
     }
 
     /// <inheritdoc />
@@ -43,7 +37,7 @@ public sealed class InMemoryUserRepository : IUserRepository
     {
         ArgumentNullException.ThrowIfNull(userName);
 
-        return Task.FromResult(_users.Values.Any(existing => existing.UserName.Equals(userName)));
+        return Task.FromResult(_session.Data(cancellationToken).Users.Values.Any(existing => existing.UserName.Equals(userName)));
     }
 
     /// <inheritdoc />
@@ -51,7 +45,7 @@ public sealed class InMemoryUserRepository : IUserRepository
     {
         ArgumentNullException.ThrowIfNull(user);
 
-        _users[user.Id.Value] = user;
+        _session.Data(cancellationToken).Users.Add(user.Id, user);
         return Task.CompletedTask;
     }
 }
@@ -59,7 +53,8 @@ public sealed class InMemoryUserRepository : IUserRepository
 /// <summary>内存角色仓储。</summary>
 public sealed class InMemoryRoleRepository : IRoleRepository
 {
-    private readonly ConcurrentDictionary<long, Role> _roles = new();
+    private readonly IdentityMemorySession _session;
+    internal InMemoryRoleRepository(IdentityMemorySession session) => _session = session;
 
     /// <inheritdoc />
     public Task<IReadOnlyList<Role>> FindManyAsync(
@@ -70,7 +65,7 @@ public sealed class InMemoryRoleRepository : IRoleRepository
 
         var wanted = ids.Select(static id => id.Value).ToHashSet();
 
-        IReadOnlyList<Role> found = [.. _roles.Where(pair => wanted.Contains(pair.Key)).Select(static pair => pair.Value)];
+        IReadOnlyList<Role> found = [.. _session.Data(cancellationToken).Roles.Values.Where(role => wanted.Contains(role.Id.Value)).OrderBy(role => role.Id.Value)];
         return Task.FromResult(found);
     }
 
@@ -79,7 +74,7 @@ public sealed class InMemoryRoleRepository : IRoleRepository
     {
         ArgumentNullException.ThrowIfNull(code);
 
-        return Task.FromResult(_roles.Values.FirstOrDefault(role => role.Code.Equals(code)));
+        return Task.FromResult(_session.Data(cancellationToken).Roles.Values.FirstOrDefault(role => role.Code.Equals(code)));
     }
 
     /// <inheritdoc />
@@ -87,7 +82,7 @@ public sealed class InMemoryRoleRepository : IRoleRepository
     {
         ArgumentNullException.ThrowIfNull(role);
 
-        _roles[role.Id.Value] = role;
+        _session.Data(cancellationToken).Roles.Add(role.Id, role);
         return Task.CompletedTask;
     }
 }
@@ -95,7 +90,8 @@ public sealed class InMemoryRoleRepository : IRoleRepository
 /// <summary>内存 API 资源仓储。</summary>
 public sealed class InMemoryApiResourceRepository : IApiResourceRepository
 {
-    private readonly ConcurrentDictionary<long, ApiResource> _resources = new();
+    private readonly IdentityMemorySession _session;
+    internal InMemoryApiResourceRepository(IdentityMemorySession session) => _session = session;
 
     /// <inheritdoc />
     public Task<IReadOnlyList<ApiResource>> FindByMenuIdsAsync(
@@ -106,7 +102,7 @@ public sealed class InMemoryApiResourceRepository : IApiResourceRepository
 
         IReadOnlyList<ApiResource> found =
         [
-            .. _resources.Values
+            .. _session.Data(cancellationToken).Resources.Values
                 .Where(resource => resource.MenuId is { } menuId && menuIds.Contains(menuId))
                 .OrderBy(static resource => resource.Id.Value)
         ];
@@ -119,35 +115,27 @@ public sealed class InMemoryApiResourceRepository : IApiResourceRepository
     {
         ArgumentNullException.ThrowIfNull(resource);
 
-        _resources[resource.Id.Value] = resource;
+        _session.Data(cancellationToken).Resources.Add(resource.Id, resource);
         return Task.CompletedTask;
     }
 }
 
-/// <summary>
-/// 内存菜单树仓储。
-///
-/// <para><b>为什么必须注册成单例。</b>菜单树是单例聚合——整个上下文只有一棵。
-/// 注册成 Scoped 会让每个请求看到自己的那棵空树，"建了菜单之后别人看不见"，
-/// 而那种缺陷在内存存储下**只有跨请求才暴露**（本仓票据 54 踩过同形状的坑）。</para>
-///
-/// <para>与其它内存适配器一样，它保存的是聚合实例本身，不做拷贝——那条差异写在
-/// <see cref="InMemoryUserRepository"/> 的文档里，这里不重复。</para>
-/// </summary>
+/// <summary>开发用菜单树仓储；共享已提交状态，每个作用域独立跟踪树与节点。</summary>
 public sealed class InMemoryMenuTreeRepository : IMenuTreeRepository
 {
-    private MenuTree? _tree;
+    private readonly IdentityMemorySession _session;
+    internal InMemoryMenuTreeRepository(IdentityMemorySession session) => _session = session;
 
     /// <inheritdoc />
     public Task<MenuTree?> FindAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(_tree);
+        Task.FromResult(_session.Data(cancellationToken).Trees.Values.SingleOrDefault());
 
     /// <inheritdoc />
     public Task AddAsync(MenuTree tree, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(tree);
 
-        _tree = tree;
+        _session.Data(cancellationToken).Trees.Add(tree.Id, tree);
         return Task.CompletedTask;
     }
 }
@@ -165,20 +153,22 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        services.AddSingleton<IUserRepository, InMemoryUserRepository>();
-        services.AddSingleton<IRoleRepository, InMemoryRoleRepository>();
-        services.AddSingleton<IApiResourceRepository, InMemoryApiResourceRepository>();
-        services.AddSingleton<IRefreshTokenRepository, InMemoryRefreshTokenRepository>();
-
-        // 菜单树是单例聚合，所以适配器也必须是单例——理由写在 InMemoryMenuTreeRepository 上。
-        services.AddSingleton<IMenuTreeRepository, InMemoryMenuTreeRepository>();
+        services.AddSingleton<IdentityMemoryState>();
+        services.AddScoped<IdentityMemorySession>();
+        services.AddScoped<IdentityMemoryFacts>();
+        services.AddKeyedSingleton<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey,
+            (provider, _) => new IdentityMemoryOutbox(provider.GetRequiredService<IdentityMemoryState>()));
+        services.AddScoped<IUserRepository>(provider => new InMemoryUserRepository(provider.GetRequiredService<IdentityMemorySession>()));
+        services.AddScoped<IRoleRepository>(provider => new InMemoryRoleRepository(provider.GetRequiredService<IdentityMemorySession>()));
+        services.AddScoped<IApiResourceRepository>(provider => new InMemoryApiResourceRepository(provider.GetRequiredService<IdentityMemorySession>()));
+        services.AddScoped<IRefreshTokenRepository>(provider => new InMemoryRefreshTokenRepository(provider.GetRequiredService<IdentityMemorySession>()));
+        services.AddScoped<IMenuTreeRepository>(provider => new InMemoryMenuTreeRepository(provider.GetRequiredService<IdentityMemorySession>()));
 
         // 秘密串的生成与哈希和"存在哪里"无关，所以两种存储都要注册。
         services.AddIdentityTokenSecrets();
-        services.AddSingleton<UserPermissionReader>();
+        services.AddScoped<UserPermissionReader>();
 
-        // 内存存储立刻生效，没有数据库事务；仍提供 Identity 命令入口需要的专属端口。
-        services.AddSingleton<IIdentityUnitOfWork, InMemoryUnitOfWork>();
+        services.AddScoped<IIdentityUnitOfWork>(provider => new InMemoryUnitOfWork(provider.GetRequiredService<IdentityMemorySession>()));
 
         // 口令哈希不是"存储"，但它与存储实现同属基础设施，且换算法时只改这一行。
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
@@ -187,19 +177,13 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     }
 }
 
-/// <summary>
-/// 内存存储的工作单元：**什么都不做**。
-///
-/// <para>内存适配器保存的是聚合实例本身，改动立刻可见——因此没有"提交"这个动作，
-/// 也没有可回滚的东西。它不是"还没实现的占位符"，而是**对这份存储的正确实现**。</para>
-///
-/// <para>Identity 命令入口依赖 <see cref="IIdentityUnitOfWork"/>。此适配器不提供隔离或回滚；
-/// 真正的持久化事务需使用 EF 适配器（ADR-0017）。</para>
-/// </summary>
+/// <summary>开发用工作单元；保存暂存快照，事务成功结束后才向其他作用域发布。</summary>
 public sealed class InMemoryUnitOfWork : IIdentityUnitOfWork
 {
+    private readonly IdentityMemorySession _session;
+    internal InMemoryUnitOfWork(IdentityMemorySession session) => _session = session;
     /// <inheritdoc />
-    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => Task.FromResult(0);
+    public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => _session.SaveAsync(cancellationToken);
 
     /// <inheritdoc />
     public Task<TResult> ExecuteInTransactionAsync<TResult>(
@@ -209,7 +193,6 @@ public sealed class InMemoryUnitOfWork : IIdentityUnitOfWork
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        // 没有事务可开：内存存储的每次改动都立刻生效。
-        return operation(cancellationToken);
+        return _session.ExecuteAsync(operation, shouldCommit, cancellationToken);
     }
 }

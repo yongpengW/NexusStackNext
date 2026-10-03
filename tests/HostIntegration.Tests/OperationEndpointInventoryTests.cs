@@ -9,11 +9,14 @@ using Microsoft.Extensions.Hosting;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Infrastructure;
 using NexusStackNext.CostingHost;
 using NexusStackNext.Gateway.Routing;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
 using Xunit.Abstractions;
@@ -35,11 +38,37 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         Assert.Contains(costingRecords, record => record.Metadata?.Action == "costing.cost.update");
         Assert.Contains(costingRecords, record => record.Metadata?.Action == "costing.task.retry"
             && record.Metadata.SubjectId == "98e26a25-036d-49cb-aaef-2e6197a33ce0" && record.Metadata.SubjectType == "CostCalculation");
+        Assert.Contains(costingRecords, record => record.Metadata?.Action == "costing.task.cancel"
+            && record.Metadata.SubjectId == "98e26a25-036d-49cb-aaef-2e6197a33ce0" && record.Metadata.SubjectType == "CostCalculation");
+        await using (var scope = costing.Services.CreateAsyncScope())
+        {
+            var taskId = Guid.NewGuid();
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            Assert.True((await sender.SendAsync(new CancelCostingWork(taskId, 0))).IsFailure);
+            Assert.True((await sender.SendAsync(new RenewCostingWork(taskId, 0))).IsFailure);
+            var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+            var records = (await ReadAsync(journal)).Where(record => record.Metadata?.TaskId == taskId && record.Phase == "finished").ToArray();
+            Assert.Equal(2, records.Length);
+            Assert.All(records, record => Assert.Equal("rejected", record.Outcome));
+        }
         await using var pricing = new BusinessApp<PricingHostMarker>("Pricing", database.ConnectionString);
         var pricingRecords = await InspectAsync(pricing, "pricing");
         Assert.Contains(pricingRecords, record => record.Metadata?.Action == "pricing.fee.update");
         Assert.Contains(pricingRecords, record => record.Metadata?.Action == "pricing.task.retry"
             && record.Metadata.SubjectId == "98e26a25-036d-49cb-aaef-2e6197a33ce0" && record.Metadata.SubjectType == "Recalculation");
+        Assert.Contains(pricingRecords, record => record.Metadata?.Action == "pricing.task.cancel"
+            && record.Metadata.SubjectId == "98e26a25-036d-49cb-aaef-2e6197a33ce0" && record.Metadata.SubjectType == "Recalculation");
+        await using (var scope = pricing.Services.CreateAsyncScope())
+        {
+            var taskId = Guid.NewGuid();
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            Assert.True((await sender.SendAsync(new CancelPricingWork(taskId, 0))).IsFailure);
+            Assert.True((await sender.SendAsync(new RenewPricingWork(taskId, 0))).IsFailure);
+            var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+            var records = (await ReadAsync(journal)).Where(record => record.Metadata?.TaskId == taskId && record.Phase == "finished").ToArray();
+            Assert.Equal(2, records.Length);
+            Assert.All(records, record => Assert.Equal("rejected", record.Outcome));
+        }
         await using var backend = await GatewayBackend.StartAsync("inventory");
         await using var gateway = new GatewayHttpApp(backend.Address);
         var shipped = GatewayRouteTable.FromJson(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.business.json"))).Value;

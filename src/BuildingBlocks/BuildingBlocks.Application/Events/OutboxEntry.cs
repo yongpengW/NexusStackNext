@@ -25,6 +25,9 @@ public sealed record OutboxEntry
     /// <summary>已尝试投递的次数。</summary>
     public int AttemptCount { get; init; }
 
+    /// <summary>人工恢复版本；投递失败只允许修改读取时所属版本，真实发布确认仍优先。</summary>
+    public long RetryRevision { get; init; }
+
     /// <summary>下次可尝试的时间；<c>null</c> 表示立即可投。</summary>
     public DateTimeOffset? NextAttemptAt { get; init; }
 
@@ -110,6 +113,6 @@ public sealed record OutboxEntry
     /// <summary>停止状态仍匹配时重开预算；保留消息身份与内容。</summary>
     /// <param name="expectedDeadLetteredAt">调用方观察到的停止时刻。</param>
     /// <returns>恢复后的记录；条件已过期则为 null。</returns>
-    public OutboxEntry? RetryDelivery(DateTimeOffset expectedDeadLetteredAt) => IsDelivered || DeadLetteredAt != expectedDeadLetteredAt
-        ? null : this with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null };
+    public OutboxEntry? RetryDelivery(DateTimeOffset expectedDeadLetteredAt) => IsDelivered || DeadLetteredAt != expectedDeadLetteredAt || RetryRevision == long.MaxValue
+        ? null : this with { AttemptCount = 0, NextAttemptAt = null, DeadLetteredAt = null, LastFailure = null, RetryRevision = RetryRevision + 1 };
 }

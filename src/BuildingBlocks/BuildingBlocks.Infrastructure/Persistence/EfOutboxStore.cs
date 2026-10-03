@@ -23,14 +23,14 @@ public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore whe
             : entry.MarkDelivered(now) with { DeadLetteredAt = null, NextAttemptAt = null }, cancellationToken);
 
     /// <inheritdoc />
-    public Task MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, CancellationToken cancellationToken = default) =>
-        UpdateAsync(id, entry => entry.IsPending ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
+    public Task<bool> MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.IsPending && entry.RetryRevision == expectedRetryRevision ? entry.RecordFailure(failure, nextAttemptAt) : entry, cancellationToken);
 
     /// <inheritdoc />
-    public Task MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, CancellationToken cancellationToken = default) =>
-        UpdateAsync(id, entry => entry.IsPending ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
+    public Task<bool> MarkDeadLetteredAsync(Guid id, string failure, DateTimeOffset now, long expectedRetryRevision, CancellationToken cancellationToken = default) =>
+        UpdateAsync(id, entry => entry.IsPending && entry.RetryRevision == expectedRetryRevision ? entry.MarkDeadLettered(failure, now) : entry, cancellationToken);
 
-    private Task UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    private Task<bool> UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         // 使用重试策略的上下文必须把“开事务至提交”整体交给策略；否则首次确认即抛异常，
         // 每轮都会重复发送第一条而无法继续后面的消息。
@@ -39,7 +39,7 @@ public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore whe
             : context.Database.CreateExecutionStrategy().ExecuteAsync(() => UpdateInTransactionAsync(id, update, cancellationToken));
     }
 
-    private async Task UpdateInTransactionAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
+    private async Task<bool> UpdateInTransactionAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         // 锁住最新状态再经跟踪器保存：既不丢并发更新，也不绕过 SaveChanges 拦截器。
         await using var transaction = context.Database.CurrentTransaction is null
@@ -47,12 +47,15 @@ public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore whe
         var schema = context.Schema.Replace("\"", "\"\"", StringComparison.Ordinal);
         var sql = $"SELECT * FROM \"{schema}\".outbox WHERE \"Id\" = {{0}} FOR UPDATE";
         var entry = (await context.Outbox.FromSqlRaw(sql, id).ToListAsync(cancellationToken).ConfigureAwait(false)).SingleOrDefault();
-        if (entry is null) { return; }
+        if (entry is null) { return false; }
         // 同一个作用域可能已跟踪它；拿锁后刷新，避免 EF 的身份映射返回旧状态。
         await context.Entry(entry).ReloadAsync(cancellationToken).ConfigureAwait(false);
-        context.Entry(entry).CurrentValues.SetValues(update(entry));
+        var updated = update(entry);
+        if (updated == entry) { return false; }
+        context.Entry(entry).CurrentValues.SetValues(updated);
         await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         if (transaction is not null) { await transaction.CommitAsync(cancellationToken).ConfigureAwait(false); }
+        return true;
     }
 }
 /// <summary>

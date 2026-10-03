@@ -13,6 +13,8 @@ internal sealed class ObservedCommandExecution(OperationObservationWriter writer
     OperationCaptureOptions options, IClock clock, OperationExecutionContext context,
     ICurrentUser? currentUser = null) : ICommandExecution, IExecutionContext
 {
+    public bool IsSystem => context.IsSystem;
+
     public ExecutionOrigin? Capture()
     {
         var origin = context.Origin;

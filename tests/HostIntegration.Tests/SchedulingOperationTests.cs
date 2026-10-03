@@ -42,7 +42,7 @@ public sealed class SchedulingOperationTests
         Assert.Equal(finished.OperationId, finished.Metadata.RootOperationId);
         var occurrences = await scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey)
             .ReadPendingAsync(10, DateTimeOffset.UtcNow);
-        using var payload = JsonDocument.Parse(Assert.Single(occurrences).Payload);
+        using var payload = JsonDocument.Parse(Assert.Single(occurrences, item => item.EventName == ScheduleTriggeredV1.Name).Payload);
         var origin = payload.RootElement.GetProperty("executionOrigin");
         Assert.Equal("42", origin.GetProperty("initiatorId").GetString());
         Assert.Equal(finished.OperationId, origin.GetProperty("rootOperationId").GetGuid());
@@ -107,6 +107,12 @@ public sealed class SchedulingOperationTests
         Assert.Equal(planId, finished.Metadata.SchedulePlanId);
         Assert.Equal(1, finished.Metadata.ScheduleExpectedVersion);
         Assert.Equal(started.Metadata!.ScheduleDecisionId, finished.Metadata.ScheduleDecisionId);
+        var pending = await scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey)
+            .ReadPendingAsync(100, DateTimeOffset.UtcNow);
+        var onlyFact = Assert.Single(pending);
+        Assert.Equal(PlanCommittedV1.Name, onlyFact.EventName);
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        Assert.Equal("created", serializer.Deserialize<PlanCommittedV1>(onlyFact.Payload).Operation);
     }
 
     [PostgresFact]

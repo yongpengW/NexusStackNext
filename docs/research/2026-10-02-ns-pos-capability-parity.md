@@ -155,3 +155,23 @@ NSN [`IdentityModule`](../../src/Services/Identity/NexusStackNext.Identity.Endpo
 9. **最后开多机 HA 票据**：故障域、负载均衡、数据库/broker/对象存储备份恢复、权限缓存跨实例撤销、网关共享管理状态、容量与 SLO 演练。不能以本轮功能全绿代替生产 HA 验收。
 
 每轮都应先有公开接口的失败测试，再实现最小完整竖切，通过仓库固定的 build → 串行 tests → format 及相应检查，按 dev 基线做 Standards / Spec 双轴评审。完成状态只能来自实际行为和测试结果：存在一个 `Service`、`Repository`、契约类型、README 条目或绿色无匹配测试，均不能单独计为完成。
+
+## 11. 2026-10-03 补充核验：日志导出与归档不能被查询和清理替代
+
+本次重新读取的 NS / PoS HEAD 仍分别为本文开头的 `81831672` / `6cb62274`；只检查相关源码，未访问旧环境数据。
+NSN 此时正在实施[业务事实审计覆盖与调查和容量治理](https://github.com/yongpengW/NexusStackNext/issues/64)，未合并工作不提前算入完成。
+
+| 生产能力与证据 | NSN 必须保留的使用价值 | 当前追踪与验收要求 |
+|---|---|---|
+| PoS `OperationLogController.export` 按时间、等级、模块、用户、关键词筛选并输出 XLSX；NS `OperationLogService.ExportLogAsync` 也有导出实现 | 受权人员可以带着调查条件得到可离线使用的精确文件 | [审计调查私有 XLSX 导出与本人下载](https://github.com/yongpengW/NexusStackNext/issues/68)，原生依赖日志治理与 Pricing XLSX；受限查询本身不是导出验收 |
+| PoS `OperationLogArchiveService.RunAsync` 分 Request/Info、Warning、Error/SeriousError 三组读取配置周期，再复制到 ArchiveContext 后删除在线记录 | 不同用途的日志能分配保留政策，在线查询不会永久承载全部历史；需要时可取得保留证据 | 中央保留与归档要求仍由日志治理票据验收；来源已交付副本清理不代表中央归档完成 |
+
+对应源码为 [PoS 查询与导出](D:/CWChina/CWChinaERP/CWChinaPoS/Host/POS.WebAPI/Controllers/OperationLogController.cs)、
+[PoS 归档](D:/CWChina/CWChinaERP/CWChinaPoS/Domain/POS.Core/Services/Archive/OperationLogArchiveService.cs)、
+[NS 导出](D:/LeoProject/NexusStack/NexusStackBackend/Domain/NexusStack.Core/Services/SystemManagement/OperationLogService.cs)。
+
+保留能力不等于复刻缺陷：旧导出跨表连接用户并整批物化，不能搬进跨上下文调查；旧归档的两次保存没有原子保障，
+复制后删除前中断可能再次复制，异常只打印也不能证明恢复完成。NSN 的验收必须覆盖有界批次、稳定记录身份、
+归档结果可校验后才删除在线副本、重复执行与中断恢复，以及归档故障时保留原证据。
+操作观察、业务事实、投递副本和恢复记录分别声明保留约束，不能把旧 LogType 的同一个周期套给全部数据。
+这段是能力缺口与判据，不声称已实现冷归档、日志导出或新的生产保留政策。

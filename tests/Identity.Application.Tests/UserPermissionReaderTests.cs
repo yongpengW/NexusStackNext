@@ -1,5 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Authorization;
+using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Domain.Authorization;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
@@ -7,6 +12,7 @@ using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
 using NexusStackNext.Identity.Infrastructure;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.Identity.Application.Tests;
 
@@ -29,9 +35,9 @@ public sealed class UserPermissionReaderTests
     public async Task UnknownUser_IsAFailure_NotAnEmptySet()
     {
         // "没有权限"与"这个人不存在"必须能区分开。
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
 
-        var result = await fixture.Reader.ReadAsync(new UserId(999));
+        var result = await fixture.ReadAsync(new UserId(999));
 
         Assert.True(result.IsFailure);
         Assert.Equal("identity.user.not_found", result.Error.Code);
@@ -40,10 +46,10 @@ public sealed class UserPermissionReaderTests
     [Fact]
     public async Task UserWithoutRoles_HasNoPermissions()
     {
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
 
-        var result = await fixture.Reader.ReadAsync(new UserId(1));
+        var result = await fixture.ReadAsync(new UserId(1));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(0, result.Value.Count);
@@ -52,12 +58,12 @@ public sealed class UserPermissionReaderTests
     [Fact]
     public async Task RoleWithoutMenus_GrantsNothing()
     {
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
         var role = await fixture.AddRoleAsync(7);
-        fixture.Assign(1, role);
+        await fixture.AssignAsync(1, role);
 
-        var result = await fixture.Reader.ReadAsync(new UserId(1));
+        var result = await fixture.ReadAsync(new UserId(1));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(0, result.Value.Count);
@@ -67,12 +73,12 @@ public sealed class UserPermissionReaderTests
     public async Task MenusWithoutEndpoints_GrantNothing()
     {
         // "授予了一个菜单"与"那个菜单背后有端点"是两件事。
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
         var role = await fixture.AddRoleAsync(7, UsersMenu);
-        fixture.Assign(1, role);
+        await fixture.AssignAsync(1, role);
 
-        var result = await fixture.Reader.ReadAsync(new UserId(1));
+        var result = await fixture.ReadAsync(new UserId(1));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(0, result.Value.Count);
@@ -82,13 +88,13 @@ public sealed class UserPermissionReaderTests
     public async Task DisabledUser_LosesEveryPermission()
     {
         // 少判这一处就会出现"禁用了他，他还能调接口"。
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync(enabled: false);
         var role = await fixture.AddRoleAsync(7, UsersMenu);
-        fixture.Assign(1, role);
+        await fixture.AssignAsync(1, role);
         await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
 
-        var result = await fixture.Reader.ReadAsync(new UserId(1));
+        var result = await fixture.ReadAsync(new UserId(1));
 
         Assert.True(result.IsSuccess);
         Assert.Equal(0, result.Value.Count);
@@ -98,13 +104,13 @@ public sealed class UserPermissionReaderTests
     public async Task EndToEnd_ProjectionFeedsTheAuthorizationDecision()
     {
         // 这是整条链路的落点：**RBAC 判定核心第一次有真实输入。**
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
         var role = await fixture.AddRoleAsync(7, UsersMenu);
-        fixture.Assign(1, role);
+        await fixture.AssignAsync(1, role);
         await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
 
-        var keys = (await fixture.Reader.ReadAsync(new UserId(1))).Value;
+        var keys = (await fixture.ReadAsync(new UserId(1))).Value;
 
         Assert.Equal(1, keys.Count);
         Assert.True(keys.Contains(PermissionKey.From("/api/identity/users/{id}", "GET")));
@@ -124,14 +130,14 @@ public sealed class UserPermissionReaderTests
     public async Task EndpointWithoutAMenu_IsNeverGrantedByMenuBasedAuthorization()
     {
         // 一个不对应菜单的端点**不会被任何基于菜单的授权覆盖**——这是刻意的，不是遗漏。
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
         var role = await fixture.AddRoleAsync(7, UsersMenu);
-        fixture.Assign(1, role);
+        await fixture.AssignAsync(1, role);
         await fixture.AddResourceAsync(1, "/api/identity/internal/health", "GET", menuId: null);
         await fixture.AddResourceAsync(2, "/api/identity/users/{id}", "GET", UsersMenu);
 
-        var keys = (await fixture.Reader.ReadAsync(new UserId(1))).Value;
+        var keys = (await fixture.ReadAsync(new UserId(1))).Value;
 
         Assert.Equal(1, keys.Count);
         Assert.False(keys.Contains(PermissionKey.From("/api/identity/internal/health", "GET")));
@@ -140,17 +146,17 @@ public sealed class UserPermissionReaderTests
     [Fact]
     public async Task MultipleRoles_UnionTheirMenus()
     {
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
         var users = await fixture.AddRoleAsync(7, UsersMenu);
         var roles = await fixture.AddRoleAsync(8, RolesMenu);
-        fixture.Assign(1, users);
-        fixture.Assign(1, roles);
+        await fixture.AssignAsync(1, users);
+        await fixture.AssignAsync(1, roles);
 
         await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
         await fixture.AddResourceAsync(2, "/api/identity/roles/{id}", "GET", RolesMenu);
 
-        var keys = (await fixture.Reader.ReadAsync(new UserId(1))).Value;
+        var keys = (await fixture.ReadAsync(new UserId(1))).Value;
 
         Assert.Equal(2, keys.Count);
     }
@@ -159,13 +165,13 @@ public sealed class UserPermissionReaderTests
     public async Task SameMenuGrantedByTwoRoles_IsNotDuplicated()
     {
         // 集合的语义：两个角色都授予同一个菜单，权限键只出现一次。
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         await fixture.AddUserAsync();
-        fixture.Assign(1, await fixture.AddRoleAsync(7, UsersMenu));
-        fixture.Assign(1, await fixture.AddRoleAsync(8, UsersMenu));
+        await fixture.AssignAsync(1, await fixture.AddRoleAsync(7, UsersMenu));
+        await fixture.AssignAsync(1, await fixture.AddRoleAsync(8, UsersMenu));
         await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
 
-        var keys = (await fixture.Reader.ReadAsync(new UserId(1))).Value;
+        var keys = (await fixture.ReadAsync(new UserId(1))).Value;
 
         Assert.Equal(1, keys.Count);
     }
@@ -173,37 +179,65 @@ public sealed class UserPermissionReaderTests
     [Fact]
     public async Task RevokingARole_TakesItsPermissionsAway()
     {
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
         var user = await fixture.AddUserAsync();
-        fixture.Assign(1, await fixture.AddRoleAsync(7, UsersMenu));
+        await fixture.AssignAsync(1, await fixture.AddRoleAsync(7, UsersMenu));
         await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
 
-        Assert.Equal(1, (await fixture.Reader.ReadAsync(new UserId(1))).Value.Count);
+        Assert.Equal(1, (await fixture.ReadAsync(new UserId(1))).Value.Count);
 
         Assert.True(user.RevokeRole(new RoleId(7), Now).IsSuccess);
+        await fixture.CommitAsync();
 
-        Assert.Equal(0, (await fixture.Reader.ReadAsync(new UserId(1))).Value.Count);
+        Assert.Equal(0, (await fixture.ReadAsync(new UserId(1))).Value.Count);
     }
 
     [Fact]
     public async Task NullUserId_IsRejected()
     {
-        var fixture = new Fixture();
+        await using var fixture = new Fixture();
 
-        await Assert.ThrowsAsync<ArgumentNullException>(() => fixture.Reader.ReadAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => fixture.ReadAsync(null!));
     }
 
     /// <summary>把三个内存适配器与一个读取器装在一起，测试里只关心链路。</summary>
-    private sealed class Fixture
+    private sealed class Fixture : IAsyncDisposable
     {
-        private readonly InMemoryUserRepository _users = new();
-        private readonly InMemoryRoleRepository _roles = new();
-        private readonly InMemoryApiResourceRepository _resources = new();
+        private readonly ServiceProvider _provider;
+        private readonly AsyncServiceScope _scope;
+        private readonly IUserRepository _users;
+        private readonly IRoleRepository _roles;
+        private readonly IApiResourceRepository _resources;
+        private readonly IIdentityUnitOfWork _unit;
         private readonly Dictionary<long, User> _createdUsers = new();
 
-        public Fixture() => Reader = new UserPermissionReader(_users, _roles, _resources);
+        public Fixture()
+        {
+            var services = new ServiceCollection();
+            services.AddSingleton<IClock>(new FixedClock(Now));
+            services.AddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
+            services.AddIdentityInMemoryStorage();
+            _provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+            _scope = _provider.CreateAsyncScope();
+            _users = _scope.ServiceProvider.GetRequiredService<IUserRepository>();
+            _roles = _scope.ServiceProvider.GetRequiredService<IRoleRepository>();
+            _resources = _scope.ServiceProvider.GetRequiredService<IApiResourceRepository>();
+            _unit = _scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>();
+        }
 
-        public UserPermissionReader Reader { get; }
+        public async Task<Result<PermissionKeySet>> ReadAsync(UserId id)
+        {
+            await using var reader = _provider.CreateAsyncScope();
+            return await reader.ServiceProvider.GetRequiredService<UserPermissionReader>().ReadAsync(id);
+        }
+
+        public Task<int> CommitAsync() => _unit.SaveChangesAsync();
+
+        public async ValueTask DisposeAsync()
+        {
+            await _scope.DisposeAsync();
+            await _provider.DisposeAsync();
+        }
 
         public async Task<User> AddUserAsync(long id = 1, bool enabled = true)
         {
@@ -216,6 +250,7 @@ public sealed class UserPermissionReaderTests
             }
 
             await _users.AddAsync(user);
+            await CommitAsync();
             _createdUsers[id] = user;
             return user;
         }
@@ -233,6 +268,7 @@ public sealed class UserPermissionReaderTests
             }
 
             await _roles.AddAsync(role);
+            await CommitAsync();
             return role;
         }
 
@@ -245,16 +281,18 @@ public sealed class UserPermissionReaderTests
                 menuId is { } value ? new MenuId(value) : null).Value;
 
             await _resources.AddAsync(resource);
+            await CommitAsync();
         }
 
         /// <summary>
-        /// 同步分配角色。
-        /// <para>刻意不写 <c>FindAsync(...).GetAwaiter().GetResult()</c>——
-        /// 参照仓库的"构造体内 sync-over-async"是评审 04 F22 列出的可测试性问题之一，
-        /// 自己的测试更不该犯。这里直接持有创建过的聚合实例。</para>
+        /// 分配角色并提交，再由另一作用域验证可见权限。
         /// </summary>
         /// <param name="userId">用户标识。</param>
         /// <param name="role">角色。</param>
-        public void Assign(long userId, Role role) => _createdUsers[userId].AssignRole(role.Id, Now);
+        public async Task AssignAsync(long userId, Role role)
+        {
+            _createdUsers[userId].AssignRole(role.Id, Now);
+            await CommitAsync();
+        }
     }
 }

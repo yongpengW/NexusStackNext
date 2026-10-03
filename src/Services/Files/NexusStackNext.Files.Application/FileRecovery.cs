@@ -1,3 +1,5 @@
+using System.Globalization;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.Files.Domain.Stored;
 
@@ -42,7 +44,9 @@ public sealed class FileRecoveryOptions
 /// <param name="clock">时钟。</param>
 /// <param name="options">轮次与重试上限。</param>
 /// <param name="orphans">持有写入保护的孤儿回收适配器。</param>
-public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, IClock clock, FileRecoveryOptions options, IOrphanFileStore orphans)
+/// <param name="observations">逐文件后台执行观察。</param>
+public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, IClock clock, FileRecoveryOptions options, IOrphanFileStore orphans,
+    IBackgroundExecutionObservation? observations = null)
 {
     /// <summary>尝试清理一次；存储失败留下下一次重试时间。</summary>
     /// <param name="file">已经软删除的文件。</param>
@@ -63,11 +67,11 @@ public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, 
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
                 file.PostponeCleanup(clock.UtcNow + options.RetryDelay);
-                await files.SaveAsync(file, originalVersion, cancellationToken).ConfigureAwait(false);
+                await files.SaveAsync(file, originalVersion, cancellationToken: cancellationToken).ConfigureAwait(false);
                 return false;
             }
             file.ConfirmBytesRemoved(clock.UtcNow);
-            await files.SaveAsync(file, originalVersion, cancellationToken).ConfigureAwait(false);
+            await files.SaveAsync(file, originalVersion, cancellationToken: cancellationToken).ConfigureAwait(false);
             return true;
         }
         catch (FileMetadataConflictException)
@@ -84,7 +88,18 @@ public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, 
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
         var pending = await files.PendingDeletionsAsync(clock.UtcNow, options.BatchSize, cancellationToken).ConfigureAwait(false);
-        foreach (var file in pending) { await CompleteDeletionAsync(file, cancellationToken).ConfigureAwait(false); }
+        foreach (var file in pending)
+        {
+            if (observations is null) { await CompleteDeletionAsync(file, cancellationToken).ConfigureAwait(false); }
+            else
+            {
+                await observations.ObserveAsync(new RecoveryExecutionDescriptor("files.deletion.recover", "stored-file", "int64", file.Id.Value.ToString(CultureInfo.InvariantCulture)),
+                    async () => new BackgroundExecutionInput<StoredFile>(file, await files.ReadDeletionOriginAsync(file.Id, cancellationToken).ConfigureAwait(false)),
+                    current => CompleteDeletionAsync(current, cancellationToken),
+                    completed => completed ? BackgroundExecutionOutcome.Completed : BackgroundExecutionOutcome.Deferred,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
         await orphans.CollectOrphansAsync(files.RetireUnreferencedStorageAsync, clock.UtcNow - options.OrphanAge,
             options.BatchSize, cancellationToken).ConfigureAwait(false);
     }

@@ -40,27 +40,27 @@ internal sealed class FakeOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
-    public Task MarkFailedAsync(
+    public Task<bool> MarkFailedAsync(
         Guid id,
         string failure,
         DateTimeOffset nextAttemptAt,
+        long expectedRetryRevision,
         CancellationToken cancellationToken = default)
     {
-        Replace(id, entry => entry.RecordFailure(failure, nextAttemptAt));
-        return Task.CompletedTask;
+        return Task.FromResult(Replace(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.RecordFailure(failure, nextAttemptAt) : entry));
     }
 
-    public Task MarkDeadLetteredAsync(
+    public Task<bool> MarkDeadLetteredAsync(
         Guid id,
         string failure,
         DateTimeOffset now,
+        long expectedRetryRevision,
         CancellationToken cancellationToken = default)
     {
-        Replace(id, entry => entry.MarkDeadLettered(failure, now));
-        return Task.CompletedTask;
+        return Task.FromResult(Replace(id, entry => entry.RetryRevision == expectedRetryRevision ? entry.MarkDeadLettered(failure, now) : entry));
     }
 
-    private void Replace(Guid id, Func<OutboxEntry, OutboxEntry> update)
+    private bool Replace(Guid id, Func<OutboxEntry, OutboxEntry> update)
     {
         var index = _entries.FindIndex(entry => entry.Id == id);
         if (index < 0)
@@ -68,7 +68,10 @@ internal sealed class FakeOutboxStore : IOutboxStore
             throw new InvalidOperationException($"Outbox 记录不存在：{id}");
         }
 
-        _entries[index] = update(_entries[index]);
+        var before = _entries[index];
+        var after = update(before);
+        _entries[index] = after;
+        return before != after;
     }
 }
 

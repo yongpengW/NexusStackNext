@@ -85,7 +85,7 @@ public sealed class TaskOperationTests
         Assert.Equal("Superseded", (await sender.QueryAsync(new GetCostCalculation(first.RequestId))).Value.State);
         Assert.Null((await sender.QueryAsync(new GetCostSheet(first.ItemId))).Value.UnitCost);
         var businessOutbox = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
-        Assert.Empty(await businessOutbox.ReadPendingAsync(10, DateTimeOffset.UtcNow));
+        Assert.DoesNotContain(await businessOutbox.ReadPendingAsync(10, DateTimeOffset.UtcNow), entry => entry.EventName == CostCalculatedV1.Name);
         var current = (await sender.SendAsync(new ClaimCostingWork())).Value!;
         Assert.Equal(latest.RequestId, current.TaskId);
         Assert.True((await sender.SendAsync(new CompleteCostingWork(current.TaskId, current.Epoch))).Value);
@@ -260,7 +260,15 @@ public sealed class TaskOperationTests
         }
         Assert.True((await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetRecalculation(message.EventId))).IsFailure);
         Assert.True(await processor.HandleAsync(OutboxEntry.From(message, new SystemTextJsonIntegrationEventSerializer()).ToEnvelope()));
-        Assert.Equal(origin, (await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetRecalculation(message.EventId))).Value.ExecutionOrigin);
+        var accepted = (await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetRecalculation(message.EventId))).Value.ExecutionOrigin!;
+        Assert.NotEqual(origin.OperationId, accepted.OperationId);
+        Assert.Equal("pricing", accepted.Source);
+        Assert.Equal(origin.RootOperationId, accepted.RootOperationId);
+        Assert.Equal(origin.InitiatorId, accepted.InitiatorId);
+        var observation = Assert.Single(await OperationEndpointInventoryTests.ReadAsync(scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey)),
+            item => item.Kind == "message" && item.Outcome == "accepted");
+        Assert.Equal(accepted.OperationId, observation.OperationId);
+        Assert.Equal(origin.OperationId, observation.Metadata!.ParentOperationId);
     }
 
     [PostgresFact]
@@ -279,11 +287,16 @@ public sealed class TaskOperationTests
             OccurredAt = DateTimeOffset.UtcNow,
             ExecutionOrigin = origin,
         };
+        ExecutionOrigin acceptedOrigin;
         await using (var app = CreatePricingApp(database.ConnectionString, null))
         await using (var scope = app.Services.CreateAsyncScope())
         {
             Assert.True(await scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name)
                 .HandleAsync(OutboxEntry.From(message, new SystemTextJsonIntegrationEventSerializer()).ToEnvelope()));
+            acceptedOrigin = (await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetRecalculation(message.EventId))).Value.ExecutionOrigin!;
+            Assert.Equal(origin.RootOperationId, acceptedOrigin.RootOperationId);
+            Assert.Equal(origin.InitiatorId, acceptedOrigin.InitiatorId);
+            Assert.Equal("pricing", acceptedOrigin.Source);
         }
         await using var restarted = CreatePricingApp(database.ConnectionString, null);
         await using var restartedScope = restarted.Services.CreateAsyncScope();
@@ -296,7 +309,7 @@ public sealed class TaskOperationTests
         Assert.False(await processor.HandleAsync(OutboxEntry.From(message with { ExecutionOrigin = null },
             new SystemTextJsonIntegrationEventSerializer()).ToEnvelope()));
         var task = (await restartedScope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetRecalculation(message.EventId))).Value;
-        Assert.Equal(origin, task.ExecutionOrigin);
+        Assert.Equal(acceptedOrigin, task.ExecutionOrigin);
     }
 
     [PostgresFact]
@@ -309,6 +322,7 @@ public sealed class TaskOperationTests
         var command = new UpdateCostInputs(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 20m);
         Guid rootOperation;
         Guid costAttempt;
+        Guid costAcceptance;
         EventEnvelope envelope;
         await using (var costing = CreateCostingApp(costDatabase.ConnectionString, "original-initiator"))
         await using (var scope = costing.Services.CreateAsyncScope())
@@ -330,6 +344,11 @@ public sealed class TaskOperationTests
         await using (var scope = pricing.Services.CreateAsyncScope())
         {
             Assert.True(await scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(envelope));
+            var observation = Assert.Single(await OperationEndpointInventoryTests.ReadAsync(scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey)),
+                item => item.Kind == "message" && item.Outcome == "accepted");
+            costAcceptance = observation.OperationId;
+            Assert.Equal(costAttempt, observation.Metadata!.ParentOperationId);
+            Assert.Equal("costing", observation.Metadata.ParentSource);
         }
         await using var restarted = CreatePricingApp(priceDatabase.ConnectionString, null);
         await using var restartedScope = restarted.Services.CreateAsyncScope();
@@ -337,8 +356,8 @@ public sealed class TaskOperationTests
         var task = (await restartedSender.QueryAsync(new GetRecalculation(command.RequestId))).Value;
         Assert.NotNull(task.ExecutionOrigin);
         Assert.Equal(rootOperation, task.ExecutionOrigin.RootOperationId);
-        Assert.Equal(costAttempt, task.ExecutionOrigin.OperationId);
-        Assert.Equal("costing", task.ExecutionOrigin.Source);
+        Assert.Equal(costAcceptance, task.ExecutionOrigin.OperationId);
+        Assert.Equal("pricing", task.ExecutionOrigin.Source);
         Assert.Equal("costing", task.ExecutionOrigin.RootSource);
         Assert.Equal("original-initiator", task.ExecutionOrigin.InitiatorId);
         Assert.True(await restartedScope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(CostCalculatedV1.Name).HandleAsync(envelope));
@@ -350,9 +369,9 @@ public sealed class TaskOperationTests
         var finished = Assert.Single(pricingObservations, item => item.Kind == "task" && item.Phase == "finished");
         Assert.Null(finished.ActorId);
         Assert.Equal("completed", finished.Outcome);
-        Assert.Equal(costAttempt, finished.Metadata!.ParentOperationId);
+        Assert.Equal(costAcceptance, finished.Metadata!.ParentOperationId);
         Assert.Equal(rootOperation, finished.Metadata.RootOperationId);
-        Assert.Equal("costing", finished.Metadata.ParentSource);
+        Assert.Equal("pricing", finished.Metadata.ParentSource);
         Assert.Equal("original-initiator", finished.Metadata.InitiatorId);
     }
 
@@ -533,7 +552,7 @@ public sealed class TaskOperationTests
         Assert.Equal("original-initiator", origin.GetProperty("initiatorId").GetString());
     }
 
-    private static WebApplication CreateCostingApp(string connection, string? actor)
+    internal static WebApplication CreateCostingApp(string connection, string? actor)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -547,7 +566,7 @@ public sealed class TaskOperationTests
         return builder.Build();
     }
 
-    private static WebApplication CreatePricingApp(string connection, string? actor, PricingTaskOptions? options = null)
+    internal static WebApplication CreatePricingApp(string connection, string? actor, PricingTaskOptions? options = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>

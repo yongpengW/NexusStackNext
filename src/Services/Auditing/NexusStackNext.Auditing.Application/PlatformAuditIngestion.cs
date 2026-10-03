@@ -22,8 +22,14 @@ public sealed class PlatformAuditIngestion(AuditIngestion ingestion, IIntegratio
         try { message = serializer.Deserialize<SettingCommittedV1>(envelope.Payload); }
         catch (Exception error) when (error is JsonException or InvalidOperationException or ArgumentException) { return false; }
         if (message.EventId != envelope.MessageId || message.Operation is not ("created" or "changed" or "cleared")) { return false; }
+        if (message.Execution is { } execution && (!execution.IsValid()
+            || execution.TraceId != message.TraceId || (execution.CorrelationId is not null && execution.CorrelationId != message.CorrelationId))) { return false; }
         var fact = new AuditFact(message.EventId, EventName, "platform", "platform.setting." + message.Operation,
-            "global-setting", message.Key, message.Version, message.ActorId, message.OccurredAt, message.TraceId, message.CorrelationId);
+            "global-setting", message.Key, message.Version, message.ActorId, message.OccurredAt, message.TraceId, message.CorrelationId)
+        {
+            Execution = message.Execution is { } origin
+                ? new AuditExecution(origin.OperationId, origin.Source, origin.RootOperationId, origin.RootSource, origin.InitiatorId) : null,
+        };
         return (await ingestion.IngestAsync(fact, cancellationToken).ConfigureAwait(false)).IsSuccess;
     }
 }

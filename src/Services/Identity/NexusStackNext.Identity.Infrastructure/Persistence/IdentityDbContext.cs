@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
+using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.Identity.Domain.Menus;
@@ -7,6 +8,7 @@ using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Tokens;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
+using Npgsql;
 
 namespace NexusStackNext.Identity.Infrastructure.Persistence;
 
@@ -26,6 +28,25 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 {
     /// <summary>本上下文的 schema 名。<b>只在这里写一次</b>——配置迁移历史表时也要用它。</summary>
     public const string SchemaName = "identity";
+
+    /// <inheritdoc />
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        try { return base.SaveChanges(acceptAllChangesOnSuccess); }
+        catch (DbUpdateException error) when (IsFactCapacityFailure(error)) { throw new IdentityAuditCapacityException(); }
+    }
+
+    /// <inheritdoc />
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        try { return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken).ConfigureAwait(false); }
+        catch (DbUpdateException error) when (IsFactCapacityFailure(error)) { throw new IdentityAuditCapacityException(); }
+    }
+
+    private static bool IsFactCapacityFailure(DbUpdateException error) => error.InnerException is PostgresException
+    {
+        SqlState: "P0001", ConstraintName: "identity_fact_capacity_exhausted",
+    };
 
     /// <summary>用户。</summary>
     public DbSet<User> Users => Set<User>();
@@ -58,6 +79,14 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        modelBuilder.ConfigureCommittedFactCleanup();
+        var capacity = modelBuilder.Entity<IdentityFactCapacity>();
+        capacity.ToTable("fact_capacity", table =>
+        {
+            table.HasCheckConstraint("ck_fact_capacity_singleton", "\"Id\" = 1");
+            table.HasCheckConstraint("ck_fact_capacity_bounds", "\"RetainedRecords\" >= 0 AND \"RetainedPayloadBytes\" >= 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\"");
+        });
+        capacity.HasKey(item => item.Id);
 
         ConfigureUsers(modelBuilder);
         ConfigureRoles(modelBuilder);

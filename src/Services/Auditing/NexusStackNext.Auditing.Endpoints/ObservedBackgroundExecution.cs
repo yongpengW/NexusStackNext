@@ -58,6 +58,8 @@ internal sealed class ObservedBackgroundExecution(OperationObservationWriter wri
                     BackgroundExecutionOutcome.Skipped => "skipped",
                     BackgroundExecutionOutcome.Rejected => "rejected",
                     BackgroundExecutionOutcome.Failed => "failed",
+                    BackgroundExecutionOutcome.Deferred => "deferred",
+                    BackgroundExecutionOutcome.Duplicate => "duplicate",
                     _ => null,
                 };
             }
@@ -97,14 +99,17 @@ internal sealed class ObservedBackgroundExecution(OperationObservationWriter wri
         EventId = Guid.NewGuid(),
         OperationId = operationId,
         Source = options.Source,
-        Kind = descriptor is ScheduleExecutionDescriptor ? "schedule" : "task",
+        Kind = Kind(descriptor),
         Phase = "started",
         OccurredAt = startedAt,
         TraceId = parent?.TraceId ?? Activity.Current?.TraceId.ToString() ?? operationId.ToString("N"),
         Metadata = new OperationDetails
         {
             Action = descriptor.Action,
-            ExecutionRole = descriptor is ScheduleExecutionDescriptor ? "schedule" : "task",
+            ExecutionRole = Kind(descriptor),
+            SubjectType = descriptor is MessageExecutionDescriptor message ? message.EventName : (descriptor as RecoveryExecutionDescriptor)?.SubjectType,
+            SubjectIdKind = descriptor is MessageExecutionDescriptor ? "guid" : (descriptor as RecoveryExecutionDescriptor)?.SubjectIdKind,
+            SubjectId = descriptor is MessageExecutionDescriptor received ? received.MessageId.ToString("D") : (descriptor as RecoveryExecutionDescriptor)?.SubjectId,
             RootOperationId = parent?.RootOperationId ?? operationId,
             RootSource = parent?.RootSource ?? options.Source,
             ParentOperationId = parent?.OperationId,
@@ -117,5 +122,14 @@ internal sealed class ObservedBackgroundExecution(OperationObservationWriter wri
             ScheduleDecisionId = (descriptor as ScheduleExecutionDescriptor)?.DecisionId,
             CorrelationId = parent?.CorrelationId,
         },
+    };
+
+    private static string Kind(BackgroundExecutionDescriptor descriptor) => descriptor switch
+    {
+        ScheduleExecutionDescriptor => "schedule",
+        RecoveryExecutionDescriptor => "recovery",
+        TaskExecutionDescriptor => "task",
+        MessageExecutionDescriptor => "message",
+        _ => "unknown",
     };
 }

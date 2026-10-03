@@ -2,10 +2,13 @@ using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Contracts;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.Scheduling.Infrastructure;
+using NexusStackNext.Scheduling.Infrastructure.Persistence;
 
 namespace NexusStackNext.Scheduling.Endpoints;
 
@@ -42,6 +45,7 @@ public static class SchedulingModule
                 throw new InvalidOperationException("Scheduling:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
             services.AddSchedulingInMemoryStorage();
+            services.AddSchedulingMemoryFactCleanup(configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -51,6 +55,8 @@ public static class SchedulingModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Scheduling；开发测试可显式选择 Scheduling:Storage:Provider=Memory。");
             }
             services.AddSchedulingPostgresStorage(connection);
+            services.AddCommittedFactCleanup<SchedulingDbContext>("scheduling", PlanCommittedV1.Name,
+                configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else { throw new InvalidOperationException("Scheduling:Storage:Provider 仅支持 Postgres / Memory。"); }
 

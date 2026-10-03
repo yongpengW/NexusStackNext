@@ -1,5 +1,7 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Files.Domain.Stored;
 
@@ -12,6 +14,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
 {
     /// <summary>文件上下文所属 schema。</summary>
     public const string SchemaName = "files";
+    internal const string DeletionOriginProperty = "DeletionOrigin";
 
     /// <summary>文件元数据，包括等待清理的软删除记录。</summary>
     public DbSet<StoredFile> Files => Set<StoredFile>();
@@ -22,6 +25,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        modelBuilder.ConfigureCommittedFactCleanup();
         var file = modelBuilder.Entity<StoredFile>();
         file.ToTable("stored_files");
         file.HasKey(item => item.Id);
@@ -34,6 +38,9 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
         file.Property(item => item.StorageKey).HasMaxLength(128);
         file.HasIndex(item => item.StorageKey).IsUnique();
         file.Property(item => item.Version).IsConcurrencyToken().ValueGeneratedNever();
+        file.Property<ExecutionOrigin?>(DeletionOriginProperty).HasColumnType("jsonb").HasConversion(
+            origin => JsonSerializer.Serialize(origin, JsonSerializerOptions.Default),
+            json => JsonSerializer.Deserialize<ExecutionOrigin>(json, JsonSerializerOptions.Default));
         file.HasIndex(item => new { item.NextCleanupAttemptAt, item.Id })
             .HasFilter("\"IsDeleted\" AND \"BytesRemovedAt\" IS NULL");
         file.Ignore(item => item.IsStored);

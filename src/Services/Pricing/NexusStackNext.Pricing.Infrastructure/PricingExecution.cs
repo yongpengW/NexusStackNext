@@ -9,9 +9,23 @@ using NexusStackNext.Pricing.Domain;
 namespace NexusStackNext.Pricing.Infrastructure;
 
 internal sealed class PricingExecution(PricingDbContext database, PricingTaskOptions options, IBackgroundExecutionObservation observations) : ICommandHandler<ClaimPricingWork, PricingWorkLease?>,
-    ICommandHandler<CompletePricingWork, bool>, ICommandHandler<FailPricingWork, bool>, ICommandHandler<RetryPricingWork, RecalculationStatus>
+    ICommandHandler<CompletePricingWork, bool>, ICommandHandler<FailPricingWork, bool>, ICommandHandler<RetryPricingWork, RecalculationStatus>,
+    ICommandHandler<CancelPricingWork, RecalculationStatus>, ICommandHandler<RenewPricingWork, PricingWorkLease>
 {
     private readonly PostgresTaskExecution<RecalculationEntry> _execution = new(database, "pricing", options);
+
+    public async Task<Result<PricingWorkLease>> HandleAsync(RenewPricingWork command, CancellationToken cancellationToken = default)
+    {
+        var result = await _execution.RenewAsync(command.TaskId, command.Epoch, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? Result.Success(new PricingWorkLease(result.Value.TaskId, result.Value.Epoch, result.Value.LeaseUntil!.Value))
+            : Result.Failure<PricingWorkLease>(result.Error);
+    }
+
+    public async Task<Result<RecalculationStatus>> HandleAsync(CancelPricingWork command, CancellationToken cancellationToken = default)
+    {
+        var result = await _execution.CancelAsync(command.TaskId, command.ExpectedEpoch, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? Result.Success(result.Value.ToStatus()) : Result.Failure<RecalculationStatus>(result.Error);
+    }
 
     public async Task<Result<bool>> HandleAsync(FailPricingWork command, CancellationToken cancellationToken = default) =>
         Result.Success(await _execution.FailAsync(command.TaskId, command.Epoch, cancellationToken).ConfigureAwait(false));

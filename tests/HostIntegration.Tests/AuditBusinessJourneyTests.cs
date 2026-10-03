@@ -263,6 +263,7 @@ public sealed class AuditBusinessJourneyTests
             {
                 await PlatformSettingsAccessTests.LoginAsync(producer.Client, "journey-root", "audit-root-password");
                 actor = new JwtSecurityTokenHandler().ReadJwtToken(producer.Client.DefaultRequestHeaders.Authorization!.Parameter).Subject;
+                producer.Client.DefaultRequestHeaders.Add("X-Correlation-ID", "committed-setting-64");
                 using var written = await producer.Client.PutAsJsonAsync(new Uri("/api/platform/settings/audit.probe", UriKind.Relative),
                     new { value = "private-audit-value", description = "private-audit-description", actorId = "forged-actor", source = "forged-source" });
                 Assert.Equal(HttpStatusCode.NoContent, written.StatusCode);
@@ -279,6 +280,28 @@ public sealed class AuditBusinessJourneyTests
             Assert.Equal(1, fact.GetProperty("subjectVersion").ReadHttpInt64());
             Assert.False(string.IsNullOrWhiteSpace(fact.GetProperty("traceId").GetString()));
             Assert.False(string.IsNullOrWhiteSpace(fact.GetProperty("correlationId").GetString()));
+            var execution = fact.GetProperty("execution");
+            Assert.Equal("platform", execution.GetProperty("source").GetString());
+            Assert.Equal("platform", execution.GetProperty("rootSource").GetString());
+            Assert.Equal(actor, execution.GetProperty("initiatorId").GetString());
+            var operationId = execution.GetProperty("operationId").GetGuid();
+            Assert.NotEqual(Guid.Empty, operationId);
+            Assert.Equal(operationId, execution.GetProperty("rootOperationId").GetGuid());
+            Assert.Equal("committed-setting-64", fact.GetProperty("correlationId").GetString());
+            using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            while (true)
+            {
+                using var response = await resumed.Client.GetAsync(new Uri($"/api/auditing/operations?source=platform&operationId={operationId}", UriKind.Relative), budget.Token);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var operations = (await response.Content.ReadApiDataAsync()).EnumerateArray().ToArray();
+                if (operations.Length == 1 && operations[0].GetProperty("outcome").GetString() == "completed")
+                {
+                    Assert.Equal(fact.GetProperty("traceId").GetString(), operations[0].GetProperty("traceId").GetString());
+                    Assert.Equal(actor, operations[0].GetProperty("actorId").GetString());
+                    break;
+                }
+                await Task.Delay(100, budget.Token);
+            }
             Assert.DoesNotContain("private-audit-value", page.GetRawText(), StringComparison.Ordinal);
             Assert.DoesNotContain("private-audit-description", page.GetRawText(), StringComparison.Ordinal);
         }
@@ -306,7 +329,7 @@ public sealed class AuditBusinessJourneyTests
         {
             while (true)
             {
-                using var response = await client.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative), timeout.Token);
+                using var response = await client.GetAsync(new Uri("/api/auditing/entries?source=platform", UriKind.Relative), timeout.Token);
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 var result = await response.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
                 observed = result.GetProperty("total").ReadHttpInt64();
@@ -319,6 +342,26 @@ public sealed class AuditBusinessJourneyTests
 
     internal static async Task DeleteTopologyAsync(RabbitMqOptions broker, EventTopology topology)
     {
+        var identity = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+            .Select(item => new EventSubscription { EventName = "identity.entity-committed.v1", ConsumerName = item.ConsumerName + "-identity" })
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(identity).ToArray());
+        var files = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+            .Select(item => new EventSubscription { EventName = "files.stored-file-committed.v1", ConsumerName = item.ConsumerName + "-files" })
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(files).ToArray());
+        var scheduling = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+            .Select(item => new EventSubscription { EventName = "scheduling.plan-committed.v1", ConsumerName = item.ConsumerName + "-scheduling" })
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(scheduling).ToArray());
+        var costing = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+            .Select(item => new EventSubscription { EventName = "costing.cost-sheet-committed.v1", ConsumerName = item.ConsumerName + "-costing" })
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(costing).ToArray());
+        var pricing = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
+            .Select(item => new EventSubscription { EventName = "pricing.price-quote-committed.v1", ConsumerName = item.ConsumerName + "-pricing" })
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(pricing).ToArray());
         if (!topology.Subscriptions.Any(item => item.EventName == "auditing.operation-observed.v1"))
         {
             var observations = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")

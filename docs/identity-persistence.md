@@ -31,6 +31,10 @@ pwsh -File scripts/run-host.ps1 platform
 
 无库演示须为 Identity、Platform、Files、Auditing、Scheduling 分别设置 `<Context>__Storage__Provider=Memory`，仅 `Development` / `Testing` 环境允许。
 未指定或空白 Provider 使用 Postgres；拼错值直接失败。三个手动 HTTP 验证脚本已显式选择开发内存模式。
+Memory 使用 scoped 工作副本与 singleton 已提交状态；仓储登记及聚合修改在工作单元提交前不向其他请求发布。
+普通拒绝与取消丢弃工作副本；错误密码等明确保留的拒绝仍提交。行审计、最小业务事实和业务状态原子保存，
+宿主配置 RabbitMQ 后自动交付 Identity Outbox。Memory 中尚未交付的记录随进程结束丢失，不能用于生产持久恢复。
+详细语义及代价见 [开发存储提交边界](../src/Services/Identity/docs/adr/0005-memory-storage-has-a-commit-boundary.md)。
 Aspire 将 `NEXUSSTACK_DB` 分别注入五个平台模块的 `ConnectionStrings__<Context>`，启动前仍需完成各模块的独立迁移。
 AppHost 启动脚本只接受明确的运行库配置，不再把 `NEXUSSTACK_TEST_POSTGRES` 隐式用作应用数据库。
 
@@ -53,6 +57,12 @@ AppHost 启动脚本只接受明确的运行库配置，不再把 `NEXUSSTACK_TE
 也不代表账户生命周期或独立业务宿主的即时撤权已完成。
 
 ## 安全状态与当前限制
+
+PostgreSQL 事实容量由 `IdentityFactCapacity` 独立迁移启用；默认 100,000 条、正文总量 256 MiB、单条正文 16 KiB。
+整批事实与业务同事务，满额返回 `identity.audit_capacity.exhausted` / HTTP 503，不留下半批变化，
+也不执行提交后的权限失效。错误密码只有失败计数及事实成功提交后才返回原有凭据错误。
+恢复依靠安全清理已确认副本；可审计策略调整、容量诊断及 Memory 准入仍待完成。
+设计与测试边界见 [ADR-0006](../src/Services/Identity/docs/adr/0006-fact-capacity-rejects-the-whole-command.md)。
 
 会话版本由 User 持有；访问令牌和刷新令牌都记录签发时版本，重启后旧版本继续被拒绝。
 登出及重放撤销只修改 User 聚合；旧版本重放不会再次撤销后来重新登录的新会话。

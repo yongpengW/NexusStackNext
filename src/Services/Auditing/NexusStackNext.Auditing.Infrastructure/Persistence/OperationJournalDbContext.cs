@@ -29,7 +29,34 @@ public sealed class OperationJournalDbContext(DbContextOptions<OperationJournalD
         observation.Property<Guid>(OperationIdProperty).IsRequired();
         observation.Property<string>(PhaseProperty).HasMaxLength(16).IsRequired();
         observation.HasIndex(SourceProperty, OperationIdProperty, PhaseProperty).IsUnique();
+        observation.HasIndex(item => new { item.DeliveredAt, item.Id }).HasDatabaseName("ix_outbox_delivered_cleanup")
+            .HasFilter("\"DeliveredAt\" IS NOT NULL AND \"DeadLetteredAt\" IS NULL");
+        modelBuilder.Entity<OperationJournalCapacity>(capacity =>
+        {
+            capacity.ToTable("capacity", table => table.HasCheckConstraint("ck_capacity_valid", "\"Id\" = 1 AND \"RecordCount\" >= 0 AND \"PayloadBytes\" >= 0"));
+            capacity.HasKey(item => item.Id);
+            capacity.Property(item => item.Id).ValueGeneratedNever();
+        });
+        modelBuilder.Entity<OperationJournalRecoveryRecord>(recovery =>
+        {
+            recovery.ToTable("recovery_records", table => table.HasCheckConstraint("ck_recovery_revision",
+                "\"PreviousRetryRevision\" >= 0 AND \"RetryRevision\" = \"PreviousRetryRevision\" + 1"));
+            recovery.HasKey(item => item.RequestId);
+            recovery.Property(item => item.RequestId).ValueGeneratedNever();
+            recovery.Property(item => item.Source).HasMaxLength(64).IsRequired();
+            recovery.Property(item => item.Reason).HasMaxLength(32).IsRequired();
+            recovery.Property(item => item.Account).HasMaxLength(200).IsRequired();
+            recovery.Property(item => item.Machine).HasMaxLength(200).IsRequired();
+            recovery.HasIndex(item => new { item.RetainUntil, item.RequestId });
+        });
     }
+}
+
+internal sealed class OperationJournalCapacity
+{
+    public int Id { get; set; }
+    public long RecordCount { get; set; }
+    public long PayloadBytes { get; set; }
 }
 
 internal sealed class OperationJournalDbContextFactory : IDesignTimeDbContextFactory<OperationJournalDbContext>
@@ -69,7 +96,7 @@ public static class OperationJournalDatabase
         await context.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    internal static async Task CheckSchemaAsync(OperationJournalDbContext context, CancellationToken cancellationToken)
+    internal static async Task<OperationJournalCapacity> CheckSchemaAsync(OperationJournalDbContext context, CancellationToken cancellationToken)
     {
         if ((await context.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Any())
         {
@@ -77,5 +104,6 @@ public static class OperationJournalDatabase
         }
         // 查询完整投影，即使没有数据也验证实际列存在，不能仅检查表名。
         _ = await context.Outbox.AsNoTracking().Take(1).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        return await context.Set<OperationJournalCapacity>().AsNoTracking().SingleAsync(item => item.Id == 1, cancellationToken).ConfigureAwait(false);
     }
 }

@@ -37,7 +37,7 @@ public sealed record OperationMetadata(string Action, string ExecutionRole, stri
     /// <summary>本次拟登记的决定标识。</summary>
     public Guid? ScheduleDecisionId { get; init; }
 
-    internal bool IsValid() => Safe(Action, 200) && ExecutionRole is "endpoint" or "proxy" or "command" or "task" or "schedule"
+    internal bool IsValid() => Safe(Action, 200) && ExecutionRole is "endpoint" or "proxy" or "command" or "task" or "schedule" or "recovery" or "message"
         && (Description is null || Safe(Description, 256)) && ValidSubject() && ValidExecution()
         && ValidSpan(SpanId) && ValidSpan(ParentSpanId)
         && (CorrelationId is null || CorrelationId.Length is > 0 and <= 64

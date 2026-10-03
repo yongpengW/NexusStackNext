@@ -6,6 +6,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../Pricing/NexusStackNext.Pricing.Contracts/NexusStackNext.Pricing.Contracts.csproj" />
+    <ProjectReference Include="../../Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
+    <ProjectReference Include="../../Scheduling/NexusStackNext.Scheduling.Contracts/NexusStackNext.Scheduling.Contracts.csproj" />
+    <ProjectReference Include="../../Files/NexusStackNext.Files.Contracts/NexusStackNext.Files.Contracts.csproj" />
+    <ProjectReference Include="../../Identity/NexusStackNext.Identity.Contracts/NexusStackNext.Identity.Contracts.csproj" />
     <ProjectReference Include="../NexusStackNext.Auditing.Contracts/NexusStackNext.Auditing.Contracts.csproj" />
     <ProjectReference Include="../../Platform/NexusStackNext.Platform.Contracts/NexusStackNext.Platform.Contracts.csproj" />
     <ProjectReference Include="..\NexusStackNext.Auditing.Domain\NexusStackNext.Auditing.Domain.csproj" />

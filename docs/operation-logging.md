@@ -1,6 +1,6 @@
 # 自动操作日志
 
-本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60)、[持久链路 #61](https://github.com/yongpengW/NexusStackNext/issues/61)、[全宿主 HTTP 覆盖 #62](https://github.com/yongpengW/NexusStackNext/issues/62) 与[命令和任务关联 #63](https://github.com/yongpengW/NexusStackNext/issues/63) 的架构、使用语义和验收边界。四个宿主均已显式接入默认 HTTP 采集；#63 正在验证命令、业务任务与调度观察，尚未完成整票验收，不替代全量回归和 CI 的门禁结论。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
+本文件记录 [规格 #60](https://github.com/yongpengW/NexusStackNext/issues/60)、[持久链路 #61](https://github.com/yongpengW/NexusStackNext/issues/61)、[全宿主 HTTP 覆盖 #62](https://github.com/yongpengW/NexusStackNext/issues/62) 与[命令和任务关联 #63](https://github.com/yongpengW/NexusStackNext/issues/63) 的架构、使用语义和验收边界。四个宿主均已显式接入默认 HTTP 采集；命令、业务任务与调度观察已随 [PR #67](https://github.com/yongpengW/NexusStackNext/pull/67) 合并。完整业务事实覆盖与容量治理继续由[后续票据](https://github.com/yongpengW/NexusStackNext/issues/64)验收。决策见 [Auditing ADR-0003](../src/Services/Auditing/docs/adr/0003-source-journal-and-operation-observations.md)。
 
 ## 三种审计信息
 
@@ -23,6 +23,9 @@ flowchart LR
     Broker --> Central["Auditing 中央事务<br/>Inbox + 指纹 + 不可变观察"]
     Central --> Query[受权 Operation 查询]
     Business --> Facts["业务状态 + 最小 AuditFact Outbox<br/>同一事务"]
+    Facts --> Broker
+    Broker --> FactStore["Auditing 中央事务<br/>Inbox + 指纹 + 不可变事实"]
+    FactStore --> FactQuery[受权事实查询]
 ```
 
 SourceJournal 是 Auditing 模块部署在来源宿主的一部分，不属于该宿主中的业务上下文。PlatformHost、PricingHost、CostingHost 与 Gateway 显式组合这个模块；业务 Domain / Application 不引用 Auditing 的 Infrastructure，不直接访问其表。来源和中央使用不同 DbContext、schema 与迁移历史。暂时共用物理 PostgreSQL 可以降低开发部署成本，但各自使用独立连接和事务，不能把共库描述成存储故障隔离。网关部署因此需要日志存储配置；journal 的数据仍由 Auditing 拥有。
@@ -56,7 +59,11 @@ YARP 2.3 的路由超时会被转换成 400，见[上游问题 #2662](https://gi
 
 HTTP Started 位于认证前，Actor 为空；Finished 仅使用已认证声明中的用户身份，认证失败或没有用户时为空。后台执行的 Actor 与原 Initiator 独立表达，具体语义见下节。
 
-## 命令与业务任务（#63，进行中）
+新采集的 HTTP 两个阶段均保存自身 OperationId / Source 为根操作字段，使根操作调查同时返回原请求和后续执行。
+网关与业务宿主各自建立本地根，跨 HTTP 转发仍通过追踪和 correlation 关联；不把外来请求字段当作可信操作身份。
+旧 HTTP 记录没有这些字段时保持未知，重投不补写，也不在查询时推造历史关联。
+
+## 命令与业务任务
 
 `ISender` 的独立命令默认产生一次 `command` 操作，覆盖校验、事务入口与返回结果；查询不产生命令操作。已有 HTTP 或外层命令作用域时，内层命令沿用它，不重复记录。显式排除的 HTTP 入口也排除其内部命令；父作用域结束后，异步子流程不能再复用已结束的操作。
 
@@ -72,15 +79,35 @@ Costing / Pricing 在任务受理事务内保存可空的 `ExecutionOrigin`，�
 
 Costing 的 `CostCalculatedV1` 随业务 Outbox 保存产出结果的执行来源；Pricing 校验该可选字段，与 Inbox、业务更新和新任务一起接纳。新字段参与内容指纹，同身份重投不能更换或删除关联；不含该字段的旧消息保持原指纹。旧任务可以没有来源，不能追填成当前调用人。业务任务和中央观察使用增量迁移，来源 journal 的载荷表不需要额外迁移。
 
+Pricing 对每次有效成本消息消费建立独立 `message` 操作，动作 `pricing.cost.accept`，客体为固定事件名和消息 GUID。
+新任务保存本次受理操作为直接来源，上游 Costing 操作为父级，根操作、原发起人和关联标识保持不变。
+消息指纹仍使用原始载荷；重复投递不改写首次来源，旧任务保留已存关系。不同投递尝试各有操作标识，
+结论区分 accepted / duplicate / skipped / rejected / failed / canceled，不把消费确认当成价格计算完成。
+独立 journal 保留失败或取消观察，业务状态和新事实一起回滚。系统执行标记同时约束行审计与事实 Actor，
+调用链中的用户只能保留为原发起关系，不会被误写成后台执行者。该标记不参与授权。
+
 Scheduling 定义计划时，将当前来源与计划同一次保存；规则变更、启停及调度推进不改写原始来源。领域层保持独立，该元数据归应用与存储边界。来源随 Occurrence 和 `ScheduleTriggeredV1` 持久交付给 Costing，在 Costing 接受任务时保存；消息校验与指纹同时包含关联，旧消息没有该字段时保留原指纹。计划和发生的新增列是可空 jsonb，采用独立增量迁移。
 
+Costing 消费计划消息也有独立 `message` 操作（`costing.schedule.accept`），成功受理成为新任务直接来源，
+消息中的调度操作成为其父级。稳定业务拒绝回执成功提交后仍 ACK，但结果记为 rejected；重复消息为 duplicate。
+无来源的旧消息不从 CreatedBy 补造发起关系。提交失败/取消保留失败观察，进程终止只有 Started 时保持 unconfirmed；
+重投成功产生新操作。区间与日历计划的完整旅程需验证：定义请求 → 调度 → Costing 消费 → 成本计算 → Pricing 消费，
+相同成本结果在 Pricing 记为 skipped，不虚构新计算或新业务版本。
+
 每个到期计划的裁决独立产生 `schedule` 操作；空扫描不产生操作。`SchedulePlanId + ScheduleExpectedVersion + ScheduleDecisionId` 关联读取的计划版本与本次拟登记的决定，不借用业务任务的 TaskId / TaskEpoch。成功登记触发为 `accepted`，按漏跑策略登记跳过为 `skipped`，版本竞争失败为 `rejected`，计算或存储异常为 `failed`，执行取消为 `canceled`。失败和拒绝记录中的 DecisionId 不证明数据库中存在对应决定。系统 Actor 保持为空，原发起人仍取已保存的来源；发生消息的直接父级改为本次调度操作，根操作保持不变。三个调度关联字段参与中央内容指纹，并以可空列增量迁移。
+
+文件后台清理逐文件产生 `recovery` 操作，动作 `files.deletion.recover`，客体为 `stored-file` 及其内部标识。
+每次尝试独立配对 Started / Finished，未确认清除为 `deferred`，已确认清除为 `completed`，异常与取消为
+`failed` / `canceled`；这些结果均可用 `outcome` 过滤。恢复既没有任务租约，也没有计划决定，中央接收时拒绝混入这些字段。
+Files 首次删除事务保存来源；重复请求、延期、重启和并发失败都不能替换它。恢复操作的 Actor 为空，
+Initiator 仅来自已保存来源；旧记录没有来源时本次执行自成根，不根据文件 Owner 猜测身份。
+删除 HTTP 返回 202、后台恢复完成、字节移除事实是三个不同的证据。
 
 未保存操作来源的计划仍有明确的 `DelegatedBy`，因此可以保留已知委托人为 Initiator，但不能虚构此前的根操作或父操作；此时日志关联从本次调度开始。提交中取消会尝试用独立 journal 记录 `canceled`，不能把它解释成计划已取消或下游任务已取消。
 
 当前切片已覆盖命令嵌套与并发隔离、校验拒绝、异常与取消、日志故障隔离、受理来源跨重启保留、计划来源进入 Costing、真实数据库回滚、人工重试、输入读取取消和中央关联字段持久化。调度的触发、漏跑跳过、版本竞争和回滚后重试也有公共入口验证。
 
-真实 HTTP / RabbitMQ / PostgreSQL 旅程已验证：请求经网关受理后关闭来源进程，重启执行 Costing → Pricing，受权调查查询可关联两个 HTTP 操作和两次后台计算；跨消息丢失 Initiator 的可编译变异会使该旅程失败。另一条旅程在 Pricing 提交被阻塞时强杀进程，证明业务事务回滚、独立 journal 保留 Started，并在重启交付后显示 `unconfirmed`；新租约执行成功后，原操作仍保持未确认。旧租约失权与旧成本输入被替换分别记录 `lease_lost` / `superseded`，不会伪造结果或发布旧成本结果。
+真实 HTTP / RabbitMQ / PostgreSQL 旅程已验证：请求经网关受理后关闭来源进程，重启执行 Costing → Pricing，受权调查查询可关联两个 HTTP 操作、一次 Pricing 消息消费与两次后台计算；跨消息丢失 Initiator 的可编译变异会使该旅程失败。另一条旅程在 Pricing 提交被阻塞时强杀进程，证明业务事务回滚、独立 journal 保留 Started，并在重启交付后显示 `unconfirmed`；新租约执行成功后，原操作仍保持未确认。旧租约失权与旧成本输入被替换分别记录 `lease_lost` / `superseded`，不会伪造结果或发布旧成本结果。
 
 上述场景不能替代完整回归、模板、Linux CI 与双轴评审；各项合并门禁的实际结论记录在本票及 PR 中。后续任务管理票据的取消和续租入口必须按同一语义扩展覆盖。
 
@@ -141,7 +168,7 @@ Subject 仅从指定路由参数读取非空 Guid 或正 Int64，统一为字符
 
 采集故障的诊断不能重新进入自动观察链路，也不能输出原始异常及连接配置。fail-open 只描述普通采集的业务响应策略，并不保证 journal 一直可写、存储无限或跨机可用。
 
-关键 AuditFact 不走普通观察的降级策略：它必须由来源上下文与业务状态在同一事务写入。关键事实保存失败时该事务不提交，回滚和空操作不制造成功变更事实。现有[已提交事实审计](committed-auditing.md)仍只完成全局设置链路，其余上下文的事实覆盖由 #64 逐项验收。
+关键 AuditFact 不走普通观察的降级策略：它必须由来源上下文与业务状态在同一事务写入。关键事实保存失败时该事务不提交，回滚和空操作不制造成功变更事实。现有[已提交事实审计](committed-auditing.md)已完成全局设置链路，并接入 Identity 的账户、权限、菜单和令牌等持久变化；完整事实覆盖由 #64 逐项验收。
 
 ## 显式配置与初始化
 
@@ -152,9 +179,74 @@ Subject 仅从指定路由参数读取非空 Guid 或正 Int64，统一为字符
 | `ConnectionStrings:OperationJournal` | PostgreSQL 模式必填，来源 journal 的独立连接配置；不回显其值 |
 | `OperationJournal:Storage:Provider` | 默认 `Postgres`；显式 `Memory` 仅限 Development / Testing |
 | `OperationJournal:WriteTimeout` | 每个阶段写入预算，默认 `00:00:02`，允许 50 毫秒至 5 秒 |
+| `OperationJournal:Capacity:MaxRecords` | 来源观察记录数上限，默认 100000，允许 1–10000000；恢复凭据使用独立额度 |
+| `OperationJournal:Capacity:MaxRecoveryRecords` | 独立恢复凭据额度，默认 10000，允许 1–1000000；不占普通观察额度 |
+| `OperationJournal:Capacity:MaxPayloadBytes` | 所有保留载荷的 UTF-8 字节上限，默认 256 MiB，允许 1 字节至 64 GiB |
+| `OperationJournal:Capacity:MaxRecordPayloadBytes` | 单条载荷 UTF-8 字节上限，默认 16 KiB，允许 1 字节至 64 KiB |
+| `OperationJournal:Cleanup:Enabled` | 默认 `true`，由来源宿主启动清理；关闭后仍保留容量限制 |
+| `OperationJournal:Cleanup:DeliveredRetention` | 首次发布确认后保留多久，默认 `1.00:00:00`，允许 1 小时至 30 天 |
+| `OperationJournal:Cleanup:RecoveryRetention` | 恢复凭据保留期，默认 `30.00:00:00`，允许 1 小时至 365 天；创建时固定到期时间 |
+| `OperationJournal:Cleanup:BatchSize` | 每类清理批次最大条数，默认 500，允许 1–1000 |
+| `OperationJournal:Cleanup:Interval` | 两轮清理间隔，默认 `00:01:00`，允许 1 秒至 1 小时 |
+| `OperationJournal:Cleanup:Timeout` | 每轮两类清理共享的维护预算，默认 `00:00:05`，允许 50 毫秒至 30 秒 |
 | `OperationJournal:Delivery` | 来源发布的 `OutboxDeliveryOptions` 配置；broker 确认与中央接纳仍是不同状态 |
 
 上述配置接口由四个宿主共同使用。Memory 用于开发演示，重启会丢失观察，不能用于声称持久性或恢复能力。来源 journal 与中央观察表各自先迁移，再启动来源宿主和消费者；普通启动不代替数据库迁移。新的表和索引采用增量迁移，不重写已经合并的初始基线。Aspire 显式注入各来源 journal 连接与完整 RabbitMQ 配置；独立网关启动也必须提供 journal 配置。
+
+普通观察额度包含待投递、死信和已交付尚未清理记录；共用同一 journal 的宿主共享额度并须使用一致配置。
+满额或单条过大时拒绝新观察，保留已有记录与身份幂等，普通采集报告缺口并保持业务响应。
+日志健康检查报告 `retainedRecords`、`retainedPayloadBytes`、`maxRecords`、`maxPayloadBytes`、`capacityReached`；
+满额即降级，不必等下一条观察丢失。字节值只统计载荷，不是磁盘配额，也不代表生产容量已验证。
+额度表的增量迁移回填旧记录；升级先停用该 journal 的所有旧来源写入者，再迁移并统一启用新版本，不能混跑旧写入逻辑。
+依据及待完成的清理/恢复约束见 [来源容量决定](../src/Services/Auditing/docs/adr/0005-source-journal-capacity-is-bounded.md)。
+
+来源宿主启动后自动清理一批达到保留期的已交付副本，随后按间隔继续；清理与额度释放同事务。
+不会删待投递、死信或保留期内记录，也不会删中央观察、指纹和 Inbox。来源消息清理后重投仍由中央去重，
+不能把过期的消息 ID 用于新内容。新增部分索引也必须先显式迁移。
+`cleanupFailures` 是进程内累计维护失败数，`cleanupDegraded` 表示最近一轮失败；下一轮成功可恢复维护状态，
+但不清除 `failedWrites` 代表的历史采集缺口。停机取消正常终止，运行期超时报维护故障并在下一轮重试。
+日志保留时间、额度和清理吞吐应一起配置；默认值不代表任何具体生产流量的容量验收。
+
+同一后台循环还清理已达到固定 `RetainUntil` 的恢复凭据；它与源消息清理分别提交事务。
+修改恢复保留配置不影响已有凭据的期限。到期但未清理的凭据仍占额度，也仍支持原请求重放；
+清理提交后才释放额度，并结束该请求的历史对照。清理不改变原消息的状态或恢复版本。
+`retainedRecoveryRecords`、`maxRecoveryRecords`、`recoveryCapacityReached` 单独报告控制额度，
+达到上限时日志健康状态为 Degraded，清理释放额度后可恢复。早期无固定期限的开发记录由迁移按恢复时刻加 30 天回填。
+
+来源维护端口已支持不含载荷的死信分页和条件重试：恢复时回传读取到的停止时间及恢复版本，
+成功后沿用原消息身份与内容，只重新开启投递预算，并在同次提交保存恢复凭据。调用方提供稳定恢复请求 ID，
+同身份同请求重放原凭据，同身份不同内容或操作者冲突；新的过期操作也冲突。查询可按来源过滤，
+每页最多 100 条。公共 Outbox 已用同一个恢复版本隔离旧在途批次的失败，真实成功确认仍优先。
+独立维护命令已开放查询与条件恢复；公共恢复端口要求请求身份与可信适配器提供的执行标签。
+维护查询不是中央调查记录，来源已清理后查不到消息也不证明中央没有保存。
+
+四个宿主提供独立维护命令：
+
+```text
+dotnet <来源宿主.dll> operation-journal show <message-id>
+dotnet <来源宿主.dll> operation-journal retry <request-id> <message-id> <stopped-at> <retry-revision> <reason>
+dotnet <来源宿主.dll> operation-journal receipt <request-id>
+```
+
+先从 show 读取停止时间与恢复版本，再决定恢复；时间使用含时区的 ISO 8601，版本必须为非负整数，
+reason 只允许 `dependency-restored` 或 `manual-retry`。调用方为一次恢复生成请求 UUID，响应丢失时原样复用，
+不得为了重试而换请求身份。系统账户和主机标签由命令读取，不能通过参数冒充业务 Actor。
+retry 与 receipt 返回原恢复凭据；当前交付状态仍用 show 查询。凭据不存在不等于从未恢复，也可能已经到期清理。
+
+命令在 Web、配置中心与业务模块启动前运行，通过环境中的 `ConnectionStrings__OperationJournal`
+查询 PostgreSQL 来源存储；不会使用开发 Memory 配置创建空存储，也不会自动迁移。
+成功返回安全状态 JSON（退出码 0）；参数无效返回固定错误码与退出码 2，记录不存在为 3，
+状态冲突或恢复额度不足也为 3，配置或存储故障为 1。输出不包含载荷、原始异常或连接配置。维护权限由本机执行权限和数据库凭据控制，
+不能把 Source 字段当成授权。命令执行预算为 10 秒。
+
+真实子进程与临时 PostgreSQL 验证四个宿主的早期入口、安全状态读取、配置故障、未迁移和不存在的区别；
+恢复命令还验证系统执行标签、同请求重放、过期拒绝及配置的恢复额度与期限。
+命令从环境读取 `OperationJournal__Capacity__*` 与 `OperationJournal__Cleanup__*`，沿用宿主的默认值、绑定及校验。
+执行维护时必须注入该来源部署相同的策略；若策略由配置中心管理，先将相应配置注入受保护的进程环境，
+命令不会自行连接配置中心或猜测当前策略。非法配置在任何修改之前安全失败。
+[状态与恢复凭据原子提交](../src/Services/Auditing/docs/adr/0006-source-recovery-is-recorded-atomically.md)
+已通过双存储重放、并发、取消和 PostgreSQL 双向写入故障验证；固定期限、到期清理与控制容量诊断也已实现。
+普通操作日志的尽力写入不能替代这项留痕保证。源消息清理后恢复凭据仍可查询，凭据本身不表示当前消息仍 Pending。
 
 来源固定使用 `operation_journal` schema，迁移历史也归它所有。四个宿主提供独立 `migrate-operation-journal` 命令，只迁移来源 journal，不启动业务 HTTP 或 broker。连接配置通过进程环境的 `ConnectionStrings__OperationJournal` 提供，值不能放入命令行或会话：
 
@@ -176,6 +268,15 @@ dotnet NexusStackNext.Gateway.dll migrate-operation-journal
 ## 调查入口与验收
 
 首票的入口是 `GET /api/auditing/operations?page=1&limit=20`，对应权限资源 `/api/auditing/operations` + `GET`；页码范围 1–1000，每页最多 100 条。返回操作级 summary，`startedAt` / `finishedAt` 允许为空，`outcome` 使用前述结果；阶段缺失必须保留，不能制造时间或完成状态。
+
+查询默认最近七天，`from` / `to` 均含边界、按 UTC 比较；单边界补齐七天，每次最多三十一天。
+时间窗口针对最后已有的阶段发生时刻：先选择 Finished（缺少时才用 Started），再应用窗口及其他条件；
+不能因为 Finished 被时间条件排除，就把 Started 重新显示成 `unconfirmed`。可以指定历史窗口，默认窗口不删除历史。
+
+精确过滤包括 `source`、`operationId`、`outcome`、`actorId`、`traceId`、`action`、`subjectType`、`subjectId`、
+`correlationId`、`initiatorId`、`rootOperationId` / `rootSource`、`parentOperationId` / `parentSource`、`taskId` / `taskEpoch`。
+轮次必须为正数，并同时指定任务标识。原发起人和当前 Actor 是两个独立条件；查询总数只表示条件内的操作数量，
+不表示业务提交次数。通过操作来源/标识关联[已提交事实](committed-auditing.md)，两类记录仍各自陈述其证据。
 
 受权调查查询属于 #61，而不是等容量治理时才补。查询只能读 Auditing 自己的数据，必须检查当前会话和显式读取权限，分页大小、偏移和已提供的过滤值必须有上限与验证；不能提供匿名查询、任意 SQL/排序字段或跨上下文 JOIN。查询响应按 Operation 组织，明确阶段是否缺失；只获得调查权限不会自动获得投递恢复或其它管理权限。
 

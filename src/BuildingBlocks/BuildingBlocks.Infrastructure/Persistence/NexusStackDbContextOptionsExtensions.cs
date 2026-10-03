@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 
@@ -106,7 +107,8 @@ public static class NexusStackDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(services);
         var currentUser = services.GetService<ICurrentUser>() ?? new AnonymousCurrentUser();
-        return builder.AddInterceptors(new AuditInterceptor(services.GetRequiredService<IClock>(), currentUser));
+        return builder.AddInterceptors(new AuditInterceptor(services.GetRequiredService<IClock>(), currentUser,
+            services.GetService<IExecutionContext>()));
     }
 
     /// <summary>泛型重载，便于 <c>AddDbContext&lt;TContext&gt;</c> 里直接使用。</summary>
