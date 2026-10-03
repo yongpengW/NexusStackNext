@@ -26,6 +26,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
+        modelBuilder.ConfigureCommittedFactCapacity();
         var file = modelBuilder.Entity<StoredFile>();
         file.ToTable("stored_files");
         file.HasKey(item => item.Id);

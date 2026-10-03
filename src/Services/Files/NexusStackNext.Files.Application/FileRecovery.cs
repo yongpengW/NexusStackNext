@@ -57,6 +57,8 @@ public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, 
         ArgumentNullException.ThrowIfNull(file);
         if (!file.IsDeleted) { throw new InvalidOperationException("未请求删除的文件不能清理。"); }
         if (file.BytesRemovedAt is not null) { return true; }
+        // 保存被拒绝时，调用方持有的快照仍必须表达已提交状态，允许复用它重试。
+        file = file.Snapshot();
         var originalVersion = file.Version;
         try
         {
@@ -73,6 +75,11 @@ public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, 
             file.ConfirmBytesRemoved(clock.UtcNow);
             await files.SaveAsync(file, originalVersion, cancellationToken: cancellationToken).ConfigureAwait(false);
             return true;
+        }
+        catch (FileAuditCapacityException)
+        {
+            // 删除已受理；字节可能已清除，完成事实未提交时仍保留持久待办。
+            return false;
         }
         catch (FileMetadataConflictException)
         {

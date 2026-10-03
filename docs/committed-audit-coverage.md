@@ -14,7 +14,7 @@
 | Identity / MenuTree | 建树、增删节点、移动、名称/排序改变 | PostgreSQL 节点差异经存储端口验证，包括删除最后节点、创建时已有节点、移动子树及删后重建的净变化；客体为树根及其版本，关联为节点；建树及节点创建经真实消息旅程验证 |
 | Identity / ApiResource | API 资源登记及删除 | PostgreSQL 登记、所属 Menu 与非法输入拒绝经 ISender 验证，登记关联经真实消息旅程验证；现有仓储没有删除入口，未来生命周期入口须连同删除事实验收 |
 | Identity / RefreshToken | 签发、消费、撤销；只记录令牌内部标识，禁止令牌及其哈希/自由文本原因 | PostgreSQL 三类变化与重复撤销经存储端口验证；签发/消费、所属 User 关联及重放造成的会话撤销经真实消息旅程验证 |
-| Files / StoredFile | 登记、存储完成、请求删除、实际字节移除、清理延期 | PostgreSQL / Memory 已接入；HTTP、延期/重复状态、并发拒绝与来源写失败原子性经 `FilesCommittedAuditTests` / `MemoryFilesCommittedAuditTests` 验证；生产存储重启及两种来源真实 RabbitMQ 交付通过；容量与完整故障矩阵待补齐 |
+| Files / StoredFile | 登记、存储完成、请求删除、实际字节移除、清理延期 | PostgreSQL / Memory 已接入；HTTP、延期/重复状态、并发拒绝与来源写失败原子性经 `FilesCommittedAuditTests` / `MemoryFilesCommittedAuditTests` 验证；生产存储重启及两种来源真实 RabbitMQ 交付通过；PostgreSQL 容量由 `FilesFactCapacityTests` 验证，Memory 容量与完整故障矩阵待补齐 |
 | Scheduling / ScheduledTask | 创建、规则/间隔变化、启禁用、触发推进、跳过/延期裁决 | Memory / PostgreSQL 已接入，管理变化、日历裁决、退避及故障清除由 `SchedulingCommittedAuditTests` 验证；来源事实失败原子回滚及同作用域重试由 `SchedulingFactAtomicityTests` 验证；真实重启 / RabbitMQ 中央交付通过，来源容量及恢复治理待完成 |
 | Costing / CostSheet | 成本输入创建/修改、计算结果实际应用 | PostgreSQL 来源已接入；实际变化、拒绝/空操作/过期结果、来源故障回滚、保存中取消与租约过期经 ISender 验证；真实生产者重启 / RabbitMQ 交付通过，来源容量及完整恢复治理待完成 |
 | Pricing / PriceQuote | 手工输入创建/修改、成本消息实际应用、计算结果实际应用 | PostgreSQL 已接入；手工与消息写入的原子性、来源故障/取消/租约失权、同作用域重试经公共端口验证；真实重启与 RabbitMQ 中央交付通过，容量及恢复治理待完成 |
@@ -73,7 +73,11 @@ Platform PostgreSQL 容量准入已通过 `PlatformFactCapacityTests` 验证：�
 安全清理释放额度、UTF-8 单条/总量边界、写入与清理失败的占用回滚、其他消息隔离和固定消息身份。
 Identity PostgreSQL 的整批容量、HTTP 拒绝、同作用域重试、失败不失效权限、空操作和错误密码计数
 由 HostIntegration / Identity.Integration 两组 `IdentityFactCapacityTests` 验证。
-其余来源及 Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
+Platform / Identity 的容量模型和冻结的 PostgreSQL 触发器 V1 已提取为共用实现，Files 第三个消费者显式接入。
+`FilesFactCapacityTests` 通过 HTTP / 仓储 / Outbox / 清理接口验证上传整批准入、删除拒绝保留下载、
+删除已受理后的 202 恢复、并发最后额度、空操作与同作用域重试。升级的策略保留及 UTF-8 占用回填由
+`FactCapacityUpgradeTests` 分别验证三个上下文。迁移协议冻结依据见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。
+Scheduling / Costing / Pricing 及 Memory 准入、可审计策略管理、容量诊断、专门恢复与中央归档仍未完成。
 详见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
 Identity 的当前证据为 `IdentityCommittedAuditTests`（HTTP 注册、重复拒绝、错误密码与锁定、来源写失败、进程重启和真实 MQ）

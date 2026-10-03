@@ -35,7 +35,7 @@ Platform / Identity PostgreSQL 已有事实数量/字节容量准入；其他来
 本项不表示整个治理已交付。
 设计与证据见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
-### Platform 事实容量首条路径
+### Platform、Identity 与 Files 事实容量
 
 `SettingFactCapacity` 迁移创建数据库所属额度账本与事务触发器。默认最多保留 100,000 条事实、
 正文总量 256 MiB、单条正文 16 KiB，按 UTF-8 字节计算。待投递、死信和未过保留期的已确认记录都占用额度。
@@ -50,6 +50,12 @@ Identity 的 `IdentityFactCapacity` 独立迁移采用相同容量语义。一�
 失败不触发权限缓存失效，同作用域可重新发送命令；重复角色/菜单授权不消耗额度或额外失效缓存。
 错误密码若无法保存失败次数及事实，返回容量错误，恢复后才保存失败计数并返回正常凭据错误。
 详见 [Identity ADR-0006](../src/Services/Identity/docs/adr/0006-fact-capacity-rejects-the-whole-command.md)。
+
+Platform / Identity 通过 `SharedFactCapacity` 向前迁移接入冻结的共用 V1 协议，保留原表与策略。
+Files 的 `FileFactCapacity` 迁移按既有事实回填独立额度账本。一次上传的两条事实整批准入，
+不足时返回 503 / `files.audit_capacity.exhausted`。删除申请被拒绝时保留可读文件；受理后清除完成事实
+无法提交时仍是可恢复的 202 待办。存储端口仅翻译精确的容量错误，其他故障继续按原异常传播。
+共用规则与迁移冻结约束见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)；其余上下文和 Memory 容量尚待补齐。
 
 ### 中央存储与消息摄入
 
