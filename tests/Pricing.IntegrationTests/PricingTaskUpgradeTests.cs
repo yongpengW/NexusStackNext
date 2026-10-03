@@ -48,8 +48,8 @@ public sealed class PricingTaskUpgradeTests
             {
                 await connection.OpenAsync();
                 await using var seed = new NpgsqlCommand("""
-                    INSERT INTO pricing.quotes ("Id", "Cost", "FeeRate", "InputRevision", "CalculatedRevision", "Version", "CreatedAt")
-                    SELECT id, 80, 0.2, 1, 0, 1, clock_timestamp() FROM unnest(ARRAY[@pending,@running,@failed,@expired]::uuid[]) AS id;
+                    INSERT INTO pricing.quotes ("Id", "Cost", "FeeRate", "InputRevision", "CalculatedRevision", "Version", "CreatedAt", "CostingRevision")
+                    SELECT id, 80, 0.2, 1, 0, 1, clock_timestamp(), 0 FROM unnest(ARRAY[@pending,@running,@failed,@expired]::uuid[]) AS id;
                     INSERT INTO pricing.tasks ("TaskId", "ItemId", "ExpectedVersion", "Cost", "FeeRate", "InputRevision", "State", "Epoch", "Attempts", "LeaseUntil")
                     VALUES (@pending,@pending,0,80,0.2,1,'Pending',0,0,null),
                            (@running,@running,0,80,0.2,1,'Running',1,1,clock_timestamp() + interval '1 minute'),
