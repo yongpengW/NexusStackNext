@@ -8,7 +8,8 @@ CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL�
 
 - 最多四个测试任务：0 组执行除 `HostIntegration.Tests` 外的全部工程；1–3 组分担宿主测试。
 - 同一个测试类留在同一组，按历史类耗时分配；新增类按发现的用例数估计权重。
-  `scripts/ci-test-weights.json` 来自 2026-10-03、dev `b355d52` 相同产品树的本机完整 TRX，
+  `scripts/ci-test-weights.json` 来自初始化优化后的 Linux [CI 37136909253](https://github.com/yongpengW/NexusStackNext/actions/runs/37136909253)
+  的 458 条宿主用例报告（80 个类；该运行全部产品测试和覆盖校验通过，随后在票据探针启动器处失败），
   只影响负载均衡，不决定是否执行。权重变旧会影响速度，不会漏测试。
 - `-CiShard` 入口先确认 GitHub 托管 runner、没有 `env/test.dev`、固定回环测试配置，
   再检查工作流传入的三个容器 ID、健康状态及端口绑定。失败时不读取私有配置，不启动测试。
@@ -31,15 +32,40 @@ CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL�
 3. 空清单、缺组、重复、错组、漏跑、失败、跳过或陈旧报告均失败。
 4. 完成后才执行格式、凭据、仓库跟踪器、GitHub 票据及模板构建检查。
 
-脱敏报告保存为 Actions artifact，保留七天；最终日志列出最慢的十五个测试类。
+脱敏报告保存为 Actions artifact，保留七天；最终日志列出最慢的十五个测试类和十五个用例，
+以及各组用例数和累计测试耗时。累计耗时不等于 job 墙钟时间；后者还包括容器启动、构建和发现。
+用例以方法名和身份哈希区分，不输出理论测试参数。
 PR、dev/main push 和手动触发均保留，当前没有路径过滤，也没有减少测试覆盖范围。
+
+## 初始化复用与构建边界
+
+普通宿主旅程通过 `IdentityJourneyDatabase.MigrateAsync` 在测试进程内执行真实 EF 迁移，
+复用运行时和 EF 模型缓存，省去每条旅程六次进程启动。每条旅程依然独立建库、迁移、释放连接池和删库，
+不共享数据、DbContext 或运行中的宿主，也不以 `EnsureCreated` 替代迁移。
+真实提交与重启测试需要这种数据隔离；参考 [EF 数据库测试指南](https://learn.microsoft.com/en-us/ef/core/testing/testing-with-the-database)。
+
+验证独立迁移、重复迁移与重启的旅程显式使用 `MigrateThroughCliAsync`，仍从空库启动六个真实迁移命令。
+各上下文的未迁移启动拒绝与 CLI 错误诊断仍由原测试验证，故障恢复的等待预算和业务断言不变。
+
+每台隔离 runner 只构建一次；发现与执行都使用 `--no-build --no-restore`（`--no-build` 本身也隐含不还原）。
+暂不跨 runner 传输整套构建产物：四个构建本来并行，改成前置构建会增加依赖链和产物传输，
+是否更快需另外测量。生成模板后的构建验证重命名后的项目，不能用仓库构建结果替代。
+
+仓库跟踪器和 GitHub 票据检查分成独立步骤，模板安装、生成、构建逐条检查退出码，
+避免同一步内后续成功命令覆盖前面的失败。统一必需检查名称和 build → tests → format 顺序保留。
+票据依赖读取最多四个并发请求，完整分页；请求失败或响应无效时门禁失败，不能静默跳过该票。
+这部分并行只访问 GitHub API，不改变数据库测试的并发度。
 
 ## 验证
 
 `pwsh -File scripts/check-ci-tests.ps1` 验证脚本 CLI 的分组、坏报告拒绝、环境保护和脱敏，
 不连接数据库。真实运行仍须在 Linux CI 验证容器隔离、过滤器匹配、全部用例与端到端耗时。
-本轮只改执行编排和脚本；产品代码、迁移及测试断言未变。
+`pwsh -File scripts/check-issue-fetching.ps1` 通过临时 `gh` 适配器执行真实票据检查 CLI，
+验证成功、请求失败、无效/缺失响应、未知依赖和分页要求；不访问 GitHub。
+产品代码、迁移文件及既有业务断言未变；第二轮调整测试准备方式和耗时诊断。
 
 优化前基线：[CI 37129218785](https://github.com/yongpengW/NexusStackNext/actions/runs/37129218785)：
 整体 33 分 5 秒、测试 28 分 9 秒，其中宿主工程 23 分 30 秒；1265 项全部通过。
 优化后的实测与双轴评审记录在[CI 优化票据](https://github.com/yongpengW/NexusStackNext/issues/71)及关联 PR。
+第一轮 [PR #72](https://github.com/yongpengW/NexusStackNext/pull/72) 完整 CI 14 分 26 秒，1265 项通过；
+第二轮初始化复用及后续测量见[票据 #73](https://github.com/yongpengW/NexusStackNext/issues/73)。

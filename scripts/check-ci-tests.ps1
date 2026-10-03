@@ -40,6 +40,10 @@ foreach ($shard in 0..3) {
 }
 $verify = @('-Action', 'Verify', '-InputPath', $reportsPath, '-Revision', ('1' * 40), '-RunId', '10', '-Attempt', '1')
 Invoke-Probe $verify $true
+$timingOutput = & pwsh -NoProfile -File $tool @verify 2>&1
+if ($LASTEXITCODE -ne 0 -or ($timingOutput -join "`n") -notmatch 'Slowest test cases' -or
+    ($timingOutput -join "`n") -notmatch 'Example.AlphaTests.First' -or
+    ($timingOutput -join "`n") -notmatch 'Shard 0: 1 tests') { throw 'Missing individual test and shard timing diagnostics' }
 Write-Output 'PASS: complete reports accepted'
 $reportPath = Join-Path $reportsPath 'shard-1.json'
 $original = Get-Content -LiteralPath $reportPath -Raw

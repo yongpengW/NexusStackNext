@@ -52,7 +52,7 @@ public sealed class IdentityResourceAuthorizationTests
     public async Task Gateway_RejectsResourceEscalation_AfterIndependentMigrationAndProcessRestart()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         var routes = Path.Combine(Path.GetTempPath(), $"nsn-identity-resource-routes-{Guid.NewGuid():N}.json");
         var settings = new Dictionary<string, string> { ["Jwt__SigningKey"] = BusinessProcess.SigningKey };
         string? menuId = null;

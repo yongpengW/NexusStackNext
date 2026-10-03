@@ -74,7 +74,7 @@ public sealed class AuditPersistenceJourneyTests
     public async Task IndependentMigration_StoresFactsAndIdentityAcrossHostRestart()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         var migration = await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing");
         Assert.Equal(0, migration.ExitCode);
         Assert.Contains("Auditing migrations applied.", migration.Output, StringComparison.Ordinal);
