@@ -74,6 +74,7 @@ internal sealed class RecalculationEntry : DurableTaskRecord
     public decimal FeeRate { get; set; }
     public long InputRevision { get; set; }
     public string Origin { get; set; } = "manual";
+    public int DelaySeconds { get; set; }
 
 
     public RecalculationStatus ToStatus() => new(TaskId, ItemId.Value, State, InputRevision)
@@ -82,11 +83,14 @@ internal sealed class RecalculationEntry : DurableTaskRecord
         Epoch = Epoch,
         Attempts = Attempts,
         ErrorCode = ErrorCode,
+        CreatedAt = CreatedAt,
         AvailableAt = AvailableAt,
+        LeaseUntil = LeaseUntil,
+        MaxLeaseUntil = MaxLeaseUntil,
         History = History.OrderBy(x => x.Epoch).Select(x => new PricingAttempt(x.Epoch, x.StartedAt, x.FinishedAt, x.Outcome, x.ErrorCode)).ToArray(),
     };
     public bool Matches(UpdatePricingCost request) => Origin == "manual" && ItemId.Value == request.ItemId
-        && ExpectedVersion == request.ExpectedVersion && Cost == request.Cost && FeeRate == request.FeeRate;
+        && ExpectedVersion == request.ExpectedVersion && Cost == request.Cost && FeeRate == request.FeeRate && DelaySeconds == request.DelaySeconds;
 }
 
 /// <summary>迁移工具的显式入口，只从环境读取连接配置。</summary>
@@ -137,7 +141,7 @@ public static class PricingDatabase
             await using var context = CreateContext(connectionString);
             if ((await context.Database.GetPendingMigrationsAsync(timeout.Token).ConfigureAwait(false)).Any()) { return false; }
             _ = await context.Quotes.AnyAsync(timeout.Token).ConfigureAwait(false);
-            _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Tasks.Select(task => new { task.CreatedAt, task.DelaySeconds, task.MaxLeaseUntil }).Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Inbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);

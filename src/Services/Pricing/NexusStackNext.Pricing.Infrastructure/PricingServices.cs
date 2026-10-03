@@ -60,11 +60,14 @@ public static class PricingServices
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetRecalculation, RecalculationStatus>, PricingCommands>();
+        services.AddScoped<IQueryHandler<ListRecalculations, RecalculationPage>, PricingTaskQueries>();
         services.AddScoped<IQueryHandler<GetPriceQuote, PriceQuoteView>, PricingQuoteQueries>();
         services.AddScoped<ICommandHandler<ClaimPricingWork, PricingWorkLease?>, PricingExecution>();
         services.AddScoped<ICommandHandler<CompletePricingWork, bool>, PricingExecution>();
         services.AddScoped<ICommandHandler<FailPricingWork, bool>, PricingExecution>();
         services.AddScoped<ICommandHandler<RetryPricingWork, RecalculationStatus>, PricingExecution>();
+        services.AddScoped<ICommandHandler<CancelPricingWork, RecalculationStatus>, PricingExecution>();
+        services.AddScoped<ICommandHandler<RenewPricingWork, PricingWorkLease>, PricingExecution>();
         return services;
     }
 }
@@ -75,7 +78,7 @@ internal sealed class PricingCommands(PricingDbContext database, IExecutionConte
     public async Task<Result<RecalculationStatus>> HandleAsync(UpdatePricingCost command, CancellationToken cancellationToken = default)
     {
         if (command.ItemId == Guid.Empty || command.RequestId == Guid.Empty || command.ExpectedVersion < 0
-            || !PriceQuote.IsValidInput(command.Cost, command.FeeRate))
+            || !PriceQuote.IsValidInput(command.Cost, command.FeeRate) || command.DelaySeconds is < 0 or > 2_592_000)
         {
             return Result.Failure<RecalculationStatus>(new Error("pricing.invalid_input", "标识、版本或输入无效。"));
         }
@@ -112,6 +115,7 @@ internal sealed class PricingCommands(PricingDbContext database, IExecutionConte
             if (updated.IsFailure) { return Result.Failure<RecalculationStatus>(updated.Error); }
         }
 
+        var acceptedAt = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
         var task = new RecalculationEntry
         {
             TaskId = command.RequestId,
@@ -121,6 +125,9 @@ internal sealed class PricingCommands(PricingDbContext database, IExecutionConte
             Cost = command.Cost,
             FeeRate = command.FeeRate,
             InputRevision = quote.InputRevision,
+            DelaySeconds = command.DelaySeconds,
+            CreatedAt = acceptedAt,
+            AvailableAt = acceptedAt.AddSeconds(command.DelaySeconds),
         };
         database.Tasks.Add(task);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

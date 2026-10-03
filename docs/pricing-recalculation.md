@@ -67,10 +67,11 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 同一标识换内容返回 409。超时不知道是否提交时，保留原请求标识重试或查询。
 
 `GET /tasks/{taskId}` 返回状态、输入版本、执行代次、当前轮尝试次数、等待时间、稳定错误码及历史执行记录。
-状态有 `Pending`、`Running`、`Retry`、`Succeeded`、`Superseded`、`Failed`。
+状态有 `Pending`、`Running`、`Retry`、`Succeeded`、`Superseded`、`Failed`、`Cancelled`。
 `Superseded` 表示其输入已被更新，该任务不再覆盖当前价格。
 `GET /items/{itemId}` 返回输入、聚合版本、已计算输入版本和价格；本例完成后价格为 100。
-当 `calculatedRevision < inputRevision` 时，价格尚未对应最新输入，调用方应展示“重算中”。
+当 `calculatedRevision < inputRevision` 时，价格尚未对应最新输入；结合任务状态区分待计算、失败和已取消。
+有界任务列表、延迟、条件取消及执行者续租见[业务任务管理](business-task-management.md)。
 
 失败终态允许根操作者 `POST /tasks/{taskId}/retry`，请求体为 `{ "expectedEpoch": "3" }`
 （值取自查询结果）。成功返回 202；只有仍为 Failed 且代次匹配才接受，否则 409。
@@ -87,12 +88,13 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 | 配置键（环境变量把冒号换成双下划线） | 默认 | 允许范围 |
 |---|---|---|
 | `Pricing:Tasks:LeaseDuration` | `00:00:30` | 100 毫秒至 10 分钟 |
+| `Pricing:Tasks:MaxLeaseDuration` | `00:30:00` | 不小于 LeaseDuration，最多 24 小时；两个期限均为整微秒 |
 | `Pricing:Tasks:MaxAttempts` | 3 | 1 至 10 |
 | `Pricing:Tasks:RetryDelay` | `00:00:01` | 10 毫秒至 1 小时，乘以本轮尝试次数 |
 | `Pricing:Tasks:PollInterval` | `00:00:01` | 10 毫秒至 1 分钟 |
 
 进程崩溃后 Running 任务等待租约到期再接管，超过尝试上限进入 Failed。普通失败进入有界退避或 Failed。
-首轮公式是有限本地计算，不提供长任务续期、检查点或任意脚本执行，也没有任务历史清理策略。
+公式仍是有限本地计算，现有执行者接口支持固定总预算内的条件续租；检查点、任意脚本执行与历史清理尚未实现。
 执行允许重复，数据库的业务结果受条件写入保护；外部邮件、HTTP、支付等副作用不在此保证内。
 
 根身份依赖 JWT 有效期，不读取 Identity 表，也未实现跨上下文即时撤权投影。

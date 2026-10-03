@@ -11,10 +11,14 @@ public abstract class DurableTaskRecord
     public ExecutionOrigin? ExecutionOrigin { get; set; }
     /// <summary>当前执行状态。</summary>
     public string State { get; set; } = "Pending";
+    /// <summary>数据库首次接受时刻；升级前任务没有可靠历史值。</summary>
+    public DateTimeOffset? CreatedAt { get; set; }
     /// <summary>最早领取时刻。</summary>
     public DateTimeOffset AvailableAt { get; set; }
     /// <summary>当前租约期限。</summary>
     public DateTimeOffset? LeaseUntil { get; set; }
+    /// <summary>本次领取的固定总期限；升级前的旧领取为未知，不能续租。</summary>
+    public DateTimeOffset? MaxLeaseUntil { get; set; }
     /// <summary>从不回退的执行代次。</summary>
     public long Epoch { get; set; }
     /// <summary>本轮预算内的尝试次数。</summary>

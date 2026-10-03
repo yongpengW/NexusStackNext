@@ -205,6 +205,14 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
+                    b.Property<DateTimeOffset?>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("clock_timestamp()");
+
+                    b.Property<int>("DelaySeconds")
+                        .HasColumnType("integer");
+
                     b.Property<long>("Epoch")
                         .HasColumnType("bigint");
 
@@ -229,6 +237,9 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("MaxLeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Origin")
