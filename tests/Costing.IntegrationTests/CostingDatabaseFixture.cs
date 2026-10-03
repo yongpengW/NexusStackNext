@@ -32,7 +32,8 @@ public sealed class CostingDatabaseFixture : IAsyncLifetime
         if (!_created) { return; }
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand("TRUNCATE costing.tasks, costing.sheets, costing.outbox, costing.inbox, costing.schedule_receipts CASCADE", connection);
+        // DELETE 才会释放按行计数的事实额度；TRUNCATE 其余测试数据不重置已保存策略。
+        await using var command = new NpgsqlCommand("DELETE FROM costing.outbox; TRUNCATE costing.tasks, costing.sheets, costing.inbox, costing.schedule_receipts CASCADE", connection);
         await command.ExecuteNonQueryAsync();
     }
 
