@@ -36,6 +36,9 @@ _Avoid_: 本地 InputRevision、ExecutionEpoch、聚合 Version
 
 **PriceQuoteCommittedV1**:
 定价对象已经提交的最小变化事实：创建、手工输入变化、上游成本接纳或结果应用。只携带内部标识、聚合版本及执行关联，不携带成本、费率或结果金额。接纳较新的上游版本即使金额相同也有成本接纳事实；无变化重算没有结果应用事实。
+PostgreSQL 按保留条数、总 UTF-8 字节与单条字节为整个业务事务准入；首次成本接纳的创建与接纳事实一起裁决。
+容量拒绝撤销报价、任务、Inbox 和缓存失效待办，公共命令返回 `pricing.audit_capacity_exhausted`，消费返回失败；执行观察保留 failed。
+确认交付不释放额度，过期确认事实清理才释放；无状态变化不占新额度。
 _Avoid_: CostCalculatedV1、完整报价快照、任务完成通知
 
 **MessageAcceptance**:

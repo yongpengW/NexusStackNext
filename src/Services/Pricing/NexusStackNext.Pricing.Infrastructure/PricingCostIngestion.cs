@@ -21,10 +21,19 @@ internal sealed class PricingCostIngestion(PricingDbContext database, IBackgroun
         if (cost.EventId != envelope.MessageId || cost.ItemId == Guid.Empty || cost.CostRevision <= 0
             || !PriceQuote.IsValidInput(cost.UnitCost, 0) || cost.ExecutionOrigin is { } origin && !origin.IsValid()) { return false; }
 
-        var result = await observations.ObserveAsync(new MessageExecutionDescriptor("pricing.cost.accept", EventName, envelope.MessageId),
-            () => Task.FromResult(new BackgroundExecutionInput<CostCalculatedV1>(cost, cost.ExecutionOrigin)),
-            input => ReceiveAsync(envelope, input, cancellationToken), static received => received.Outcome, cancellationToken).ConfigureAwait(false);
-        return result.Acknowledged;
+        try
+        {
+            var result = await observations.ObserveAsync(new MessageExecutionDescriptor("pricing.cost.accept", EventName, envelope.MessageId),
+                () => Task.FromResult(new BackgroundExecutionInput<CostCalculatedV1>(cost, cost.ExecutionOrigin)),
+                input => ReceiveAsync(envelope, input, cancellationToken), static received => received.Outcome, cancellationToken).ConfigureAwait(false);
+            return result.Acknowledged;
+        }
+        catch (DbUpdateException error) when (PricingFactCapacityFailure.IsExhausted(error))
+        {
+            // 失败已由观察适配器登记，本地事务已回滚；不得确认消息或保留持久去重结果。
+            database.ChangeTracker.Clear();
+            return false;
+        }
     }
 
     private async Task<(bool Acknowledged, BackgroundExecutionOutcome Outcome)> ReceiveAsync(EventEnvelope envelope, CostCalculatedV1 cost, CancellationToken cancellationToken)

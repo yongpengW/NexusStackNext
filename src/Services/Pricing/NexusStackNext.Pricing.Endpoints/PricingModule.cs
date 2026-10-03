@@ -70,12 +70,12 @@ public static class PricingModule
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415);
+        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415, 503);
         group.MapPost("/fee", async (UpdatePricingFee request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415)
+        }).Produces<ApiResponse<RecalculationStatus>>(202).ProducesApiErrors(415, 503)
             .WithMetadata(new OperationDescription("pricing.fee.update", "更新费率并申请重算"));
         group.MapGet("/items/{itemId:guid}", async (Guid itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
@@ -114,7 +114,7 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.query_busy" or "pricing.query_timeout" => StatusCodes.Status503ServiceUnavailable,
+            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
