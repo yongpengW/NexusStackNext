@@ -6,6 +6,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.Files.Infrastructure.Persistence;
+using Npgsql;
 
 namespace NexusStackNext.Files.Infrastructure;
 
@@ -62,6 +63,11 @@ internal sealed class EfStoredFileRepository(FilesDbContext context, StoredFileC
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (DbUpdateConcurrencyException) { throw new FileMetadataConflictException(); }
+        catch (DbUpdateException error) when (error.InnerException is PostgresException
+        {
+            SqlState: "P0001", ConstraintName: "files_fact_capacity_exhausted",
+        })
+        { throw new FileAuditCapacityException(); }
         finally { context.ChangeTracker.Clear(); }
     });
 

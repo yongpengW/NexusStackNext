@@ -2,22 +2,25 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using NexusStackNext.Platform.Infrastructure.Persistence;
+using NexusStackNext.Files.Infrastructure.Persistence;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
+namespace NexusStackNext.Files.Infrastructure.Persistence.Migrations
 {
-    [DbContext(typeof(PlatformDbContext))]
-    partial class PlatformDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(FilesDbContext))]
+    [Migration("20261003140036_FileFactCapacity")]
+    partial class FileFactCapacity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasDefaultSchema("platform")
+                .HasDefaultSchema("files")
                 .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -70,7 +73,7 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_outbox_confirmed_event")
                         .HasFilter("\"DeliveredAt\" IS NOT NULL AND \"DeadLetteredAt\" IS NULL");
 
-                    b.ToTable("outbox", "platform");
+                    b.ToTable("outbox", "files");
                 });
 
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.CommittedFactCapacity", b =>
@@ -95,7 +98,7 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("fact_capacity", "platform", t =>
+                    b.ToTable("fact_capacity", "files", t =>
                         {
                             t.HasCheckConstraint("ck_fact_capacity_bounds", "\"RetainedRecords\" >= 0 AND \"RetainedPayloadBytes\" >= 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\"");
 
@@ -121,13 +124,21 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("ConsumerName", "EventName", "MessageId");
 
-                    b.ToTable("inbox", "platform");
+                    b.ToTable("inbox", "files");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Platform.Domain.Settings.GlobalSetting", b =>
+            modelBuilder.Entity("NexusStackNext.Files.Domain.Stored.StoredFile", b =>
                 {
                     b.Property<long>("Id")
                         .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset?>("BytesRemovedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -136,19 +147,30 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
-                    b.Property<string>("Description")
-                        .HasColumnType("text");
+                    b.Property<string>("DeletionOrigin")
+                        .HasColumnType("jsonb");
 
-                    b.Property<string>("Key")
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
                         .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTimeOffset?>("NextCleanupAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("OwnerId")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
-                    b.Property<string>("Scope")
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("text")
-                        .HasComputedColumnSql("split_part(\"Key\", '.', 1)", true);
+                    b.Property<long>("Size")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StorageKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<DateTimeOffset?>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -157,8 +179,8 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
 
-                    b.Property<string>("Value")
-                        .HasColumnType("text");
+                    b.Property<DateTimeOffset>("UploadedAt")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
@@ -166,14 +188,24 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Key")
-                        .IsUnique()
-                        .HasDatabaseName("ux_global_settings_key");
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
 
-                    b.HasIndex("Scope")
-                        .HasDatabaseName("ix_global_settings_scope");
+                    b.HasIndex("NextCleanupAttemptAt", "Id")
+                        .HasFilter("\"IsDeleted\" AND \"BytesRemovedAt\" IS NULL");
 
-                    b.ToTable("global_settings", "platform");
+                    b.ToTable("stored_files", "files");
+                });
+
+            modelBuilder.Entity("NexusStackNext.Files.Infrastructure.Persistence.RetiredStorageKey", b =>
+                {
+                    b.Property<string>("StorageKey")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.HasKey("StorageKey");
+
+                    b.ToTable("retired_storage_keys", "files");
                 });
 #pragma warning restore 612, 618
         }

@@ -21,13 +21,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
-        var capacity = modelBuilder.Entity<SettingFactCapacity>();
-        capacity.ToTable("fact_capacity", table =>
-        {
-            table.HasCheckConstraint("ck_fact_capacity_singleton", "\"Id\" = 1");
-            table.HasCheckConstraint("ck_fact_capacity_bounds", "\"RetainedRecords\" >= 0 AND \"RetainedPayloadBytes\" >= 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\"");
-        });
-        capacity.HasKey(item => item.Id);
+        modelBuilder.ConfigureCommittedFactCapacity();
         var setting = modelBuilder.Entity<GlobalSetting>();
         setting.ToTable("global_settings");
         setting.HasKey(item => item.Id);

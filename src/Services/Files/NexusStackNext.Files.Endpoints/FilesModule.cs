@@ -145,7 +145,7 @@ public static class FilesModule
             return uploaded.IsFailure
                 ? Failure(uploaded.Error)
                 : responses.Created($"/api/files/{uploaded.Value.Id.Value}", new FileUploadedResponse(uploaded.Value.Id.Value, uploaded.Value.Name.Value, uploaded.Value.Size));
-        }).Produces<ApiResponse<FileUploadedResponse>>(201).ProducesApiErrors(400, 401, 403, 413, 429, 500).RequireAuthorization();
+        }).Produces<ApiResponse<FileUploadedResponse>>(201).ProducesApiErrors(400, 401, 403, 413, 429, 500, 503).RequireAuthorization();
 
         // 下载字节。**文件名由领域校验过**，因此这里不必再防路径穿越——
         // 而磁盘存储解析句柄时还有第二道闸（见 LocalDiskFileStore）。
@@ -192,7 +192,7 @@ public static class FilesModule
             return deleted.IsFailure ? Failure(deleted.Error)
                 : deleted.Value ? Results.NoContent()
                 : responses.Accepted(new FileDeletionResponse(id, false));
-        }).Produces(204).Produces<ApiResponse<FileDeletionResponse>>(202).ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
+        }).Produces(204).Produces<ApiResponse<FileDeletionResponse>>(202).ProducesApiErrors(400, 401, 403, 404, 500, 503).RequireAuthorization();
 
         fileEndpoints.MapGet("/{id:long}/deletion", async (
             ApiResponses responses,
@@ -229,6 +229,7 @@ public static class FilesModule
         {
             "files.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
+            "files.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status400BadRequest,

@@ -73,6 +73,36 @@ namespace NexusStackNext.Files.Infrastructure.Persistence.Migrations
                     b.ToTable("outbox", "files");
                 });
 
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.CommittedFactCapacity", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxRecordPayloadBytes")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxRecords")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedRecords")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("fact_capacity", "files", t =>
+                        {
+                            t.HasCheckConstraint("ck_fact_capacity_bounds", "\"RetainedRecords\" >= 0 AND \"RetainedPayloadBytes\" >= 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\"");
+
+                            t.HasCheckConstraint("ck_fact_capacity_singleton", "\"Id\" = 1");
+                        });
+                });
+
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.InboxMessage", b =>
                 {
                     b.Property<string>("ConsumerName")
