@@ -187,7 +187,7 @@ public static class SchedulingModule
             return defined.IsFailure
                 ? Failure(defined.Error)
                 : responses.Created($"/api/scheduling/tasks/{defined.Value.Id.Value}", new TaskCreatedResponse(defined.Value.Id.Value, defined.Value.Code.Value));
-        }).ProducesApiErrors(415).Produces<ApiResponse<TaskCreatedResponse>>(201)
+        }).ProducesApiErrors(415, 503).Produces<ApiResponse<TaskCreatedResponse>>(201)
             .RequirePermission("/api/scheduling/tasks", "POST");
 
         tasks.MapPut("/{id:long}/rule", async (long id, UpdateScheduleRuleRequest request, TaskRegistry registry, CancellationToken cancellationToken) =>
@@ -195,7 +195,7 @@ public static class SchedulingModule
             if (request.Rule is null) { return Failure(ScheduleRule.Invalid); }
             var result = await registry.UpdateRuleAsync(new ScheduledTaskId(id), request.ExpectedVersion, request.Rule, cancellationToken);
             return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
-        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/rule", "PUT");
+        }).Produces(204).ProducesApiErrors(404, 409, 415, 503).RequirePermission("/api/scheduling/tasks/{id}/rule", "PUT");
 
         tasks.MapPost("/{id:long}/pause", async (
             long id,
@@ -205,7 +205,7 @@ public static class SchedulingModule
         {
             var paused = await registry.PauseAsync(new ScheduledTaskId(id), request.ExpectedVersion, cancellationToken);
             return paused.IsFailure ? Failure(paused.Error) : Results.NoContent();
-        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/pause", "POST");
+        }).Produces(204).ProducesApiErrors(404, 409, 415, 503).RequirePermission("/api/scheduling/tasks/{id}/pause", "POST");
 
         tasks.MapPost("/{id:long}/resume", async (
             long id,
@@ -215,7 +215,7 @@ public static class SchedulingModule
         {
             var resumed = await registry.ResumeAsync(new ScheduledTaskId(id), request.ExpectedVersion, cancellationToken);
             return resumed.IsFailure ? Failure(resumed.Error) : Results.NoContent();
-        }).Produces(204).ProducesApiErrors(404, 409, 415).RequirePermission("/api/scheduling/tasks/{id}/resume", "POST");
+        }).Produces(204).ProducesApiErrors(404, 409, 415, 503).RequirePermission("/api/scheduling/tasks/{id}/resume", "POST");
 
         return endpoints;
     }
@@ -229,6 +229,7 @@ public static class SchedulingModule
         statusCode: error.Code switch
         {
             "scheduling.task.not_found" => StatusCodes.Status404NotFound,
+            "scheduling.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         },

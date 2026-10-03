@@ -37,6 +37,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
+        modelBuilder.ConfigureCommittedFactCapacity();
         var plan = modelBuilder.Entity<ScheduledTask>();
         plan.ToTable("plans");
         plan.HasKey(task => task.Id);

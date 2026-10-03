@@ -11,6 +11,8 @@ using NexusStackNext.Identity.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Infrastructure.Persistence;
+using NexusStackNext.Scheduling.Contracts;
+using NexusStackNext.Scheduling.Infrastructure.Persistence;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -29,6 +31,10 @@ public sealed class FactCapacityUpgradeTests
     public Task FilesUpgrade_AccountsForExistingUtf8Payloads() => VerifyUpgradeAsync("files",
         "20261003094006_CommittedFactCleanup", StoredFileCommittedV1.Name, hasCapacity: false);
 
+    [PostgresFact]
+    public Task SchedulingUpgrade_AccountsForExistingUtf8Payloads() => VerifyUpgradeAsync("scheduling",
+        "20261003094008_CommittedFactCleanup", PlanCommittedV1.Name, hasCapacity: false);
+
     private static async Task VerifyUpgradeAsync(string schema, string previousMigration, string eventName, bool hasCapacity)
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
@@ -44,7 +50,7 @@ public sealed class FactCapacityUpgradeTests
         context.ChangeTracker.Clear();
 
         await migrator.MigrateAsync();
-        // 既有策略不得被迁移或应用重启覆盖；Files 首次创建账本后才配置测试额度。
+        // 既有策略不得被迁移或应用重启覆盖；首次创建账本的上下文迁移后才配置测试额度。
         if (!hasCapacity) { await ConfigureQuotaAsync(context); }
         var second = existing with { Id = Guid.NewGuid(), Payload = "文" };
         context.Outbox.Add(second);
@@ -81,6 +87,8 @@ public sealed class FactCapacityUpgradeTests
         "identity" => new IdentityDbContext(new DbContextOptionsBuilder<IdentityDbContext>()
             .UseNexusStackPostgres(connectionString, schema).Options),
         "files" => new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
+            .UseNexusStackPostgres(connectionString, schema).Options),
+        "scheduling" => new SchedulingDbContext(new DbContextOptionsBuilder<SchedulingDbContext>()
             .UseNexusStackPostgres(connectionString, schema).Options),
         _ => throw new ArgumentOutOfRangeException(nameof(schema)),
     };
