@@ -410,7 +410,7 @@ public sealed class CalendarSchedulingPersistenceTests
     public async Task RepeatedInitialMigration_PreservesIntervalPlanVersionAndAudit()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         // 开发期无历史数据，旧 DurableOccurrences 升级路径随迁移重置退役。
         // 保留“迁移不能改写既有计划”的义务，通过当前 HTTP 契约准备和观察数据。
         JsonElement before;
@@ -446,7 +446,7 @@ public sealed class CalendarSchedulingPersistenceTests
     public async Task MigrationAndProcessRestart_PreserveCalendarRules_AndLegacyIntervalDefinition()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         var settings = new Dictionary<string, string>(StringComparer.Ordinal) { ["Scheduling__Worker__Enabled"] = "false" };
         JsonElement[] before;
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "calendar-root-password", settings: settings))

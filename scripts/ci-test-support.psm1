@@ -92,9 +92,17 @@ function Assert-CiTestReports([object[]]$Reports, [string]$Revision, [string]$Ru
         if ($expected.Count -ne 0) { throw 'Missing tests.' }
     }
     Write-Output "Verified $($all.Count) tests across four isolated shards: zero missing, duplicate, failed or skipped."
+    foreach ($report in ($Reports | Sort-Object Shard)) {
+        $seconds = ($report.Results.Seconds | Measure-Object -Sum).Sum
+        Write-Output ("Shard {0}: {1} tests, {2:N1}s summed test duration (not job wall time)." -f $report.Shard, @($report.Results).Count, $seconds)
+    }
+    Write-Output 'Slowest test classes:'
     $all | Group-Object { $_.Project + ':' + $_.Method.Substring(0, $_.Method.LastIndexOf('.')) } | ForEach-Object {
         [pscustomobject]@{ Class = $_.Name; Seconds = [math]::Round(($_.Group.Seconds | Measure-Object -Sum).Sum, 1) }
     } | Sort-Object Seconds -Descending | Select-Object -First 15 | ForEach-Object { Write-Output ("  {0:N1}s {1}" -f $_.Seconds, $_.Class) }
+    Write-Output 'Slowest test cases (parameters withheld):'
+    $all | Sort-Object @{ Expression = { [double]$_.Seconds }; Descending = $true }, Id | Select-Object -First 15 |
+        ForEach-Object { Write-Output ("  {0:N1}s {1}:{2} [{3}]" -f [double]$_.Seconds, $_.Project, $_.Method, $_.Id.Substring(0, 12)) }
 }
 
 function Assert-CiIsolation([string]$RepoRoot) {

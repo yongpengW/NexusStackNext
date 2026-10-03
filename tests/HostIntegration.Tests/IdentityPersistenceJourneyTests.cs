@@ -6,16 +6,23 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using NexusStackNext.Auditing.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
+using NexusStackNext.Files.Infrastructure.Persistence;
+using NexusStackNext.Identity.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.Platform.Infrastructure.Persistence;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Infrastructure.Persistence;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -253,7 +260,7 @@ public sealed class IdentityPersistenceJourneyTests
     public async Task MigratedDatabase_PreservesUserAcrossHostRestart_AndRepeatedMigration()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         var credentials = new { userName = "persistent-user", password = "journey-test-password" };
         long userId;
         await using (var app = new PersistentIdentityApp(database.ConnectionString))
@@ -264,7 +271,7 @@ public sealed class IdentityPersistenceJourneyTests
             userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").ReadHttpInt64();
         }
 
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         await using var restarted = new PersistentIdentityApp(database.ConnectionString);
         using var second = restarted.CreateClient();
         using var login = await second.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative), credentials);
@@ -363,6 +370,32 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
     }
 
     public async Task MigrateAsync()
+    {
+        // 普通旅程复用测试进程中的 EF 模型；每次仍对独立空库执行真实迁移。
+        // CLI 契约测试显式使用 MigrateThroughCliAsync，避免反复启动六个进程。
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await MigrateContextAsync(new IdentityDbContext(new DbContextOptionsBuilder<IdentityDbContext>()
+            .UseNexusStackPostgres(ConnectionString, IdentityDbContext.SchemaName).Options), timeout.Token);
+        await MigrateContextAsync(new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseNexusStackPostgres(ConnectionString, PlatformDbContext.SchemaName).Options), timeout.Token);
+        await MigrateContextAsync(new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
+            .UseNexusStackPostgres(ConnectionString, FilesDbContext.SchemaName).Options), timeout.Token);
+        await MigrateContextAsync(new AuditingDbContext(new DbContextOptionsBuilder<AuditingDbContext>()
+            .UseNexusStackPostgres(ConnectionString, AuditingDbContext.SchemaName).Options), timeout.Token);
+        await MigrateContextAsync(new SchedulingDbContext(new DbContextOptionsBuilder<SchedulingDbContext>()
+            .UseNexusStackPostgres(ConnectionString, SchedulingDbContext.SchemaName).Options), timeout.Token);
+        await OperationJournalDatabase.MigrateAsync(ConnectionString, timeout.Token);
+    }
+
+    private static async Task MigrateContextAsync(DbContext context, CancellationToken cancellationToken)
+    {
+        await using (context)
+        {
+            await context.Database.MigrateAsync(cancellationToken);
+        }
+    }
+
+    public async Task MigrateThroughCliAsync()
     {
         var result = await RunMigrationAsync(ConnectionString);
         // 子进程输出可能包含框架异常，失败时也不把凭据写进测试日志。

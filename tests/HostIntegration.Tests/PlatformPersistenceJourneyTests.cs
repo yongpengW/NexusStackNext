@@ -275,7 +275,7 @@ public sealed class PlatformPersistenceJourneyTests
     public async Task UpdatedAndClearedSettings_PreserveRegistrationAndDescription_AfterRepeatedMigrationAndRestart()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         await using (var first = new PersistentIdentityApp(database.ConnectionString, "settings-root-password"))
         {
             using var client = first.CreateClient();
@@ -293,7 +293,7 @@ public sealed class PlatformPersistenceJourneyTests
             Assert.Equal(HttpStatusCode.NoContent, cleared.StatusCode);
         }
 
-        await database.MigrateAsync();
+        await database.MigrateThroughCliAsync();
         await using var restarted = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var after = restarted.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(after, "journey-root", "settings-root-password");

@@ -153,6 +153,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-ci-tests.ps1
 
+      - name: 验证票据读取失败门禁
+        shell: pwsh
+        run: ./scripts/check-issue-fetching.ps1
+
       - name: 还原格式检查所需依赖
         run: dotnet restore NexusStackNext.slnx
       - name: 断言格式符合 .editorconfig
@@ -166,7 +170,7 @@ jobs:
         shell: pwsh
         run: ./scripts/assert-no-credentials.ps1
 
-      - name: 断言跟踪器与规范一致
+      - name: 断言仓库跟踪器与规范一致
         # 见票据 28/29：一句关于"我们做了什么"的声明，如果不受检查，就会变成谎话。
         # 这条检查第一次运行就抓到了一张自相矛盾的票据（状态 resolved、依赖未解决）。
         #
@@ -175,19 +179,24 @@ jobs:
         # **GitHub 侧的票据形状**（地图唯一、票据挂在地图下、阻塞边指向真实存在的票、标签与调色盘一致）。
         # 后者要读 issue，所以给它 workflow 自己的令牌。
         shell: pwsh
+        run: ./scripts/check-tracker.ps1
+
+      - name: 断言 GitHub 票据一致
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ./scripts/check-tracker.ps1
-          ./scripts/check-issues.ps1
+        run: ./scripts/check-issues.ps1
 
       - name: 断言模板能生成可构建的工程
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $hive = Join-Path ([System.IO.Path]::GetTempPath()) 'nsn-ci-hive'
-          $out  = Join-Path ([System.IO.Path]::GetTempPath()) 'nsn-ci-gen'
-          Remove-Item $hive, $out -Recurse -Force -ErrorAction SilentlyContinue
+          $probeId = [Guid]::NewGuid().ToString('N')
+          $hive = Join-Path ([System.IO.Path]::GetTempPath()) "nsn-ci-hive-$probeId"
+          $out  = Join-Path ([System.IO.Path]::GetTempPath()) "nsn-ci-gen-$probeId"
           dotnet new install . --debug:custom-hive $hive
+          if ($LASTEXITCODE -ne 0) { throw 'Template installation failed.' }
           dotnet new nexusstack-next -n CiProbe -o $out --debug:custom-hive $hive
+          if ($LASTEXITCODE -ne 0) { throw 'Template generation failed.' }
           dotnet build "$out/CiProbe.slnx" --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw 'Generated project build failed.' }

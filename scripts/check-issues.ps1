@@ -72,14 +72,15 @@ Write-Host "GitHub 后端检查：$Repository" -ForegroundColor DarkGray
 
 # 一次取全（open + closed），后面的检查都在这一份快照上做，避免多次请求之间互相不一致。
 # **--paginate**：板子超过 30 张票时不会静默截断。
-$json = & $ghPath api "repos/$Repository/issues?state=all&per_page=100" --paginate 2>&1
+$json = & $ghPath api "repos/$Repository/issues?state=all&per_page=100" --paginate --slurp 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "查 issue 失败：$(($json -join ' ') -replace '\s+', ' ')" -ForegroundColor Red
     Write-Host '（离线、未登录、或令牌权限不足，都会走到这里——检查不通过，而不是跳过。）' -ForegroundColor Yellow
     exit 1
 }
 
-$issues = @(($json -join "`n") | ConvertFrom-Json | Where-Object { -not $_.pull_request })
+# --slurp 保留页边界，先展开每页再筛选；多页 JSON 不能直接拼接解析。
+$issues = @(($json -join "`n") | ConvertFrom-Json | ForEach-Object { $_ } | Where-Object { -not $_.pull_request })
 
 if ($issues.Count -eq 0) {
     Add-Problem '检查自身' 'issue 板上一张票都没有——这一组检查没有对象，不能当作通过'
@@ -104,9 +105,9 @@ if ($issues.Count -eq 0) {
         # **按编号比，不按内部 id**；查不到子票据时**明确失败**（#11）。
         # 这条检查第一次写出来时"永远通过"：故意造一张不挂到地图下的票，它照样报干净。
         $childNumbers = @()
-        $subJson = & $ghPath api "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" --paginate 2>&1
+        $subJson = & $ghPath api "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" --paginate --slurp 2>&1
         if ($LASTEXITCODE -eq 0) {
-            $childNumbers = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { [int]$_.number })
+            $childNumbers = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [int]$_.number })
         } else {
             Add-Problem '检查自身' '查地图的子票据失败——父子关系这一组没有对象可查，不能当作通过'
         }
@@ -123,14 +124,33 @@ if ($issues.Count -eq 0) {
     # 原生依赖是这次切换换来的两样东西之一（另一样是原生评论）。它坏掉的方式很安静：
     # 指向一张已删除/不存在的票时，图上那半条边会消失。
     $checked = 0
-    foreach ($issue in ($issues | Where-Object { -not $_.pull_request })) {
-        $depJson = & $ghPath api "repos/$Repository/issues/$($issue.number)/dependencies/blocked_by" 2>&1
-        if ($LASTEXITCODE -ne 0) { continue }
-        $blockers = @(($depJson -join "`n") | ConvertFrom-Json)
-        foreach ($b in $blockers) {
+    # 仅并行只读 GitHub 请求，最多四个；不涉及数据库或本地测试宿主。
+    $dependencies = @($issues | ForEach-Object -Parallel {
+        $ErrorActionPreference = 'Stop'
+        $issue = $_
+        try {
+            $depJson = & $using:ghPath api "repos/$using:Repository/issues/$($issue.number)/dependencies/blocked_by?per_page=100" --paginate --slurp 2>&1
+            if ($LASTEXITCODE -ne 0) { throw 'Dependency request failed.' }
+            $payload = $depJson -join "`n"
+            if ([string]::IsNullOrWhiteSpace($payload) -or $payload.Trim() -eq 'null') { throw 'Missing dependency response.' }
+            $blockers = @($payload | ConvertFrom-Json | ForEach-Object { $_ })
+            [pscustomobject]@{ Issue = $issue.number; Failed = $false; Blockers = $blockers }
+        }
+        catch {
+            # 原始 API 错误不进入日志；失败必须留下一个失败结果，不能静默少查一张票。
+            [pscustomobject]@{ Issue = $issue.number; Failed = $true; Blockers = @() }
+        }
+    } -ThrottleLimit 4)
+    if ($dependencies.Count -ne $issues.Count) { Add-Problem '检查自身' '依赖读取数量不完整，不能当作通过' }
+    foreach ($dependency in ($dependencies | Sort-Object Issue)) {
+        if ($dependency.Failed) {
+            Add-Problem '检查自身' "读取 #$($dependency.Issue) 的阻塞关系失败，不能当作通过"
+            continue
+        }
+        foreach ($b in $dependency.Blockers) {
             $checked++
             if ($issues.number -notcontains $b.number) {
-                Add-Problem '阻塞图' "#$($issue.number) 被 #$($b.number) 阻塞，而那张票不在板子上"
+                Add-Problem '阻塞图' "#$($dependency.Issue) 被 #$($b.number) 阻塞，而那张票不在板子上"
             }
         }
     }
@@ -145,10 +165,10 @@ if ($issues.Count -eq 0) {
         Add-Problem '检查自身' "找不到 $palettePath —— 调色盘契约不在了"
     } else {
         $palette = (Get-Content $palettePath -Raw -Encoding UTF8) | ConvertFrom-Json
-        $labelJson = & $ghPath api "repos/$Repository/labels?per_page=100" --paginate 2>&1
+        $labelJson = & $ghPath api "repos/$Repository/labels?per_page=100" --paginate --slurp 2>&1
         $live = @{}
         if ($LASTEXITCODE -eq 0) {
-            foreach ($l in (($labelJson -join "`n") | ConvertFrom-Json)) { $live[$l.name] = $l.color }
+            foreach ($l in (($labelJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ })) { $live[$l.name] = $l.color }
         } else {
             Add-Problem '检查自身' '查标签失败——这一组没有对象可查'
         }
