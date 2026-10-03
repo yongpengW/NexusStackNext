@@ -202,6 +202,8 @@ public sealed class PricingWorkflowTests(PricingDatabaseFixture database) : ICla
         Assert.Equal(150m, quote.BreakEvenPrice);
         Assert.Equal(3, quote.Version);
         Assert.Equal("Superseded", (await sender.QueryAsync(new GetRecalculation(original.RequestId))).Value.State);
+        Assert.Equal("pricing.cancel_conflict", (await sender.SendAsync(new CancelPricingWork(old.TaskId, old.Epoch))).Error.Code);
+        Assert.Equal("pricing.renew_conflict", (await sender.SendAsync(new RenewPricingWork(old.TaskId, old.Epoch))).Error.Code);
         Assert.True((await sender.SendAsync(original with { RequestId = Guid.NewGuid(), ExpectedVersion = 3, Cost = 120m })).IsSuccess);
         var noChange = (await sender.SendAsync(new ClaimPricingWork())).Value!;
         Assert.True((await sender.SendAsync(new CompletePricingWork(noChange.TaskId, noChange.Epoch))).Value);

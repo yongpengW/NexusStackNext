@@ -58,6 +58,7 @@ public sealed class PostgresTaskExecution<TTask> where TTask : DurableTaskRecord
         task.Attempts++;
         task.ErrorCode = null;
         task.LeaseUntil = now + _options.LeaseDuration;
+        task.MaxLeaseUntil = now + _options.MaxLeaseDuration;
         _database.Set<DurableTaskAttempt>().Add(new DurableTaskAttempt { TaskId = task.TaskId, Epoch = task.Epoch, StartedAt = now });
         await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -129,10 +130,75 @@ public sealed class PostgresTaskExecution<TTask> where TTask : DurableTaskRecord
         task.Attempts = 0;
         task.ErrorCode = null;
         task.LeaseUntil = null;
+        task.MaxLeaseUntil = null;
         task.AvailableAt = await NowAsync(cancellationToken).ConfigureAwait(false);
         await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         await _database.Entry(task).Collection(x => x.History).LoadAsync(cancellationToken).ConfigureAwait(false);
+        return Result.Success(task);
+    }
+
+    /// <summary>延长仍有效的执行权；本次领取的总期限保持不变。</summary>
+    /// <param name="taskId">工作标识。</param>
+    /// <param name="epoch">当前领取代次。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>成功持久化的新租约，或执行权冲突；不增加代次及尝试次数。</returns>
+    public async Task<Result<TTask>> RenewAsync(Guid taskId, long epoch, CancellationToken cancellationToken = default)
+    {
+        _database.ChangeTracker.Clear();
+        await using var transaction = await _database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var task = await LockAsync(taskId, cancellationToken).ConfigureAwait(false);
+        if (task is null) { return Result.Failure<TTask>(new Error(_schema + ".not_found", "任务不存在。")); }
+        var now = await NowAsync(cancellationToken).ConfigureAwait(false);
+        if (!Owns(task, epoch, now) || task.MaxLeaseUntil is null)
+        {
+            return Result.Failure<TTask>(new Error(_schema + ".renew_conflict", "原租约已经失效，或没有可续租的执行预算。"));
+        }
+        var originalDeadline = task.LeaseUntil!.Value;
+        var proposed = now + _options.LeaseDuration;
+        var deadline = proposed < task.MaxLeaseUntil.Value ? proposed : task.MaxLeaseUntil.Value;
+        if (deadline <= originalDeadline)
+        {
+            return Result.Failure<TTask>(new Error(_schema + ".renew_conflict", "本次领取的租约不能再延长。"));
+        }
+        task.LeaseUntil = deadline;
+        await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        // 保存时可能等待锁或触发器。必须复检原期限，不能以刚写的新期限证明原执行权。
+        if (originalDeadline <= await NowAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return Result.Failure<TTask>(new Error(_schema + ".renew_conflict", "原租约在续租提交前已失效。"));
+        }
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return Result.Success(task);
+    }
+
+    /// <summary>条件取消尚未终结的工作；已接受输入、既有结果与历史均保留。</summary>
+    /// <param name="taskId">工作标识。</param>
+    /// <param name="expectedEpoch">操作者观察到的执行代次。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>同代次的取消结论、未找到或状态冲突。</returns>
+    public async Task<Result<TTask>> CancelAsync(Guid taskId, long expectedEpoch, CancellationToken cancellationToken = default)
+    {
+        _database.ChangeTracker.Clear();
+        await using var transaction = await _database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var task = await LockAsync(taskId, cancellationToken).ConfigureAwait(false);
+        if (task is null) { return Result.Failure<TTask>(new Error(_schema + ".not_found", "任务不存在。")); }
+        if (task.Epoch != expectedEpoch || task.State is not ("Pending" or "Retry" or "Running" or "Cancelled"))
+        {
+            return Result.Failure<TTask>(new Error(_schema + ".cancel_conflict", "任务状态或执行代次已经改变。"));
+        }
+        if (task.State != "Cancelled")
+        {
+            if (task.State == "Running")
+            {
+                await FinishAttemptAsync(task, "Cancelled", await NowAsync(cancellationToken).ConfigureAwait(false), null, cancellationToken).ConfigureAwait(false);
+            }
+            task.State = "Cancelled";
+            task.LeaseUntil = null;
+            await _database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        await _database.Entry(task).Collection(x => x.History).LoadAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return Result.Success(task);
     }
 

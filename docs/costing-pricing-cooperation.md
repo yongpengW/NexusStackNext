@@ -46,6 +46,9 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 
 所有接口均需有效根操作者令牌，使用统一返回格式。
 
+三个手工入口支持可选 `delaySeconds`；两个上下文提供有界列表、条件取消和内部续租接口，
+准确的状态、升级与竞争语义见[业务任务管理](business-task-management.md)。
+
 1. `POST /api/costing/cost`：`requestId`、`itemId`、`expectedVersion`（创建为 0）、`purchaseCost`、`freightCost`。
    返回 202 和持久任务。重试保留 requestId，相同标识不同内容返回 409。
 2. `GET /api/costing/tasks/{id}` 查计算及历史，`GET /api/costing/items/{id}` 查成本及版本。

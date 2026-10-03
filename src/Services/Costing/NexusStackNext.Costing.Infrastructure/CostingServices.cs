@@ -31,11 +31,14 @@ public static class CostingServices
         services.AddScoped<ICommandHandler<RetryCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();
         services.AddScoped<ICommandHandler<UpdateCostInputs, CostCalculationStatus>, CostingCommands>();
         services.AddScoped<IQueryHandler<GetCostCalculation, CostCalculationStatus>, CostingCommands>();
+        services.AddScoped<IQueryHandler<ListCostCalculations, CostCalculationPage>, CostingTaskQueries>();
         services.AddScoped<IQueryHandler<GetCostSheet, CostSheetView>, CostingCommands>();
         services.AddScoped<ICommandHandler<ClaimCostingWork, CostingWorkLease?>, CostingExecution>();
         services.AddScoped<ICommandHandler<CompleteCostingWork, bool>, CostingExecution>();
         services.AddScoped<ICommandHandler<FailCostingWork, bool>, CostingExecution>();
         services.AddScoped<ICommandHandler<RetryCostingWork, CostCalculationStatus>, CostingExecution>();
+        services.AddScoped<ICommandHandler<CancelCostingWork, CostCalculationStatus>, CostingExecution>();
+        services.AddScoped<ICommandHandler<RenewCostingWork, CostingWorkLease>, CostingExecution>();
         services.AddKeyedScoped<IIntegrationEventProcessor, ScheduledCostIngestion>(ScheduleTriggeredV1.Name);
         services.AddScoped<IQueryHandler<GetScheduledCostReceipt, ScheduledCostReceipt>, ScheduledCostIngestion>();
         return services;
@@ -47,7 +50,7 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
 {
     public async Task<Result<CostCalculationStatus>> HandleAsync(UpdateCostInputs command, CancellationToken cancellationToken = default)
     {
-        if (command.ItemId == Guid.Empty || command.RequestId == Guid.Empty || command.ExpectedVersion < 0
+        if (command.ItemId == Guid.Empty || command.RequestId == Guid.Empty || command.ExpectedVersion < 0 || command.DelaySeconds is < 0 or > 2_592_000
             || !CostSheet.IsValidInput(command.PurchaseCost, command.FreightCost))
         {
             return Result.Failure<CostCalculationStatus>(new Error("costing.invalid_input", "标识、版本或输入无效。"));
@@ -88,6 +91,7 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
             _ = sheet.UpdateCost(command.PurchaseCost, command.FreightCost);
         }
 
+        var acceptedAt = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
         var task = new CostCalculationEntry
         {
             TaskId = command.RequestId,
@@ -96,6 +100,9 @@ internal sealed class CostingCommands(CostingDbContext database) : ICommandHandl
             PurchaseCost = command.PurchaseCost,
             FreightCost = command.FreightCost,
             InputRevision = sheet.InputRevision,
+            DelaySeconds = command.DelaySeconds,
+            CreatedAt = acceptedAt,
+            AvailableAt = acceptedAt.AddSeconds(command.DelaySeconds),
         };
         database.Tasks.Add(task);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

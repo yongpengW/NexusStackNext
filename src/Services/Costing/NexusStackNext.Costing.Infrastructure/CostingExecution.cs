@@ -11,9 +11,23 @@ using NexusStackNext.Costing.Domain;
 namespace NexusStackNext.Costing.Infrastructure;
 
 internal sealed class CostingExecution(CostingDbContext database, CostingTaskOptions options) : ICommandHandler<ClaimCostingWork, CostingWorkLease?>,
-    ICommandHandler<CompleteCostingWork, bool>, ICommandHandler<FailCostingWork, bool>, ICommandHandler<RetryCostingWork, CostCalculationStatus>
+    ICommandHandler<CompleteCostingWork, bool>, ICommandHandler<FailCostingWork, bool>, ICommandHandler<RetryCostingWork, CostCalculationStatus>,
+    ICommandHandler<CancelCostingWork, CostCalculationStatus>, ICommandHandler<RenewCostingWork, CostingWorkLease>
 {
     private readonly PostgresTaskExecution<CostCalculationEntry> _execution = new(database, "costing", options);
+
+    public async Task<Result<CostingWorkLease>> HandleAsync(RenewCostingWork command, CancellationToken cancellationToken = default)
+    {
+        var result = await _execution.RenewAsync(command.TaskId, command.Epoch, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? Result.Success(new CostingWorkLease(result.Value.TaskId, result.Value.Epoch, result.Value.LeaseUntil!.Value))
+            : Result.Failure<CostingWorkLease>(result.Error);
+    }
+
+    public async Task<Result<CostCalculationStatus>> HandleAsync(CancelCostingWork command, CancellationToken cancellationToken = default)
+    {
+        var result = await _execution.CancelAsync(command.TaskId, command.ExpectedEpoch, cancellationToken).ConfigureAwait(false);
+        return result.IsSuccess ? Result.Success(result.Value.ToStatus()) : Result.Failure<CostCalculationStatus>(result.Error);
+    }
 
     public async Task<Result<bool>> HandleAsync(FailCostingWork command, CancellationToken cancellationToken = default) =>
         Result.Success(await _execution.FailAsync(command.TaskId, command.Epoch, cancellationToken).ConfigureAwait(false));

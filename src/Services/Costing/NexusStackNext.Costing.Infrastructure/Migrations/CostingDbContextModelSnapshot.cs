@@ -158,6 +158,14 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("clock_timestamp()");
 
+                    b.Property<DateTimeOffset?>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("clock_timestamp()");
+
+                    b.Property<int>("DelaySeconds")
+                        .HasColumnType("integer");
+
                     b.Property<long>("Epoch")
                         .HasColumnType("bigint");
 
@@ -179,6 +187,9 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("MaxLeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Origin")

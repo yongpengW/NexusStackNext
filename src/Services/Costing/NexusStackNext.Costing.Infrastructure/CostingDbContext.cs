@@ -55,6 +55,7 @@ internal sealed class CostCalculationEntry : DurableTaskRecord
     public decimal PurchaseCost { get; set; }
     public decimal FreightCost { get; set; }
     public long InputRevision { get; set; }
+    public int DelaySeconds { get; set; }
 
 
     public CostCalculationStatus ToStatus() => new(TaskId, ItemId.Value, State, InputRevision)
@@ -62,11 +63,15 @@ internal sealed class CostCalculationEntry : DurableTaskRecord
         Epoch = Epoch,
         Attempts = Attempts,
         ErrorCode = ErrorCode,
+        CreatedAt = CreatedAt,
         AvailableAt = AvailableAt,
+        LeaseUntil = LeaseUntil,
+        MaxLeaseUntil = MaxLeaseUntil,
         History = History.OrderBy(x => x.Epoch).Select(x => new CostingAttempt(x.Epoch, x.StartedAt, x.FinishedAt, x.Outcome, x.ErrorCode)).ToArray(),
     };
     public bool Matches(UpdateCostInputs request) => Origin == "manual" && ItemId.Value == request.ItemId
-        && ExpectedVersion == request.ExpectedVersion && PurchaseCost == request.PurchaseCost && FreightCost == request.FreightCost;
+        && ExpectedVersion == request.ExpectedVersion && PurchaseCost == request.PurchaseCost && FreightCost == request.FreightCost
+        && DelaySeconds == request.DelaySeconds;
 }
 
 internal sealed class ScheduledCostReceiptEntry
@@ -126,7 +131,7 @@ public static class CostingDatabase
             await using var context = CreateContext(connectionString);
             if ((await context.Database.GetPendingMigrationsAsync(timeout.Token).ConfigureAwait(false)).Any()) { return false; }
             _ = await context.Sheets.AnyAsync(timeout.Token).ConfigureAwait(false);
-            _ = await context.Tasks.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Tasks.Select(task => new { task.CreatedAt, task.DelaySeconds, task.MaxLeaseUntil }).Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.ScheduleReceipts.AnyAsync(timeout.Token).ConfigureAwait(false);

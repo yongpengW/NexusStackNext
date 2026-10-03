@@ -18,6 +18,7 @@ public static class DurableTaskMapping
         task.Property(x => x.State).HasMaxLength(24);
         task.Property(x => x.ErrorCode).HasMaxLength(64);
         task.Property(x => x.AvailableAt).HasDefaultValueSql("clock_timestamp()");
+        task.Property(x => x.CreatedAt).HasDefaultValueSql("clock_timestamp()");
         task.HasIndex(x => new { x.State, x.AvailableAt });
         var attempt = modelBuilder.Entity<DurableTaskAttempt>();
         attempt.ToTable("attempts");

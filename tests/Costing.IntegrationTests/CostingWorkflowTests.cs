@@ -120,6 +120,8 @@ public sealed class CostingWorkflowTests(CostingDatabaseFixture database) : ICla
         Assert.True((await sender.SendAsync(new CompleteCostingWork(currentLease.TaskId, currentLease.Epoch))).Value);
         Assert.True((await sender.SendAsync(new CompleteCostingWork(oldLease.TaskId, oldLease.Epoch))).Value);
         Assert.Equal("Superseded", (await sender.QueryAsync(new GetCostCalculation(original.RequestId))).Value.State);
+        Assert.Equal("costing.cancel_conflict", (await sender.SendAsync(new CancelCostingWork(oldLease.TaskId, oldLease.Epoch))).Error.Code);
+        Assert.Equal("costing.renew_conflict", (await sender.SendAsync(new RenewCostingWork(oldLease.TaskId, oldLease.Epoch))).Error.Code);
         Assert.True((await sender.QueryAsync(new GetCostDelivery(original.RequestId))).IsFailure);
         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
         await store.MarkDeadLetteredAsync(current.RequestId, "broker_unavailable", DateTimeOffset.UtcNow);

@@ -9,7 +9,7 @@
 _Avoid_: PriceQuote、MasterPricing、库存批次
 
 **CostCalculation**:
-一次已接受的成本重算工作。输入快照与执行历史持久化，结果过期时不发布成本事件。
+一次已接受的成本重算工作。输入快照与执行历史保留，结果过期时不发布成本事件；取消只停止这次计算，不撤销已接受的成本组成。
 _Avoid_: ScheduledTask、消息投递、定价重算
 
 **CostRevision**:

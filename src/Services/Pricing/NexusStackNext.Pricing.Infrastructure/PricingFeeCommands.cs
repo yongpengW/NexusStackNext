@@ -11,7 +11,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHa
     public async Task<Result<RecalculationStatus>> HandleAsync(UpdatePricingFee command, CancellationToken cancellationToken = default)
     {
         if (command.ItemId == Guid.Empty || command.RequestId == Guid.Empty || command.ExpectedVersion <= 0
-            || !PriceQuote.IsValidInput(0, command.FeeRate))
+            || !PriceQuote.IsValidInput(0, command.FeeRate) || command.DelaySeconds is < 0 or > 2_592_000)
         {
             return Result.Failure<RecalculationStatus>(new Error("pricing.invalid_input", "标识、版本或费率无效。"));
         }
@@ -23,7 +23,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHa
         if (existing is not null)
         {
             return existing.Origin == "fee" && existing.ItemId.Value == command.ItemId
-                && existing.ExpectedVersion == command.ExpectedVersion && existing.FeeRate == command.FeeRate
+                && existing.ExpectedVersion == command.ExpectedVersion && existing.FeeRate == command.FeeRate && existing.DelaySeconds == command.DelaySeconds
                 ? Result.Success(existing.ToStatus()) : Result.Failure<RecalculationStatus>(new Error("pricing.request_conflict", "请求标识已用于不同内容。"));
         }
         await database.Database.ExecuteSqlInterpolatedAsync(
@@ -33,6 +33,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHa
         if (quote is null) { return Result.Failure<RecalculationStatus>(new Error("pricing.not_found", "定价对象不存在。")); }
         if (quote.Version != command.ExpectedVersion) { return Result.Failure<RecalculationStatus>(new Error("pricing.version_conflict", "定价对象已被修改。")); }
         _ = quote.UpdateCost(quote.Cost, command.FeeRate);
+        var acceptedAt = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
         var task = new RecalculationEntry
         {
             TaskId = command.RequestId,
@@ -42,6 +43,9 @@ internal sealed class PricingFeeCommands(PricingDbContext database) : ICommandHa
             Cost = quote.Cost,
             FeeRate = quote.FeeRate,
             InputRevision = quote.InputRevision,
+            DelaySeconds = command.DelaySeconds,
+            CreatedAt = acceptedAt,
+            AvailableAt = acceptedAt.AddSeconds(command.DelaySeconds),
         };
         database.Tasks.Add(task);
         await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

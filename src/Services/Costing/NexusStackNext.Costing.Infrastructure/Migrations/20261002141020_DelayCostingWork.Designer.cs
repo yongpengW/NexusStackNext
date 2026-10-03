@@ -2,22 +2,25 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using NexusStackNext.Pricing.Infrastructure;
+using NexusStackNext.Costing.Infrastructure;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace NexusStackNext.Pricing.Infrastructure.Migrations
+namespace NexusStackNext.Costing.Infrastructure.Migrations
 {
-    [DbContext(typeof(PricingDbContext))]
-    partial class PricingDbContextModelSnapshot : ModelSnapshot
+    [DbContext(typeof(CostingDbContext))]
+    [Migration("20261002141020_DelayCostingWork")]
+    partial class DelayCostingWork
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasDefaultSchema("pricing")
+                .HasDefaultSchema("costing")
                 .HasAnnotation("ProductVersion", "10.0.12")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -61,7 +64,7 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.HasIndex("DeliveredAt", "DeadLetteredAt", "NextAttemptAt")
                         .HasDatabaseName("ix_outbox_pending");
 
-                    b.ToTable("outbox", "pricing");
+                    b.ToTable("outbox", "costing");
                 });
 
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.InboxMessage", b =>
@@ -77,16 +80,12 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid");
 
-                    b.Property<string>("CostPayloadHash")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.HasKey("ConsumerName", "EventName", "MessageId");
 
-                    b.ToTable("inbox", "pricing");
+                    b.ToTable("inbox", "costing");
                 });
 
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
@@ -114,34 +113,31 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
 
                     b.HasKey("TaskId", "Epoch");
 
-                    b.ToTable("attempts", "pricing");
+                    b.ToTable("attempts", "costing");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Domain.PriceQuote", b =>
+            modelBuilder.Entity("NexusStackNext.Costing.Domain.CostSheet", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid");
 
-                    b.Property<decimal?>("BreakEvenPrice")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("numeric(18,4)");
-
                     b.Property<long>("CalculatedRevision")
                         .HasColumnType("bigint");
 
-                    b.Property<decimal>("Cost")
+                    b.Property<decimal>("FreightCost")
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
-                    b.Property<long>("CostingRevision")
-                        .HasColumnType("bigint");
-
-                    b.Property<decimal>("FeeRate")
-                        .HasPrecision(5, 4)
-                        .HasColumnType("numeric(5,4)");
-
                     b.Property<long>("InputRevision")
                         .HasColumnType("bigint");
+
+                    b.Property<decimal>("PurchaseCost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal?>("UnitCost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
 
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
@@ -149,23 +145,10 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("quotes", "pricing");
+                    b.ToTable("sheets", "costing");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.PriceCacheInvalidation", b =>
-                {
-                    b.Property<Guid>("ItemId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("Version")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("ItemId", "Version");
-
-                    b.ToTable("cache_invalidations", "pricing");
-                });
-
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", b =>
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", b =>
                 {
                     b.Property<Guid>("TaskId")
                         .HasColumnType("uuid");
@@ -174,15 +157,6 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("AvailableAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("clock_timestamp()");
-
-                    b.Property<decimal>("Cost")
-                        .HasPrecision(18, 4)
-                        .HasColumnType("numeric(18,4)");
-
-                    b.Property<DateTimeOffset?>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("clock_timestamp()");
@@ -200,9 +174,9 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<long>("ExpectedVersion")
                         .HasColumnType("bigint");
 
-                    b.Property<decimal>("FeeRate")
-                        .HasPrecision(5, 4)
-                        .HasColumnType("numeric(5,4)");
+                    b.Property<decimal>("FreightCost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
 
                     b.Property<long>("InputRevision")
                         .HasColumnType("bigint");
@@ -213,15 +187,16 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("LeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<DateTimeOffset?>("MaxLeaseUntil")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<string>("Origin")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
-                        .HasMaxLength(24)
-                        .HasColumnType("character varying(24)")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
                         .HasDefaultValue("manual");
+
+                    b.Property<decimal>("PurchaseCost")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
 
                     b.Property<string>("State")
                         .IsRequired()
@@ -234,28 +209,82 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
 
                     b.HasIndex("State", "AvailableAt");
 
-                    b.ToTable("tasks", "pricing");
+                    b.ToTable("tasks", "costing");
+                });
+
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.ScheduledCostReceiptEntry", b =>
+                {
+                    b.Property<Guid>("OccurrenceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PayloadHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("PlanId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("ReceivedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("TaskId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("TriggerSequence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("OccurrenceId");
+
+                    b.HasIndex("TaskId");
+
+                    b.ToTable("schedule_receipts", "costing");
                 });
 
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
                 {
-                    b.HasOne("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", null)
+                    b.HasOne("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", null)
                         .WithMany("History")
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", b =>
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", b =>
                 {
-                    b.HasOne("NexusStackNext.Pricing.Domain.PriceQuote", null)
+                    b.HasOne("NexusStackNext.Costing.Domain.CostSheet", null)
                         .WithMany()
                         .HasForeignKey("ItemId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("NexusStackNext.Pricing.Infrastructure.RecalculationEntry", b =>
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.ScheduledCostReceiptEntry", b =>
+                {
+                    b.HasOne("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", null)
+                        .WithMany()
+                        .HasForeignKey("TaskId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostCalculationEntry", b =>
                 {
                     b.Navigation("History");
                 });

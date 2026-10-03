@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Pricing.Infrastructure;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Pricing.Infrastructure.Migrations
 {
     [DbContext(typeof(PricingDbContext))]
-    partial class PricingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002142238_LeaseBudgetPricingWork")]
+    partial class LeaseBudgetPricingWork
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -181,11 +184,6 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.Property<decimal>("Cost")
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
-
-                    b.Property<DateTimeOffset?>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("clock_timestamp()");
 
                     b.Property<int>("DelaySeconds")
                         .HasColumnType("integer");

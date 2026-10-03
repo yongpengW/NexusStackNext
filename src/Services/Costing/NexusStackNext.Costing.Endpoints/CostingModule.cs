@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -89,6 +90,17 @@ public static class CostingModule
             var result = await sender.QueryAsync(new GetCostSheet(itemId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).Produces<ApiResponse<CostSheetView>>();
+        group.MapGet("/tasks", async (int? page, int? limit, string? state, Guid? itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var query = new ListCostCalculations(page ?? 1, limit ?? 50, state, itemId);
+            var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
+        }).Produces<ApiPage<CostCalculationSummary>>();
+        group.MapPost("/tasks/{taskId:guid}/cancel", async (Guid taskId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new CancelCostingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CostCalculationStatus>>().ProducesApiErrors(415);
         group.MapGet("/tasks/{taskId:guid}", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostCalculation(taskId), token).ConfigureAwait(false);
@@ -106,11 +118,12 @@ public static class CostingModule
         statusCode: error.Code switch
         {
             "costing.not_found" => StatusCodes.Status404NotFound,
-            "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" => StatusCodes.Status409Conflict,
+            "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 internal sealed record RetryRequest(long ExpectedEpoch);
+internal sealed record CancelRequest([property: JsonRequired] long ExpectedEpoch);
 internal sealed record CostingConnection(string Value);
 internal sealed record DeliveryRetryRequest(DateTimeOffset ExpectedDeadLetteredAt);

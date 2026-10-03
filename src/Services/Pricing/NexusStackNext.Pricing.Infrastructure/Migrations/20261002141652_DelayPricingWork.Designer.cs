@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Pricing.Infrastructure;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Pricing.Infrastructure.Migrations
 {
     [DbContext(typeof(PricingDbContext))]
-    partial class PricingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261002141652_DelayPricingWork")]
+    partial class DelayPricingWork
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -182,11 +185,6 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasPrecision(18, 4)
                         .HasColumnType("numeric(18,4)");
 
-                    b.Property<DateTimeOffset?>("CreatedAt")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("timestamp with time zone")
-                        .HasDefaultValueSql("clock_timestamp()");
-
                     b.Property<int>("DelaySeconds")
                         .HasColumnType("integer");
 
@@ -211,9 +209,6 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<DateTimeOffset?>("LeaseUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("MaxLeaseUntil")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("Origin")
