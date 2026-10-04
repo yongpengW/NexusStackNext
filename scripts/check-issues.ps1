@@ -17,10 +17,14 @@
 [CmdletBinding()]
 param(
     # 检查哪个仓库；默认从 git remote 推。CI 里可用 GITHUB_REPOSITORY 覆盖。
-    [string]$Repository
+    [string]$Repository,
+    [ValidateRange(1, 60)][int]$RequestTimeoutSeconds = 20,
+    [ValidateRange(1, 300)][int]$TotalTimeoutSeconds = 120
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'github-read.psm1') -Force
+$deadline = [Diagnostics.Stopwatch]::GetTimestamp() + [long]($TotalTimeoutSeconds * [Diagnostics.Stopwatch]::Frequency)
 
 function Add-Problem([string]$area, [string]$message) {
     $script:problems += [pscustomobject]@{ Area = $area; Message = $message }
@@ -72,10 +76,10 @@ Write-Host "GitHub 后端检查：$Repository" -ForegroundColor DarkGray
 
 # 一次取全（open + closed），后面的检查都在这一份快照上做，避免多次请求之间互相不一致。
 # **--paginate**：板子超过 30 张票时不会静默截断。
-$json = & $ghPath api "repos/$Repository/issues?state=all&per_page=100" --paginate --slurp 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "查 issue 失败：$(($json -join ' ') -replace '\s+', ' ')" -ForegroundColor Red
-    Write-Host '（离线、未登录、或令牌权限不足，都会走到这里——检查不通过，而不是跳过。）' -ForegroundColor Yellow
+try {
+    $json = Invoke-GitHubRead $ghPath "repos/$Repository/issues?state=all&per_page=100" $deadline $RequestTimeoutSeconds
+} catch {
+    Write-Host '查 issue 失败或超时；原始响应已隐藏，门禁拒绝通过。' -ForegroundColor Red
     exit 1
 }
 
@@ -105,10 +109,10 @@ if ($issues.Count -eq 0) {
         # **按编号比，不按内部 id**；查不到子票据时**明确失败**（#11）。
         # 这条检查第一次写出来时"永远通过"：故意造一张不挂到地图下的票，它照样报干净。
         $childNumbers = @()
-        $subJson = & $ghPath api "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" --paginate --slurp 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        try {
+            $subJson = Invoke-GitHubRead $ghPath "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" $deadline $RequestTimeoutSeconds
             $childNumbers = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [int]$_.number })
-        } else {
+        } catch {
             Add-Problem '检查自身' '查地图的子票据失败——父子关系这一组没有对象可查，不能当作通过'
         }
 
@@ -125,12 +129,13 @@ if ($issues.Count -eq 0) {
     # 指向一张已删除/不存在的票时，图上那半条边会消失。
     $checked = 0
     # 仅并行只读 GitHub 请求，最多四个；不涉及数据库或本地测试宿主。
+    $readModule = Join-Path $PSScriptRoot 'github-read.psm1'
     $dependencies = @($issues | ForEach-Object -Parallel {
         $ErrorActionPreference = 'Stop'
         $issue = $_
         try {
-            $depJson = & $using:ghPath api "repos/$using:Repository/issues/$($issue.number)/dependencies/blocked_by?per_page=100" --paginate --slurp 2>&1
-            if ($LASTEXITCODE -ne 0) { throw 'Dependency request failed.' }
+            Import-Module $using:readModule
+            $depJson = Invoke-GitHubRead $using:ghPath "repos/$using:Repository/issues/$($issue.number)/dependencies/blocked_by?per_page=100" $using:deadline $using:RequestTimeoutSeconds
             $payload = $depJson -join "`n"
             if ([string]::IsNullOrWhiteSpace($payload) -or $payload.Trim() -eq 'null') { throw 'Missing dependency response.' }
             $blockers = @($payload | ConvertFrom-Json | ForEach-Object { $_ })
@@ -165,11 +170,11 @@ if ($issues.Count -eq 0) {
         Add-Problem '检查自身' "找不到 $palettePath —— 调色盘契约不在了"
     } else {
         $palette = (Get-Content $palettePath -Raw -Encoding UTF8) | ConvertFrom-Json
-        $labelJson = & $ghPath api "repos/$Repository/labels?per_page=100" --paginate --slurp 2>&1
         $live = @{}
-        if ($LASTEXITCODE -eq 0) {
+        try {
+            $labelJson = Invoke-GitHubRead $ghPath "repos/$Repository/labels?per_page=100" $deadline $RequestTimeoutSeconds
             foreach ($l in (($labelJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ })) { $live[$l.name] = $l.color }
-        } else {
+        } catch {
             Add-Problem '检查自身' '查标签失败——这一组没有对象可查'
         }
 

@@ -1,4 +1,7 @@
 # Exercise the real tracker CLI with a disposable gh adapter; never contacts GitHub.
+[CmdletBinding()]
+param([string[]]$Modes)
+
 $ErrorActionPreference = 'Stop'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('nsn-issue-probes-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($scratch)
@@ -8,6 +11,66 @@ $adapter = @'
 #!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
 $route = $args[1]
+if ($env:NSN_ISSUE_PROBE_MODE -eq 'accumulated-budget') { Start-Sleep -Milliseconds 600 }
+$timeoutRoute = switch ($env:NSN_ISSUE_PROBE_MODE) {
+    'request-timeout-parent' { '/sub_issues\?' }
+    'request-timeout-dependency' { '/issues/2/dependencies/blocked_by\?' }
+    'request-timeout-labels' { '/labels\?' }
+    default { $null }
+}
+if ($timeoutRoute -and $route -match $timeoutRoute) {
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), [string]$PID)
+    Start-Sleep -Seconds 15
+}
+if ($route -match '/issues\?') {
+    switch ($env:NSN_ISSUE_PROBE_MODE) {
+        { $_ -in 'request-timeout', 'total-timeout' } {
+            [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), [string]$PID)
+            Start-Sleep -Seconds 10
+        }
+        'persistent-service' {
+            $marker = Join-Path $PSScriptRoot 'service-attempts'
+            $attempt = if (Test-Path -LiteralPath $marker) { 1 + [int](Get-Content -LiteralPath $marker) } else { 1 }
+            [IO.File]::WriteAllText($marker, [string]$attempt)
+            if ($attempt -le 3) {
+                [Console]::Error.WriteLine('gh: NSN_SYNTHETIC_SECRET unavailable (HTTP 503)')
+                exit 1
+            }
+        }
+        { $_ -in 'permanent-service', 'stdout-service' } {
+            $marker = Join-Path $PSScriptRoot $env:NSN_ISSUE_PROBE_MODE
+            if (-not (Test-Path -LiteralPath $marker)) {
+                [IO.File]::WriteAllText($marker, 'failure must not retry')
+                if ($_ -eq 'permanent-service') { [Console]::Error.WriteLine('gh: NSN_SYNTHETIC_SECRET forbidden (HTTP 403)') }
+                else { 'gh: NSN_SYNTHETIC_SECRET fake diagnostic on stdout (HTTP 503)' }
+                exit 1
+            }
+        }
+    }
+}
+if ($env:NSN_ISSUE_PROBE_MODE -eq 'invalid-list' -and $route -match '/issues\?') {
+    'NSN_SYNTHETIC_SECRET invalid-json'
+    exit 0
+}
+$transientRoute = switch ($env:NSN_ISSUE_PROBE_MODE) {
+    'transient-list' { '/issues\?' }
+    'transient-502' { '/issues\?' }
+    'transient-504' { '/issues\?' }
+    'transient-parent' { '/sub_issues\?' }
+    'transient-dependency' { '/issues/2/dependencies/blocked_by\?' }
+    'transient-labels' { '/labels\?' }
+    default { $null }
+}
+if ($transientRoute -and $route -match $transientRoute) {
+    $identity = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($env:NSN_ISSUE_PROBE_MODE + $route)))
+    $marker = Join-Path $PSScriptRoot $identity
+    if (-not (Test-Path -LiteralPath $marker)) {
+        [IO.File]::WriteAllText($marker, 'first failure')
+        $status = switch ($env:NSN_ISSUE_PROBE_MODE) { 'transient-502' { 502 }; 'transient-504' { 504 }; default { 503 } }
+        [Console]::Error.WriteLine("gh: NSN_SYNTHETIC_SECRET service unavailable (HTTP $status)")
+        exit 1
+    }
+}
 switch -Regex ($route) {
     '/issues\?' { $items = '[{"number":1,"title":"Map","labels":[{"name":"wayfinder:map"}]},{"number":2,"title":"Task","labels":[{"name":"wayfinder:task"}]}]' }
     '/sub_issues\?' { $items = '[{"number":2}]' }
@@ -16,6 +79,7 @@ switch -Regex ($route) {
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'invalid' -and $route -like '*/2/*') { 'not-json'; exit 0 }
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'empty' -and $route -like '*/2/*') { exit 0 }
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'null' -and $route -like '*/2/*') { 'null'; exit 0 }
+        if ($env:NSN_ISSUE_PROBE_MODE -eq 'zero-pages' -and $route -like '*/2/*') { '[]'; exit 0 }
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'pagination' -and $args -notcontains '--paginate') { exit 1 }
         $items = if ($route -like '*/2/*') {
             if ($env:NSN_ISSUE_PROBE_MODE -eq 'missing') { '[{"number":99}]' } else { '[{"number":1}]' }
@@ -26,6 +90,7 @@ switch -Regex ($route) {
 }
 # Real gh emits independent JSON pages unless --slurp wraps the pages in an array.
 # All records are on page two, including the invalid blocker in the missing probe.
+if ($env:NSN_ISSUE_PROBE_MODE -eq 'malformed-slurp') { $items; exit 0 }
 if ($args -contains '--slurp') { '[[],' + $items + ']' } else { "[]`n$items" }
 exit 0
 '@
@@ -49,11 +114,36 @@ exec pwsh -NoProfile -File "$0.ps1" "$@"
     }
     $env:PATH = $scratch + [IO.Path]::PathSeparator + $oldPath
     if ((Get-Command gh).Source -cne $adapterPath) { throw 'Fixture gh was not selected; refusing network access.' }
-    foreach ($mode in @('success', 'failure', 'invalid', 'empty', 'null', 'missing', 'pagination')) {
+    $knownModes = @('success', 'failure', 'invalid', 'empty', 'null', 'zero-pages', 'missing', 'pagination', 'transient-list', 'transient-parent', 'transient-dependency', 'transient-labels', 'transient-502', 'transient-504', 'invalid-list', 'malformed-slurp', 'persistent-service', 'permanent-service', 'stdout-service', 'request-timeout', 'request-timeout-parent', 'request-timeout-dependency', 'request-timeout-labels', 'total-timeout', 'accumulated-budget')
+    if ($Modes.Count -eq 0) { $Modes = $knownModes }
+    foreach ($mode in $Modes) {
+        if ($mode -notin $knownModes) { throw 'Unknown tracker probe; refusing an empty or misleading check.' }
         $env:NSN_ISSUE_PROBE_MODE = $mode
-        $output = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-issues.ps1') -Repository fixture/repo 2>&1
-        $expected = $mode -in @('success', 'pagination')
-        if (($LASTEXITCODE -eq 0) -ne $expected) { throw "Tracker CLI unexpected exit for $mode; expected success=$expected" }
+        $options = switch ($mode) {
+            { $_ -like 'request-timeout*' } { @('-RequestTimeoutSeconds', '1', '-TotalTimeoutSeconds', '30') }
+            'total-timeout' { @('-RequestTimeoutSeconds', '20', '-TotalTimeoutSeconds', '2') }
+            'accumulated-budget' { @('-RequestTimeoutSeconds', '20', '-TotalTimeoutSeconds', '2') }
+            default { @() }
+        }
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $timedProcess = Join-Path $scratch 'timed-process'
+        if (Test-Path -LiteralPath $timedProcess) { Remove-Item -LiteralPath $timedProcess }
+        $output = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-issues.ps1') -Repository fixture/repo @options 2>&1
+        $exitCode = $LASTEXITCODE
+        $timer.Stop()
+        $expected = $mode -in @('success', 'pagination', 'transient-list', 'transient-parent', 'transient-dependency', 'transient-labels', 'transient-502', 'transient-504')
+        if (($exitCode -eq 0) -ne $expected) { throw "Tracker CLI unexpected exit for $mode; expected success=$expected" }
+        if (($output -join "`n") -match 'NSN_SYNTHETIC_SECRET') { throw "Tracker CLI exposed raw adapter output for $mode" }
+        if ($mode -eq 'persistent-service' -and [int](Get-Content -LiteralPath (Join-Path $scratch 'service-attempts')) -ne 3) { throw 'Tracker CLI exceeded its bounded service recovery attempts.' }
+        if ($mode -eq 'accumulated-budget' -and $timer.Elapsed.TotalSeconds -gt 6) { throw 'Tracker CLI renewed the overall budget between requests.' }
+        if ($mode -like 'request-timeout*' -or $mode -eq 'total-timeout') {
+            $ceiling = if ($mode -in 'request-timeout', 'total-timeout') { 6 } else { 10 }
+            if ($timer.Elapsed.TotalSeconds -gt $ceiling) { throw "Tracker CLI exceeded the time budget for $mode" }
+            if (Test-Path -LiteralPath $timedProcess) {
+                $processId = [int](Get-Content -LiteralPath $timedProcess)
+                if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { throw 'Timed-out adapter is still running.' }
+            }
+        }
         Write-Output "PASS: tracker CLI $mode"
     }
 }
