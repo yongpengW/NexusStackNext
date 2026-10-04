@@ -1,10 +1,12 @@
 param(
-    [Parameter(Mandatory)][ValidateSet('Plan', 'Verify', 'Isolation', 'Discover', 'Report')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Plan', 'Verify', 'Isolation', 'Discover', 'Report', 'Prerequisites')][string]$Action,
     [string]$InputPath,
     [string]$OutputPath,
     [string]$Revision,
     [string]$RunId,
     [string]$Attempt,
+    [string]$ShardResult,
+    [string]$RepositoryResult,
     [string]$Project,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
 )
@@ -12,6 +14,10 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
 try {
     switch ($Action) {
+        'Prerequisites' {
+            if ($ShardResult -cne 'success' -or $RepositoryResult -cne 'success') { throw 'Required CI work did not succeed.' }
+            Write-Output 'CI prerequisites accepted.'
+        }
         'Plan' {
             $inventory = @(Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json)
             $plan = @(New-CiTestPlan $inventory)
@@ -41,6 +47,7 @@ catch {
         $stage = [regex]::Match($_.Exception.Message, 'stage=[a-z-]+').Value
         Write-Host "CI_ISOLATION_REJECTED $stage"
     }
+    elseif ($Action -eq 'Prerequisites') { Write-Host 'CI_PREREQUISITES_REJECTED: both test and repository checks must succeed.' }
     else { Write-Host 'CI test plan or report verification failed. Inspect the private input locally.' }
     exit 1
 }

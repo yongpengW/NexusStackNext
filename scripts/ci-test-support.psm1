@@ -115,7 +115,7 @@ function Assert-CiIsolation([string]$RepoRoot) {
         $connection = [Data.Common.DbConnectionStringBuilder]::new()
         # PowerShell adapts this dictionary: property assignment creates a key instead of invoking the setter.
         $connection.set_ConnectionString($env:NEXUSSTACK_TEST_POSTGRES)
-        if ($connection.Count -ne 4 -or $connection['Host'] -cne '127.0.0.1' -or [string]$connection['Port'] -cne '5432' -or
+        if ($connection.get_Count() -ne 4 -or $connection['Host'] -cne '127.0.0.1' -or [string]$connection['Port'] -cne '5432' -or
             $connection['Database'] -cne 'postgres' -or $connection['Username'] -cne 'postgres') { throw 'Dependency configuration rejected.' }
         $stage = 'redis'
         if ($env:NEXUSSTACK_TEST_REDIS -cne '127.0.0.1:6379') { throw 'Cache configuration rejected.' }

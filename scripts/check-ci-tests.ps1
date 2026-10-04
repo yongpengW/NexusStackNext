@@ -14,6 +14,15 @@ function Assert-IsolationRejection([string]$Stage) {
     $output = & pwsh -NoProfile -File $tool -Action Isolation -InputPath $scratch 2>&1
     if ($LASTEXITCODE -eq 0 -or ($output -join "`n") -notmatch "CI_ISOLATION_REJECTED stage=$Stage") { throw "Expected rejection at $Stage, before contacting dependencies" }
 }
+Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', 'success') $true
+Write-Output 'PASS: successful test and repository prerequisites admit the final gate'
+foreach ($state in @('failure', 'cancelled', 'skipped', '', 'queued', 'SUCCESS')) {
+    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', $state, '-RepositoryResult', 'success') $false
+    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', $state) $false
+}
+Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success') $false
+Invoke-Probe @('-Action', 'Prerequisites', '-RepositoryResult', 'success') $false
+Write-Output 'PASS: either failed, cancelled, skipped, missing or unknown prerequisite rejects the final gate'
 $inventoryPath = Join-Path $scratch 'inventory.json'
 $planPath = Join-Path $scratch 'plan.json'
 $inventory = @(
@@ -84,12 +93,13 @@ try {
 finally { $env:GITHUB_ACTIONS = $oldCi }
 Write-Output 'PASS: local shard invocation rejected before private configuration is read'
 $savedEnvironment = @{}
-foreach ($key in @('GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'NEXUSSTACK_TEST_POSTGRES', 'NEXUSSTACK_TEST_REDIS', 'NEXUSSTACK_TEST_RABBITMQ')) {
+foreach ($key in @('GITHUB_ACTIONS', 'RUNNER_ENVIRONMENT', 'NEXUSSTACK_TEST_POSTGRES', 'NEXUSSTACK_TEST_REDIS', 'NEXUSSTACK_TEST_RABBITMQ', 'NSN_CI_POSTGRES_CONTAINER')) {
     $savedEnvironment[$key] = [Environment]::GetEnvironmentVariable($key)
 }
 try {
     $env:GITHUB_ACTIONS = 'true'
     $env:RUNNER_ENVIRONMENT = 'github-hosted'
+    $env:NSN_CI_POSTGRES_CONTAINER = $null
     $connection = [Data.Common.DbConnectionStringBuilder]::new()
     $connection['Host'] = 'example.invalid'
     $connection['Port'] = 5432
@@ -100,6 +110,13 @@ try {
     $env:NEXUSSTACK_TEST_RABBITMQ = @{ HostName = '127.0.0.1'; Port = 5672; UserName = 'nsn-ci'; Password = 'probe-only'; VirtualHost = '/' } | ConvertTo-Json -Compress
     Assert-IsolationRejection 'postgres'
     $connection['Host'] = '127.0.0.1'
+    # A dictionary key named Count must not hide provider aliases from the guard.
+    $connection['Server'] = 'example.invalid'
+    $connection['Count'] = 4
+    $env:NEXUSSTACK_TEST_POSTGRES = $connection.get_ConnectionString()
+    Assert-IsolationRejection 'postgres'
+    [void]$connection.Remove('Server')
+    [void]$connection.Remove('Count')
     $env:NEXUSSTACK_TEST_POSTGRES = $connection.ConnectionString
     $env:NEXUSSTACK_TEST_REDIS = 'example.invalid:6379'
     Assert-IsolationRejection 'redis'
