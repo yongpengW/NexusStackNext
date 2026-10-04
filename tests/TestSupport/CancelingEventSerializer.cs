@@ -1,13 +1,11 @@
 using NexusStackNext.BuildingBlocks.Application.Events;
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
-namespace NexusStackNext.IntegrationSupport;
+namespace NexusStackNext.TestSupport;
 
 /// <summary>在指定事实完成序列化后触发取消，验证提交边界。</summary>
-public sealed class CancelingEventSerializer : IIntegrationEventSerializer
+/// <param name="inner">需要正常序列化时委托的适配器，由测试装配。</param>
+public sealed class CancelingEventSerializer(IIntegrationEventSerializer inner) : IIntegrationEventSerializer
 {
-    private readonly SystemTextJsonIntegrationEventSerializer _inner = new();
-
     /// <summary>本次序列化触发的取消源；空值表示正常序列化。</summary>
     public CancellationTokenSource? CancelOnSerialize { get; set; }
 
@@ -17,11 +15,11 @@ public sealed class CancelingEventSerializer : IIntegrationEventSerializer
     /// <inheritdoc />
     public string Serialize(IntegrationEvent integrationEvent)
     {
-        var payload = _inner.Serialize(integrationEvent);
+        var payload = inner.Serialize(integrationEvent);
         if (ShouldCancel?.Invoke(integrationEvent) ?? true) { CancelOnSerialize?.Cancel(); }
         return payload;
     }
 
     /// <inheritdoc />
-    public TEvent Deserialize<TEvent>(string payload) where TEvent : IntegrationEvent => _inner.Deserialize<TEvent>(payload);
+    public TEvent Deserialize<TEvent>(string payload) where TEvent : IntegrationEvent => inner.Deserialize<TEvent>(payload);
 }

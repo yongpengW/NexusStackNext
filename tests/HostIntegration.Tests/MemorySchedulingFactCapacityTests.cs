@@ -23,7 +23,7 @@ public sealed class MemorySchedulingFactCapacityTests
     public async Task FullByteCapacity_PreservesReplayAndConflictSemantics_AndNeverCountsOrCleansOrdinaryMessages()
     {
         var clock = new MutableClock(new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero));
-        var serializer = new KnownPayloadSerializer { UseKnownPayload = value => value is PlanCommittedV1 };
+        var serializer = new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer()) { UseKnownPayload = value => value is PlanCommittedV1 };
         await using var baseApp = new CapacityApp(clock, maxPayloadBytes: 9, maxRecordPayloadBytes: 3) { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
             services.AddSingleton<IIntegrationEventSerializer>(serializer)));
@@ -77,7 +77,7 @@ public sealed class MemorySchedulingFactCapacityTests
     public async Task CancellationDuringFactBatch_PublishesNothing_AndSameStoreRetainsItsFullBudget(string operation)
     {
         var now = new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
-        var serializer = new CancelingEventSerializer();
+        var serializer = new CancelingEventSerializer(new SystemTextJsonIntegrationEventSerializer());
         var maxRecords = operation == "decision" ? 4 : operation == "update" ? 2 : 1;
         var store = new InMemoryScheduledTaskStore(serializer, new FixedClock(now), new() { MaxRecords = maxRecords });
         var plan = CreatePlan(78021, now);
@@ -142,7 +142,7 @@ public sealed class MemorySchedulingFactCapacityTests
     public async Task Utf8Limits_RejectSingleOversizeAndWholeRecoveryBatch_WithoutConsumingRemainingBytes()
     {
         var now = new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
-        var serializer = new KnownPayloadSerializer { Payload = "中文" };
+        var serializer = new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer()) { Payload = "中文" };
         var store = new InMemoryScheduledTaskStore(serializer, new FixedClock(now),
             new() { MaxRecords = 10, MaxPayloadBytes = 7, MaxRecordPayloadBytes = 3 });
         var plan = CreatePlan(78011, now);

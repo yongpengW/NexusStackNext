@@ -80,7 +80,7 @@ public sealed class MemoryIdentityFactCapacityTests
     public async Task Utf8Limits_RejectSingleAndWholeBatchOverflow_AndRetryUsesOnlyCommittedBytes()
     {
         var clock = new MutableClock(DateTimeOffset.UtcNow);
-        var serializer = new KnownPayloadSerializer { Payload = "中文" };
+        var serializer = new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer()) { Payload = "中文" };
         await using var baseApp = new CapacityApp(clock, maxRecords: 10, maxPayloadBytes: 7, maxRecordPayloadBytes: 3)
         { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>

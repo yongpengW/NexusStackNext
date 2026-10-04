@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Domain.Stored;
 using NexusStackNext.Identity.Application;
@@ -143,7 +144,7 @@ public sealed class MemoryFactCapacityConcurrencyTests
         {
             base.ConfigureWebHost(builder);
             builder.ConfigureTestServices(services => services.AddSingleton<IClock>(clock)
-                .AddSingleton<IIntegrationEventSerializer>(new KnownPayloadSerializer()));
+                .AddSingleton<IIntegrationEventSerializer>(new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer())));
         }
     }
 }

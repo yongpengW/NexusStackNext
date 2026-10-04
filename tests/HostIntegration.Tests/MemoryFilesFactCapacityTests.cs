@@ -22,7 +22,7 @@ public sealed class MemoryFilesFactCapacityTests
     public async Task Utf8Limits_AdmitOnlyWholeBatches_AndFailedBatchesLeaveTheFullRemainder()
     {
         var now = DateTimeOffset.UtcNow;
-        var serializer = new KnownPayloadSerializer { Payload = "中文" };
+        var serializer = new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer()) { Payload = "中文" };
         var files = new InMemoryStoredFileRepository(serializer, new FixedClock(now),
             new() { MaxRecords = 10, MaxPayloadBytes = 7, MaxRecordPayloadBytes = 3 });
         var first = NewFile(99611, now);

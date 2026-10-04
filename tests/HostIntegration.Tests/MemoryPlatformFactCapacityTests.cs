@@ -23,7 +23,7 @@ public sealed class MemoryPlatformFactCapacityTests
     public async Task FactConstructionFailure_PreservesStateAndCapacity_AndSameStoreCanRetry(bool updating)
     {
         var clock = new FixedClock(DateTimeOffset.UtcNow);
-        var serializer = new RejectingEventSerializer();
+        var serializer = new RejectingEventSerializer(new SystemTextJsonIntegrationEventSerializer());
         var repository = new InMemorySettingRepository(serializer, new() { MaxRecords = 2 });
         var store = new SettingStore(repository, new SequentialIdGenerator(1000), clock, new AnonymousCurrentUser());
         var key = SettingKey.Create("capacity.failure").Value;
@@ -47,7 +47,7 @@ public sealed class MemoryPlatformFactCapacityTests
     public async Task Utf8Limits_RejectOversizedFactWithoutUsingBudget_AndKeepTwoExactThreeByteFacts()
     {
         var clock = new FixedClock(DateTimeOffset.UtcNow);
-        var serializer = new KnownPayloadSerializer { Payload = "中文" };
+        var serializer = new KnownPayloadSerializer(new SystemTextJsonIntegrationEventSerializer()) { Payload = "中文" };
         var repository = new InMemorySettingRepository(serializer, new() { MaxRecords = 10, MaxPayloadBytes = 6, MaxRecordPayloadBytes = 3 });
         var store = new SettingStore(repository, new SequentialIdGenerator(1000), clock, new AnonymousCurrentUser());
         var first = SettingKey.Create("capacity.utf8first").Value;
@@ -76,7 +76,7 @@ public sealed class MemoryPlatformFactCapacityTests
     public async Task CancellationDuringFactConstruction_PublishesNeitherBusinessNorCapacity_AndCanRetry(bool updating)
     {
         var clock = new FixedClock(DateTimeOffset.UtcNow);
-        var serializer = new CancelingEventSerializer();
+        var serializer = new CancelingEventSerializer(new SystemTextJsonIntegrationEventSerializer());
         var repository = new InMemorySettingRepository(serializer, new() { MaxRecords = 2 });
         var store = new SettingStore(repository, new SequentialIdGenerator(1000), clock, new AnonymousCurrentUser());
         var key = SettingKey.Create("capacity.cancel").Value;

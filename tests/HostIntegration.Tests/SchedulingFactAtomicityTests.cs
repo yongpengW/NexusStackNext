@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Contracts;
@@ -18,7 +19,7 @@ public sealed class SchedulingFactAtomicityTests
     [Fact]
     public async Task MemoryFactFailure_RollsBackCreationMaintenanceAndDecision_AndSameStoreCanRetry()
     {
-        var serializer = new RejectingEventSerializer();
+        var serializer = new RejectingEventSerializer(new SystemTextJsonIntegrationEventSerializer());
         var store = new InMemoryScheduledTaskStore(serializer, new FixedClock(Now), new() { MaxRecords = 4 });
         await AssertAtomicityAsync<InvalidOperationException>(store, store, operation =>
         {

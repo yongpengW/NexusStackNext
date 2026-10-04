@@ -4,6 +4,7 @@ using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.TestSupport;
 using Npgsql;
 
 namespace NexusStackNext.Identity.IntegrationTests;

@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
-    <ProjectReference Include="../../src/Services/Identity/NexusStackNext.Identity.Application/NexusStackNext.Identity.Application.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!--
       xunit 是**公开依赖**，不是 PrivateAssets：PostgresFactAttribute 继承 FactAttribute，

@@ -1,13 +1,11 @@
 using NexusStackNext.BuildingBlocks.Application.Events;
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
-namespace NexusStackNext.IntegrationSupport;
+namespace NexusStackNext.TestSupport;
 
 /// <summary>为载荷字节边界测试返回已知文本，不从生产计量实现推导期望值。</summary>
-public sealed class KnownPayloadSerializer : IIntegrationEventSerializer
+/// <param name="inner">需要正常序列化时委托的适配器，由测试装配。</param>
+public sealed class KnownPayloadSerializer(IIntegrationEventSerializer inner) : IIntegrationEventSerializer
 {
-    private readonly SystemTextJsonIntegrationEventSerializer _inner = new();
-
     /// <summary>下一次序列化返回的已知文本。</summary>
     public string Payload { get; set; } = "中";
 
@@ -16,8 +14,8 @@ public sealed class KnownPayloadSerializer : IIntegrationEventSerializer
 
     /// <inheritdoc />
     public string Serialize(IntegrationEvent integrationEvent)
-        => UseKnownPayload?.Invoke(integrationEvent) is false ? _inner.Serialize(integrationEvent) : Payload;
+        => UseKnownPayload?.Invoke(integrationEvent) is false ? inner.Serialize(integrationEvent) : Payload;
 
     /// <inheritdoc />
-    public TEvent Deserialize<TEvent>(string payload) where TEvent : IntegrationEvent => _inner.Deserialize<TEvent>(payload);
+    public TEvent Deserialize<TEvent>(string payload) where TEvent : IntegrationEvent => inner.Deserialize<TEvent>(payload);
 }

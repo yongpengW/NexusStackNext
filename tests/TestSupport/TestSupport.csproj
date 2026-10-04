@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../src/Services/Identity/NexusStackNext.Identity.Application/NexusStackNext.Identity.Application.csproj" />
   </ItemGroup>
 
   <!--
