@@ -56,6 +56,40 @@ PR、dev/main push 和手动触发均保留，当前没有路径过滤，也没�
 票据依赖读取最多四个并发请求，完整分页；请求失败或响应无效时门禁失败，不能静默跳过该票。
 这部分并行只访问 GitHub API，不改变数据库测试的并发度。
 
+## 票据 API 的有界恢复
+
+GitHub 只读门禁统一通过 `scripts/github-read.psm1` 发起 GET；issue 列表、父子关系、
+依赖和标签保持完整分页。每次 gh 调用默认最多 20 秒，所有读取共用一个从门禁启动计时的
+120 秒预算，依赖仍最多四并发。可通过 `check-issues.ps1` 的 `-RequestTimeoutSeconds`
+和 `-TotalTimeoutSeconds` 指定更小的验证预算；参数范围分别为 1–60 秒和 1–300 秒。
+
+只有 gh stderr 上明确的 HTTP 502/503/504 诊断会重试，每个读取最多三次，间隔 250/500 毫秒；
+等待也占用总预算。永久错误、不可识别错误、超时、无效 JSON 或缺少分页结构均失败。
+进程等待和 stdout / stderr 排空共用同一个单次截止时间，不能因主进程先退出而重新计时。
+超时且调用进程仍存活时终止其进程树，最多另用五秒确认退出；
+主进程已经退出但后代持有输出管道时仍按预算拒绝，不等待管道关闭才报告失败。
+不会输出原始 API 错误或响应内容，也不按进程名称清理无法证明归属的后代。
+预算是 API 读取预算，进程启动、终止确认和本地验证另有少量开销，不代表整个 CI 的耗时上限。
+HTTP 429 不自动重试，避免忽略限流策略。
+
+当前 gh 2.102.0 的 [API 请求源码](https://github.com/cli/cli/blob/v2.102.0/pkg/cmd/api/http.go)
+和其所用 [go-gh 2.16.1 HTTP 客户端](https://github.com/cli/go-gh/blob/v2.16.1/pkg/api/http_client.go)
+没有内置 503 重试；这项策略没有叠加另一套应用层重试。
+后续 gh 版本变化时仍由外层进程时限限制整次分页调用，避免新增内部等待突破预算。
+
+`check-issue-fetching.ps1` 通过真实脚本 CLI 和隔离 gh 适配器验证四条读取路径恢复、
+持续故障、永久错误、stdout 假诊断、异常分页、脱敏、单次超时与累计预算。
+超时探针必须有对应目标路由的 PID / 启动时刻标记，并证明原进程已退出；
+最后的标签请求另验证主进程退出而后代持管道的情况，避免后续请求掩盖超时缺口。
+fixture 的进程身份由 PID 与启动标记组成；Windows 使用启动 UTC ticks，Linux 使用
+`/proc/<pid>/stat` 的内核启动计数。Linux `Process.StartTime` 的 UTC 投影包含按进程缓存的
+[开机时间估算](https://github.com/dotnet/runtime/blob/v10.0.0/src/native/libs/System.Native/pal_time.c)，
+不能在不同进程之间要求该投影逐 tick 相同；内核字段语义见
+[proc 文档](https://docs.kernel.org/filesystems/proc.html)。这层只用于探针归属验证，不改变真实测试互斥。
+只运行部分探针可在 PowerShell 中使用 `./scripts/check-issue-fetching.ps1 -Modes @('request-timeout')`；
+CI 默认运行全部探针，未知探针名称失败。本轮实现和 Linux 资格验证由
+[有界恢复票据](https://github.com/yongpengW/NexusStackNext/issues/82)记录，不能仅凭本节声明通过。
+
 ## 验证
 
 `pwsh -File scripts/check-ci-tests.ps1` 验证脚本 CLI 的分组、坏报告拒绝、环境保护和脱敏，
