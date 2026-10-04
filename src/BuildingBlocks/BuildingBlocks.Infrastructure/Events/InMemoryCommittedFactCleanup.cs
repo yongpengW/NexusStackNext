@@ -9,8 +9,9 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.Events;
 /// <param name="eventName">模块声明的事实契约。</param>
 /// <param name="options">本上下文清理策略。</param>
 /// <param name="clock">服务端时钟。</param>
+/// <param name="capacity">所属空存储初始化后随提交维护的账本；独立清理适配器可省略。</param>
 public sealed class InMemoryCommittedFactCleanup(Lock gate, Func<Dictionary<Guid, OutboxEntry>> entries,
-    string eventName, CommittedFactCleanupOptions options, IClock clock) : ICommittedFactCleanup
+    string eventName, CommittedFactCleanupOptions options, IClock clock, InMemoryCommittedFactCapacity? capacity = null) : ICommittedFactCleanup
 {
     /// <inheritdoc />
     public Task<int> CleanupAsync(CancellationToken cancellationToken = default)
@@ -30,9 +31,11 @@ public sealed class InMemoryCommittedFactCleanup(Lock gate, Func<Dictionary<Guid
             var current = entries();
             var cutoff = clock.UtcNow.Subtract(options.DeliveredRetention);
             var candidates = current.Values.Where(entry => entry.EventName == eventName && entry.DeliveredAt <= cutoff && entry.DeadLetteredAt is null)
-                .OrderBy(entry => entry.DeliveredAt).ThenBy(entry => entry.Id).Take(options.BatchSize).Select(entry => entry.Id).ToArray();
+                .OrderBy(entry => entry.DeliveredAt).ThenBy(entry => entry.Id).Take(options.BatchSize).ToArray();
             cancellationToken.ThrowIfCancellationRequested();
-            foreach (var id in candidates) { current.Remove(id); }
+            void Remove() { foreach (var entry in candidates) { current.Remove(entry.Id); } }
+            if (capacity is null) { Remove(); }
+            else { capacity.Remove(candidates, Remove, cancellationToken); }
             return Task.FromResult(candidates.Length);
         }
         finally { gate.Exit(); }

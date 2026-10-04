@@ -31,7 +31,7 @@ HealthCheckService 的 `<context>-fact-cleanup` 注册项提供 `enabled`、`cle
 
 六个上下文的 `CommittedFactCleanup` 迁移增加清理部分索引，先执行各自已有的独立迁移入口。
 调整来源保留配置会作用于已有已确认副本，不能把它理解为中央事实的固定保留承诺。
-Platform / Identity PostgreSQL 已有事实数量/字节容量准入；其他来源、Memory 准入、专门恢复及中央归档仍待完成。
+六个 PostgreSQL 事实来源已有数量/字节容量准入，四个平台 Memory 的对等实现由 #80 验收；专门恢复及中央归档仍待完成。
 本项不表示整个治理已交付。
 设计与证据见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
@@ -55,7 +55,25 @@ Platform / Identity 通过 `SharedFactCapacity` 向前迁移接入冻结的共�
 Files 的 `FileFactCapacity` 迁移按既有事实回填独立额度账本。一次上传的两条事实整批准入，
 不足时返回 503 / `files.audit_capacity.exhausted`。删除申请被拒绝时保留可读文件；受理后清除完成事实
 无法提交时仍是可恢复的 202 待办。存储端口仅翻译精确的容量错误，其他故障继续按原异常传播。
-共用规则与迁移冻结约束见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)；其余上下文和 Memory 容量尚待补齐。
+共用规则与迁移冻结约束见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)；Scheduling、Costing、Pricing 的 PostgreSQL 验收见[覆盖矩阵](committed-audit-coverage.md)。
+
+### 显式开发模式的 Memory 事实容量
+
+Platform、Identity、Files、Scheduling 分别从 `<Context>:AuditDelivery:MemoryCapacity` 装配自己的策略。
+`MaxRecords` 默认 100000，`MaxPayloadBytes` 默认 268435456，`MaxRecordPayloadBytes` 默认 16384，
+对应保留条数、正文 UTF-8 总字节和单条字节。三个值必须为正，单条不得超过总量；非法配置拒绝宿主装配。
+这些是内存来源的启动配置，不覆盖 PostgreSQL 中的持久策略，也不提供在线修改入口。
+
+四个实际消费者共用 `InMemoryCommittedFactCapacity` 计量实现，各存储独占实例，并与其业务发布使用同一写锁。
+批次全部构造完成后一次准入；业务发布成功才增加占用，过期确认副本实际删除才减少占用。
+计量只读取当前写入或清理批次的载荷，不随保留消息数量重复扫描历史正文。
+这不改变 Identity 原有工作副本和 Outbox 快照复制，也不宣称所有保存操作都是常数时间。
+其他消息、投递确认、空操作和重放不消耗新事实额度；待投递和死信持续占用，不能靠清理逃逸。
+
+容量拒绝沿用所属上下文的 HTTP 503，撤销整批业务、行审计、来源关系与新消息；
+Identity 失败时不失效权限缓存，错误密码计数也只有准入后才保存。Scheduling 决定拒绝报告 failed。
+既有清理释放额度后可重试；未投递 Memory 数据仍会随进程结束丢失。
+真实 broker 旅程仅证明已交付消息在来源结束后仍可被中央接收。完整发布资格及后续治理由 #80 / #64 / #60 跟踪。
 
 ### 中央存储与消息摄入
 

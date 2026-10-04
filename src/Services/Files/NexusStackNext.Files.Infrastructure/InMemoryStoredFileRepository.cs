@@ -6,6 +6,7 @@ using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Files.Application;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.Files.Domain.Stored;
 
 namespace NexusStackNext.Files.Infrastructure;
@@ -22,9 +23,10 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     /// <summary>创建独立的开发存储；宿主使用共享状态和每次调用的身份。</summary>
     /// <param name="serializer">事实消息序列化。</param>
     /// <param name="clock">行审计及事实时钟。</param>
-    public InMemoryStoredFileRepository(IIntegrationEventSerializer? serializer = null, IClock? clock = null)
+    /// <param name="capacity">显式开发存储的事实保留上限。</param>
+    public InMemoryStoredFileRepository(IIntegrationEventSerializer? serializer = null, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null)
     {
-        _state = new FilesMemoryState();
+        _state = new FilesMemoryState(capacity);
         _clock = clock ?? new SystemClock();
         _facts = new StoredFileCommittedFacts(_clock, serializer ?? new SystemTextJsonIntegrationEventSerializer());
     }
@@ -107,11 +109,13 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
             var facts = _facts.Create(current, file);
             var snapshot = file.Snapshot();
             Stamp(snapshot, current);
-            cancellationToken.ThrowIfCancellationRequested();
-            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
-            if (file.IsDeleted && current?.IsDeleted != true) { _state.DeletionOrigins[file.Id.Value] = deletionOrigin; }
-            _state.Files[file.Id.Value] = snapshot;
-            CopyAudit(snapshot, file);
+            if (!_state.Capacity.TryCommit(facts, () =>
+            {
+                foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+                if (file.IsDeleted && current?.IsDeleted != true) { _state.DeletionOrigins[file.Id.Value] = deletionOrigin; }
+                _state.Files[file.Id.Value] = snapshot;
+                CopyAudit(snapshot, file);
+            }, cancellationToken)) { throw new FileAuditCapacityException(); }
         }
         return Task.CompletedTask;
     }
@@ -190,6 +194,12 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
 
 internal sealed class FilesMemoryState
 {
+    internal FilesMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    {
+        Capacity = new(Writes, StoredFileCommittedV1.Name, capacity);
+    }
+
+    internal InMemoryCommittedFactCapacity Capacity { get; }
     internal Dictionary<long, StoredFile> Files { get; } = [];
     internal Dictionary<long, ExecutionOrigin?> DeletionOrigins { get; } = [];
     internal HashSet<string> Retired { get; } = new(StringComparer.Ordinal);
@@ -202,11 +212,12 @@ public static class FilesMemoryServiceCollectionExtensions
 {
     /// <summary>共享元数据与事实状态，每次调用独立解析当前身份和执行来源。</summary>
     /// <param name="services">服务容器。</param>
+    /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <returns>原服务容器。</returns>
-    public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services)
+    public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton<FilesMemoryState>();
+        services.AddSingleton(new FilesMemoryState(capacity));
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddScoped(provider => new InMemoryStoredFileRepository(provider.GetRequiredService<FilesMemoryState>(),
             provider.GetRequiredService<StoredFileCommittedFacts>(), provider.GetRequiredService<IClock>(),

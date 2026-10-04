@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
@@ -148,12 +149,12 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     /// <para><b>显式注册，不做程序集扫描</b>（架构不变量 8）。</para>
     /// </summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
-    public static IServiceCollection AddIdentityInMemoryStorage(this IServiceCollection services)
+    public static IServiceCollection AddIdentityInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-
-        services.AddSingleton<IdentityMemoryState>();
+        services.AddSingleton(new IdentityMemoryState(capacity));
         services.AddScoped<IdentityMemorySession>();
         services.AddScoped<IdentityMemoryFacts>();
         services.AddKeyedSingleton<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey,

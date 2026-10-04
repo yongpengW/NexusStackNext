@@ -17,6 +17,6 @@ public static class IdentityFactCleanupServices
         {
             var state = provider.GetRequiredService<IdentityMemoryState>();
             return new InMemoryCommittedFactCleanup(state.Gate, () => state.Outbox, IdentityEntityCommittedV1.Name,
-                policy, provider.GetRequiredService<IClock>());
+                policy, provider.GetRequiredService<IClock>(), state.Capacity);
         }, options);
 }

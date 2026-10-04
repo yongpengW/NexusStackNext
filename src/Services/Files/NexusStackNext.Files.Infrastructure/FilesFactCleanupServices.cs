@@ -17,6 +17,6 @@ public static class FilesFactCleanupServices
         {
             var state = provider.GetRequiredService<FilesMemoryState>();
             return new InMemoryCommittedFactCleanup(state.Writes, () => state.Outbox, StoredFileCommittedV1.Name,
-                policy, provider.GetRequiredService<IClock>());
+                policy, provider.GetRequiredService<IClock>(), state.Capacity);
         }, options);
 }

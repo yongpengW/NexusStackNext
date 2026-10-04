@@ -38,7 +38,7 @@ public static class PlatformModule
             {
                 throw new InvalidOperationException("Platform:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddPlatformInMemoryStorage();
+            services.AddPlatformInMemoryStorage(configuration.GetSection("Platform:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
             services.AddPlatformMemoryFactCleanup(configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))

@@ -1,7 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
-using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Contracts;
@@ -19,13 +18,16 @@ public sealed class SchedulingFactAtomicityTests
     [Fact]
     public async Task MemoryFactFailure_RollsBackCreationMaintenanceAndDecision_AndSameStoreCanRetry()
     {
-        var serializer = new RefusingFactSerializer();
-        var store = new InMemoryScheduledTaskStore(serializer, new FixedClock(Now));
+        var serializer = new RejectingEventSerializer();
+        var store = new InMemoryScheduledTaskStore(serializer, new FixedClock(Now), new() { MaxRecords = 4 });
         await AssertAtomicityAsync<InvalidOperationException>(store, store, operation =>
         {
-            serializer.RejectedOperation = operation;
+            serializer.ShouldReject = value => value is PlanCommittedV1 fact && fact.Operation == operation;
             return Task.CompletedTask;
         });
+        var excess = ScheduledTask.Create(new ScheduledTaskId(78002), TaskCode.Create("atomic-excess").Value, TimeSpan.FromHours(1), Now,
+            ScheduleTarget.Create("costing.recalculate", Guid.NewGuid()).Value, "42").Value;
+        Assert.Equal(TaskRegistry.AuditCapacityExceeded, (await store.AddAsync(excess)).Error);
     }
 
     [PostgresFact]
@@ -101,12 +103,4 @@ public sealed class SchedulingFactAtomicityTests
         Assert.True((await store.RetryOccurrenceAsync(created.Id, Now)).IsFailure);
     }
 
-    private sealed class RefusingFactSerializer : IIntegrationEventSerializer
-    {
-        private readonly SystemTextJsonIntegrationEventSerializer _inner = new();
-        public string? RejectedOperation { get; set; }
-        public string Serialize(IntegrationEvent integrationEvent) => integrationEvent is PlanCommittedV1 fact && fact.Operation == RejectedOperation
-            ? throw new InvalidOperationException("测试事实序列化故障。") : _inner.Serialize(integrationEvent);
-        public TEvent Deserialize<TEvent>(string payload) where TEvent : IntegrationEvent => _inner.Deserialize<TEvent>(payload);
-    }
 }

@@ -1,8 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
-using NexusStackNext.BuildingBlocks.Application.Authorization;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
-using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.IntegrationSupport;
@@ -106,11 +104,4 @@ public sealed class IdentityFactCapacityTests(IdentityDatabaseFixture fixture)
         Assert.Equal(1, await command.ExecuteNonQueryAsync());
     }
 
-    private sealed class RecordingPermissionCache : IPermissionCache
-    {
-        public int Invalidations { get; private set; }
-        public void Invalidate() => Invalidations++;
-        public Task<Result<PermissionKeySet>> GetAsync(UserId userId, CancellationToken cancellationToken = default)
-            => throw new InvalidOperationException("This command does not read cached permissions.");
-    }
 }
