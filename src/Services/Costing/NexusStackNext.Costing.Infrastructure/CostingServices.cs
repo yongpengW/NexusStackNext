@@ -11,7 +11,6 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Domain;
 using NexusStackNext.Scheduling.Contracts;
-using Npgsql;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
@@ -132,10 +131,10 @@ internal sealed class CostingCommands(CostingDbContext database, IExecutionConte
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: "P0001", ConstraintName: "costing_fact_capacity_exhausted" })
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, "costing", CostingErrors.AuditCapacityExceeded) is { } reason)
         {
             database.ChangeTracker.Clear();
-            return Result.Failure<CostCalculationStatus>(CostingErrors.AuditCapacityExceeded);
+            return Result.Failure<CostCalculationStatus>(reason);
         }
         return Result.Success(task.ToStatus());
     }

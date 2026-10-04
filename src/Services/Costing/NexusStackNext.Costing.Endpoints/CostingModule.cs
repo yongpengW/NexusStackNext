@@ -32,6 +32,8 @@ public static class CostingModule
         ArgumentNullException.ThrowIfNull(configuration);
         var connection = configuration.GetConnectionString("Costing");
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Costing，使用独立业务数据库。"); }
+        var capacityWrite = configuration.GetSection("Costing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+        connection = capacityWrite.ConfigureConnection(connection);
         services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>());
         services.AddCostingFactCapacityReader(
             configuration.GetSection("Costing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>());
@@ -134,7 +136,7 @@ public static class CostingModule
         statusCode: error.Code switch
         {
             "costing.not_found" => StatusCodes.Status404NotFound,
-            "costing.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "costing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

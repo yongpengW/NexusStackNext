@@ -70,7 +70,8 @@ public static class IdentityModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Identity；开发测试可显式选择 Identity:Storage:Provider=Memory。");
             }
 
-            services.AddIdentityEntityFrameworkStorage(connection);
+            var capacityWrite = configuration.GetSection("Identity:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+            services.AddIdentityEntityFrameworkStorage(capacityWrite.ConfigureConnection(connection));
             services.AddCommittedFactCapacityReader<IdentityDbContext>("identity", capacityRead);
             services.AddIdentityDatabaseChecks();
             services.AddCommittedFactCleanup<IdentityDbContext>("identity", IdentityEntityCommittedV1.Name,
@@ -340,7 +341,7 @@ public static class IdentityModule
     private static IResult Failure(Error error) => Results.Problem(
         statusCode: error.Code switch
         {
-            "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,

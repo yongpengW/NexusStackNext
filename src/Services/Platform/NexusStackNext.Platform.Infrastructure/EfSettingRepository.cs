@@ -50,13 +50,10 @@ internal sealed class EfSettingRepository(PlatformDbContext context, IIntegratio
             context.ChangeTracker.Clear();
             return Result.Failure(SettingStore.Conflict);
         }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException
-        {
-            SqlState: "P0001", ConstraintName: "platform_fact_capacity_exhausted",
-        })
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, PlatformDbContext.SchemaName, SettingStore.AuditCapacityExhausted) is { } reason)
         {
             context.ChangeTracker.Clear();
-            return Result.Failure(SettingStore.AuditCapacityExhausted);
+            return Result.Failure(reason);
         }
         catch (DbUpdateException error) when (error.InnerException is PostgresException
         {

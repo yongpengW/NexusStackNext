@@ -132,9 +132,9 @@ public sealed class FileService(
                 return Result.Success(file);
             }
         }
-        catch (FileAuditCapacityException)
+        catch (FileAuditCapacityException error)
         {
-            return Result.Failure<StoredFile>(FileAuditCapacityException.Error);
+            return Result.Failure<StoredFile>(error.Reason);
         }
         finally
         {
@@ -233,7 +233,7 @@ public sealed class FileService(
             var originalVersion = file.Version;
             file.Delete();
             try { await files.SaveAsync(file, originalVersion, execution?.Capture(), cancellationToken).ConfigureAwait(false); }
-            catch (FileAuditCapacityException) { return Result.Failure<bool>(FileAuditCapacityException.Error); }
+            catch (FileAuditCapacityException error) { return Result.Failure<bool>(error.Reason); }
             catch (FileMetadataConflictException)
             {
                 // 归属不可变，删除也不能撤销；另一个请求已推进状态时直接观察其持久结果。

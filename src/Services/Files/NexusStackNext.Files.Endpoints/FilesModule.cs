@@ -72,7 +72,8 @@ public static class FilesModule
             {
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Files；开发测试可显式选择 Files:Storage:Provider=Memory。");
             }
-            services.AddFilesPostgresMetadata(connection);
+            var capacityWrite = configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+            services.AddFilesPostgresMetadata(capacityWrite.ConfigureConnection(connection));
             services.AddCommittedFactCapacityReader<FilesDbContext>("files", capacityRead);
             services.AddCommittedFactCleanup<FilesDbContext>("files", StoredFileCommittedV1.Name,
                 configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -241,7 +242,7 @@ public static class FilesModule
         {
             "files.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
-            "files.audit_capacity.exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "files.audit_capacity.exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status400BadRequest,

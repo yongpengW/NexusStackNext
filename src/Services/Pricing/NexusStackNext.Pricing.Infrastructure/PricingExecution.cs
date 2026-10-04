@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Domain;
@@ -70,11 +71,11 @@ internal sealed class PricingExecution(PricingDbContext database, PricingTaskOpt
                 cancellationToken).ConfigureAwait(false);
             return Result.Success(result.Committed);
         }
-        catch (DbUpdateException error) when (PricingFactCapacityFailure.IsExhausted(error))
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, "pricing", PricingErrors.AuditCapacityExceeded) is { } reason)
         {
             // 观察适配器已记录失败；事务已回滚，容量拒绝不代表租约丢失。
             database.ChangeTracker.Clear();
-            return Result.Failure<bool>(PricingErrors.AuditCapacityExceeded);
+            return Result.Failure<bool>(reason);
         }
     }
 }

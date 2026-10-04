@@ -4,11 +4,11 @@ using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Costing.Application;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Costing.Domain;
-using Npgsql;
 
 namespace NexusStackNext.Costing.Infrastructure;
 
@@ -88,11 +88,11 @@ internal sealed class CostingExecution(CostingDbContext database, CostingTaskOpt
                 cancellationToken).ConfigureAwait(false);
             return Result.Success(result.Committed);
         }
-        catch (DbUpdateException error) when (error.InnerException is PostgresException { SqlState: "P0001", ConstraintName: "costing_fact_capacity_exhausted" })
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, "costing", CostingErrors.AuditCapacityExceeded) is { } reason)
         {
             // 观察适配器已记录失败；业务事务已回滚，不能把准入拒绝解释成租约丢失。
             database.ChangeTracker.Clear();
-            return Result.Failure<bool>(CostingErrors.AuditCapacityExceeded);
+            return Result.Failure<bool>(reason);
         }
     }
 }

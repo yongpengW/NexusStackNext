@@ -10,8 +10,10 @@ namespace NexusStackNext.Scheduling.Application.Tests;
 
 public sealed class ScheduleCapacityFailureTests
 {
-    [Fact]
-    public async Task CapacityError_WithDifferentDiagnosticText_IsStillReportedAsFailed()
+    [Theory]
+    [InlineData("scheduling.audit_capacity_exhausted")]
+    [InlineData("audit_capacity.busy")]
+    public async Task CapacityError_WithDifferentDiagnosticText_IsStillReportedAsFailed(string code)
     {
         var now = new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
         var clock = new FixedClock(now);
@@ -19,7 +21,7 @@ public sealed class ScheduleCapacityFailureTests
         var plan = ScheduledTask.Create(new ScheduledTaskId(1), TaskCode.Create("capacity-rejection").Value,
             TimeSpan.FromHours(1), now, ScheduleTarget.Create("costing.recalculate", Guid.NewGuid()).Value, "42").Value;
         Assert.True((await backing.AddAsync(plan)).IsSuccess);
-        var runner = new ScheduleRunner(new CapacityRejectingStore(backing), clock, new CronScheduleCalendar());
+        var runner = new ScheduleRunner(new CapacityRejectingStore(backing, code), clock, new CronScheduleCalendar());
 
         var result = await runner.RunOnceAsync();
 
@@ -37,11 +39,11 @@ public sealed class ScheduleCapacityFailureTests
     }
 
     // 只替换公开存储端口的容量结论，其余读写由真实 Memory 适配器完成。
-    private sealed class CapacityRejectingStore(IScheduledTaskStore backing) : IScheduledTaskStore
+    private sealed class CapacityRejectingStore(IScheduledTaskStore backing, string code) : IScheduledTaskStore
     {
         public Task<Result> RecordDecisionAsync(ScheduledTask task, long expectedVersion, ScheduleDecision decision,
             ScheduleOccurrence? occurrence, CancellationToken cancellationToken = default) => Task.FromResult(Result.Failure(
-                new Error("scheduling.audit_capacity_exhausted", "Another storage adapter's capacity diagnostic.")));
+                new Error(code, "Another storage adapter's capacity diagnostic.")));
 
         public Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default)
             => backing.ReadDueAsync(now, batchSize, cancellationToken);

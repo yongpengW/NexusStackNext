@@ -8,7 +8,6 @@ using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Tokens;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
-using Npgsql;
 
 namespace NexusStackNext.Identity.Infrastructure.Persistence;
 
@@ -33,20 +32,17 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         try { return base.SaveChanges(acceptAllChangesOnSuccess); }
-        catch (DbUpdateException error) when (IsFactCapacityFailure(error)) { throw new IdentityAuditCapacityException(); }
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, SchemaName, IdentityAuditCapacityException.Exhausted) is { } reason)
+        { throw new IdentityAuditCapacityException(reason); }
     }
 
     /// <inheritdoc />
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
         try { return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken).ConfigureAwait(false); }
-        catch (DbUpdateException error) when (IsFactCapacityFailure(error)) { throw new IdentityAuditCapacityException(); }
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, SchemaName, IdentityAuditCapacityException.Exhausted) is { } reason)
+        { throw new IdentityAuditCapacityException(reason); }
     }
-
-    private static bool IsFactCapacityFailure(DbUpdateException error) => error.InnerException is PostgresException
-    {
-        SqlState: "P0001", ConstraintName: "identity_fact_capacity_exhausted",
-    };
 
     /// <summary>用户。</summary>
     public DbSet<User> Users => Set<User>();

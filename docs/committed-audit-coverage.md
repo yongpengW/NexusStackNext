@@ -23,6 +23,17 @@
 Inbox/Outbox、任务租约/尝试和消息接收凭据使用各自的生命周期证据，不对审计写入再递归生成审计。
 新增聚合必须登记事实义务或明确的例外；仅有实体行审计字段不代表完整历史已覆盖。
 
+## PostgreSQL 容量锁等待验收
+
+[#93](https://github.com/yongpengW/NexusStackNext/issues/93) 补充六个来源的 V2 锁等待协议与安全 `audit_capacity.busy`，不修改历史迁移或容量策略。
+`FactCapacityAdmissionTests` 覆盖四个平台的回滚/恢复、Identity 提交后权限失效、Files 已受理删除恢复、调度决定/发生原子性、取消及非所属错误不误判。
+`BusinessFactCapacityAdmissionTests` 覆盖 Costing/Pricing 的人工输入和同租约结果恢复，以及 Pricing 消费不确认、整批回滚、费率和重复请求语义。
+`PricingCacheTests.LedgerContention_PreservesHotCacheAndLeavesNoInvalidationToReplay_AfterRestart` 使用真实 Redis 和进程重启，再使所属临时业务库不可用，验证拒绝没有留下失效待办；成功提交后价格缓存更新。
+`FactCapacityWaitProtocolTests` 验证行锁/表锁、调用者更短锁预算、保存点后的整批回滚、原会话设置与普通消息隔离，以及已确认副本清理原子性。
+`FactCapacityWaitMigrationTests` 在真实 PostgreSQL 上执行六个公开迁移的 Down/Up 操作，验证额度、UTF-8、保留事实和不可变保护；`FactCapacityWriteConfigurationTests` 验证宿主拒绝无效预算、接受上下界。
+`ScheduleCapacityFailureTests` 验证额度耗尽和锁争用均按稳定错误码识别；即使存储适配器使用不同诊断文字，也不能把失败计为合法跳过或追加退避事实。
+本轮合并及完整验证证据以 #93 为准；Memory 提交锁争用、策略管理审计、专用恢复、中央保留/归档与遗漏防线仍未完成。
+
 ## 必须分开的结果
 
 - 操作被拒绝不代表没有状态提交：错误密码可能提交失败计数或锁定。事实描述该状态变化，不能写成登录成功。

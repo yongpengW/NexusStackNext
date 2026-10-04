@@ -52,7 +52,8 @@ public static class PlatformModule
             {
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Platform；开发测试可显式选择 Platform:Storage:Provider=Memory。");
             }
-            services.AddPlatformPostgresStorage(connection);
+            var capacityWrite = configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+            services.AddPlatformPostgresStorage(capacityWrite.ConfigureConnection(connection));
             services.AddCommittedFactCapacityReader<PlatformDbContext>("platform", capacityRead);
             services.AddCommittedFactCleanup<PlatformDbContext>("platform", SettingCommittedV1.Name,
                 configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -179,7 +180,8 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code ? StatusCodes.Status503ServiceUnavailable
+        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code
+            || error.Code == CommittedFactCapacityErrors.Busy.Code ? StatusCodes.Status503ServiceUnavailable
             : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

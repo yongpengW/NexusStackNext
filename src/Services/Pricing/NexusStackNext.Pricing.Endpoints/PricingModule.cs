@@ -33,6 +33,8 @@ public static class PricingModule
         var connection = configuration.GetConnectionString("Pricing");
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Pricing，使用独立业务数据库。"); }
         var cache = configuration.GetSection("Pricing:Cache").Get<PricingCacheOptions>();
+        var capacityWrite = configuration.GetSection("Pricing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+        connection = capacityWrite.ConfigureConnection(connection);
         services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache);
         services.AddPricingFactCapacityReader(
             configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>());
@@ -123,7 +125,7 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
