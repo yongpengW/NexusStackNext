@@ -4,8 +4,9 @@ $ErrorActionPreference = 'Stop'
 # Only read-only tracker requests belong here. Never emit gh output on failure.
 function Invoke-GitHubRead([string]$GhPath, [string]$Route, [long]$Deadline, [int]$RequestTimeoutSeconds) {
     for ($attempt = 1; $attempt -le 3; $attempt++) {
-        $remaining = ($Deadline - [Diagnostics.Stopwatch]::GetTimestamp()) / [Diagnostics.Stopwatch]::Frequency
-        if ($remaining -le 0) { throw 'GitHub read budget exhausted.' }
+        $now = [Diagnostics.Stopwatch]::GetTimestamp()
+        if ($Deadline -le $now) { throw 'GitHub read budget exhausted.' }
+        $attemptDeadline = [math]::Min($Deadline, $now + [long]($RequestTimeoutSeconds * [Diagnostics.Stopwatch]::Frequency))
         $start = [Diagnostics.ProcessStartInfo]::new()
         $start.UseShellExecute = $false
         $start.CreateNoWindow = $true
@@ -22,11 +23,19 @@ function Invoke-GitHubRead([string]$GhPath, [string]$Route, [long]$Deadline, [in
             if (-not $process.Start()) { throw 'GitHub read could not start.' }
             $stdout = $process.StandardOutput.ReadToEndAsync()
             $stderr = $process.StandardError.ReadToEndAsync()
-            $milliseconds = [int][math]::Max(1, [math]::Floor([math]::Min($remaining, $RequestTimeoutSeconds) * 1000))
-            if (-not $process.WaitForExit($milliseconds)) {
-                $process.Kill($true)
-                if (-not $process.WaitForExit(5000)) { throw 'GitHub read termination failed.' }
+            $milliseconds = Get-ReadWaitMilliseconds $attemptDeadline
+            if ($milliseconds -le 0 -or -not $process.WaitForExit($milliseconds)) {
+                if (-not $process.HasExited) {
+                    $process.Kill($true)
+                    if (-not $process.WaitForExit(5000)) { throw 'GitHub read termination failed.' }
+                }
                 throw 'GitHub read timed out.'
+            }
+            # A finished parent may leave inherited pipes open. Draining is part of the same attempt.
+            $milliseconds = Get-ReadWaitMilliseconds $attemptDeadline
+            $drained = [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($stdout, $stderr))
+            if ($milliseconds -le 0 -or -not $drained.Wait($milliseconds)) {
+                throw 'GitHub read output timed out.'
             }
             $output = $stdout.GetAwaiter().GetResult()
             $errorOutput = $stderr.GetAwaiter().GetResult()
@@ -44,6 +53,7 @@ function Invoke-GitHubRead([string]$GhPath, [string]$Route, [long]$Deadline, [in
                 }
                 catch { throw 'GitHub read returned unusable pages; raw response withheld.' }
                 finally { if ($null -ne $document) { $document.Dispose() } }
+                if ([Diagnostics.Stopwatch]::GetTimestamp() -ge $attemptDeadline) { throw 'GitHub read budget exhausted.' }
                 return $output
             }
             # Match gh's diagnostic, not arbitrary JSON bodies or HTTP text on stdout.
@@ -57,6 +67,10 @@ function Invoke-GitHubRead([string]$GhPath, [string]$Route, [long]$Deadline, [in
         if ($remainingMilliseconds -le $delay) { throw 'GitHub read budget exhausted.' }
         Start-Sleep -Milliseconds $delay
     }
+}
+
+function Get-ReadWaitMilliseconds([long]$Deadline) {
+    return [int][math]::Max(0, [math]::Floor(($Deadline - [Diagnostics.Stopwatch]::GetTimestamp()) / [Diagnostics.Stopwatch]::Frequency * 1000))
 }
 
 Export-ModuleMember -Function Invoke-GitHubRead
