@@ -49,8 +49,40 @@ PostgreSQL 的文件事实有独立容量：默认 100,000 条、总载荷 256 M
 未引用字节继续使用下述孤儿回收协议，HTTP 失败不触发不安全的直接删除。
 删除申请无法准入时，元数据和首次删除来源均不改变，原文件仍可下载；已经受理的删除若无法提交清除完成事实，
 返回 202 并保留持久待办，容量恢复后继续。重复完成不消耗额度。
-确认交付不立刻释放容量，须经保留期后的已确认副本清理。Memory 对等容量已通过[四个平台 Memory 事实容量与整批原子恢复](https://github.com/yongpengW/NexusStackNext/issues/80)验收；可审计策略管理仍待补齐。
+确认交付不立刻释放容量，须经保留期后的已确认副本清理。Memory 对等容量已通过[四个平台 Memory 事实容量与整批原子恢复](https://github.com/yongpengW/NexusStackNext/issues/80)验收；可审计策略管理正在 [#101](https://github.com/yongpengW/NexusStackNext/issues/101) 实施，尚未合并，见下文。
 迁移和共用规则见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。
+
+### 来源事实容量策略（实施中）
+
+Memory / PostgreSQL 已接入所属策略存储。`GET /api/files/audit-capacity` 保留原有业务额度与占用字段，
+增加 `policyRevision` 和独立 `controlCapacity`；`PUT` 同路径要求独立资源写权限和当前有效会话，
+读权限不授予写权限。请求只有 `requestId`、`expectedPolicyRevision`、三个新额度及固定
+`reason=operator-adjustment`，操作者、schema 与事件来源由服务确定。
+
+业务额度满时，扩容使用独立有限控制池；策略、凭据与 `FilesFactCapacityPolicyChangedV1`
+在 Files 原有共用写锁或独立本地事务内提交。控制事实携带安全旧/新数值、可信操作者与执行关联，
+不包含文件名、字节、句柄或请求正文，不推进 StoredFile 版本或修改行审计字段。
+降额不删除已经保留的事实。实际变化推进策略版本；空操作保存有限凭据而不发布 changed 事实。
+
+同请求身份、可信操作者与同内容重放原裁决，先于条件版本比较；异内容、异操作者或旧版本返回
+409 / `files.audit_policy.conflict`。非法请求为400，独立控制池满为503 /
+`files.audit_policy.control_exhausted`，失败不留下部分策略、凭据或事实。
+控制池默认1000个请求、16MiB总载荷与16KiB单请求载荷；不开放控制池自身的在线策略修改。
+
+Memory 可用 `Files:AuditDelivery:MemoryPolicyControl` 在启动时缩小控制池：
+`MaxRecords` 为1–1000，`MaxPayloadBytes` 为1–16MiB，`MaxRecordPayloadBytes` 为1–16KiB且不超过总量。
+不配置时沿用默认值；关闭维护也不会绕过启动校验，PostgreSQL不使用这组配置覆盖持久额度。
+凭据至少保留七天，相关控制事实还必须已经真实确认交付并保留确认副本至少24小时，才可原子清理。
+空操作凭据到期可单独清理；待投递与死信保持保留，期限不是强制删除时刻。
+安全清理后的请求身份重新按当前条件版本裁决，每次真实变化生成独立事件身份。
+
+新增迁移 `20261004155433_AuditedFactCapacityPolicy` 保留既有业务账本与占用，
+只在 `files` schema 创建控制账本、不可变凭据及证据保护；存在已接受控制历史时拒绝破坏性 Down。
+当前定向验证包括旧额度/占用升级保留、重复迁移及历史回退拒绝、满额扩容与宿主实例重建后的凭据重放，
+宿主实例重建发生在同一测试进程内，不作为独立进程重启证据。
+Files 所属控制清理与 `Files:AuditDelivery:PolicyMaintenance` 后台调度均已在工作区接入，
+诊断为 `files-policy-cleanup`，参数及期限约束见[共同维护说明](committed-auditing.md)。
+中央 typed MQ 摄入已完成阶段资格，其余完整故障与全量资格仍由 #101 跟踪，不能视为整票交付。
 
 删除先持久停止提供文件，再尝试清除字节。完成时返回 204；存储暂不可用时返回 202，`Location` 指向删除状态接口，响应中的 `completed=false` 表示还有持久待办。只有归属者可以查询；后台在存储恢复或进程重启后继续处理，完成状态也会保存。重复删除已完成的文件返回 204。404 仅表示不可访问，不能作为物理字节已清除的证明。
 

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -38,6 +39,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
+        modelBuilder.ConfigureFactCapacityPolicy();
         var plan = modelBuilder.Entity<ScheduledTask>();
         plan.ToTable("plans");
         plan.HasKey(task => task.Id);

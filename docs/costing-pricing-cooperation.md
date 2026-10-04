@@ -59,6 +59,27 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 首次成本事件创建对象时费率为零。已有人工定价对象接纳第一条成本事件后，由 Costing 接管成本、保留本地费率；
 此后 `/api/pricing/cost` 覆盖不同成本返回 `pricing.cost_owned_by_costing` / 409。正式业务须补充渠道与定价政策。
 
+## 来源事实容量治理（#101 实施中）
+
+Costing 与 Pricing 各自提供 `GET /api/<context>/audit-capacity` 和同路径的 `PUT`，
+沿用业务样板的根操作者限制。GET 返回业务额度、`policyRevision` 和独立 `controlCapacity`；
+PUT 仅接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloadBytes`、
+`maxRecordPayloadBytes` 和固定 `reason=operator-adjustment`。Int64 继续用十进制字符串。
+操作者、所属 schema 与事件名由服务端确定，请求不能改写这些归属。
+
+版本从 1 开始，仅实际额度变化递增。相同请求、操作者与内容重放原裁决，先于版本比较；
+身份复用或 CAS 冲突返回 409。允许降额到已有占用以下，但不删除已有事实；新业务写入继续受到背压。
+变化记录为各自 Contracts 的 `fact-capacity-policy-changed.v1`，与业务事实计量分开。
+控制池默认 1000 条、16MiB 总量、16KiB 单条，空操作也保存有限凭据；控制池满时明确拒绝调整。
+
+两来源通过正常增量迁移保存策略与控制证据，重启不覆盖已有策略。有控制历史时拒绝破坏性 Down。
+策略管理采用独立本地事务，不提交调用者的业务工作，也不修改原业务版本、已接受任务或报价缓存。
+七天仅是凭据最早保留期；待投递与死信不能因到期删除，已交付控制副本另至少保留二十四小时。
+中央 typed 数值调查已通过真实 MQ 验证：中央离线时提交，生产者退出后接收，中央进程重启后保留数值证据。
+工作区已接入 `Costing:AuditDelivery:PolicyMaintenance` / `Pricing:AuditDelivery:PolicyMaintenance`，
+各自在独立数据库清理自己的控制证据；诊断为 `costing-policy-cleanup` / `pricing-policy-cleanup`，参数见[共同维护说明](committed-auditing.md)。其余完整资格仍在 #101 中待办，
+目前不能把本节接口实现视为整套治理已经交付。完整进展见[本地开发状态](handoff-2026-10-03.md)。
+
 ## 故障恢复
 
 | 故障 | 行为 | 恢复 |
@@ -125,3 +146,9 @@ UTF-8 升级边界、最后额度竞争、清理、有限重试及真实 broker 
 `PricingFactCapacityObservationTests` 验证失败与恢复操作独立且保留关联，`PricingCacheTests` 验证拒绝与成功的缓存语义。
 Pricing 的最终发布资格以 #78 的完整检查、Linux CI 与独立评审为准。CI 在独立 runner 之间并行，各组独占依赖且组内串行；
 这些不证明多节点容灾或生产容量。
+
+实施中的策略迁移另由 `FactCapacityPolicyBusinessMigrationTests` 验证 Costing / Pricing：
+升级前后分别启动实际业务宿主进程，公开查询的成本/报价、已接受任务及原业务事实保持，
+三个旧额度和实际占用字节保留；重复迁移后原请求重放同凭据，有治理历史时真实 Down 明确拒绝。
+迁移使用实际模块注册和公开 EF 元数据/`IMigrator`，不为测试暴露内部业务 DbContext。
+这是 #101 的迁移阶段资格，不能替代整票授权、故障、完整检查和 Linux CI 验收。

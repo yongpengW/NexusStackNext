@@ -44,3 +44,17 @@ _Avoid_: CostCalculatedV1、完整报价快照、任务完成通知
 **MessageAcceptance**:
 一次有效成本消息的本地消费尝试，独立记录受理、重复、跳过、拒绝、失败或取消。成功新建任务保留首次受理操作为直接来源，原 Costing 操作作为其父级；执行者为系统，原发起人只用于关联。
 _Avoid_: 价格计算完成、原用户代执行、消息标识等于操作标识
+
+**FactCapacityPolicy**:
+Pricing 自己持久保存的变化事实额度。根操作者可条件调整三个额度，业务额度已满时仍使用独立有限控制池保留调整证据。
+策略管理不修改 PriceQuote、Recalculation 或报价缓存，也不占定价变化事实额度。
+_Avoid_: Platform 设置、定价政策、中央审计额度
+
+**PolicyRevision**:
+容量策略的单调版本，从 1 开始，只有额度实际改变才加 1。它不属于报价 Version、InputRevision 或 CalculatedRevision。
+_Avoid_: 业务版本、任务代次、请求身份
+
+**PolicyChangeReceipt**:
+相同请求、可信操作者及内容可重放的原容量裁决。最早保留七天，相关控制事实还需满足已交付副本的保留条件才能清理。
+仍在保留的凭据即使已到最早期限也继续用于重放或冲突判断；安全清理后不再承诺该身份永久幂等。
+_Avoid_: 报价生成完成、MQ ACK、永久幂等记录

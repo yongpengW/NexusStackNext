@@ -1,5 +1,7 @@
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -60,7 +62,8 @@ public static class IdentityModule
             }
 
             services.AddIdentityInMemoryStorage(configuration.GetSection("Identity:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
-                configuration.GetSection("Identity:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
+                configuration.GetSection("Identity:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
+                configuration.GetSection("Identity:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
             services.AddIdentityMemoryFactCleanup(configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -74,6 +77,11 @@ public static class IdentityModule
             var capacityWrite = configuration.GetSection("Identity:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
             services.AddIdentityEntityFrameworkStorage(capacityWrite.ConfigureConnection(connection));
             services.AddCommittedFactCapacityReader<IdentityDbContext>("identity", capacityRead);
+            services.AddKeyedScoped<PostgresFactCapacityPolicyStore>("identity", (serviceProvider, _) => new(
+                connection, serviceProvider.GetRequiredService<IIntegrationEventSerializer>(), capacityRead.Timeout,
+                new("identity", IdentityFactCapacityPolicyChangedV1.From)));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyStore>("identity", (serviceProvider, _) => serviceProvider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("identity"));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyCleanup>("identity", (serviceProvider, _) => serviceProvider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("identity"));
             services.AddIdentityDatabaseChecks();
             services.AddCommittedFactCleanup<IdentityDbContext>("identity", IdentityEntityCommittedV1.Name,
                 configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -94,7 +102,8 @@ public static class IdentityModule
         // 它在这里注册而不是在各宿主里：这是 Identity 自己的引导，五个宿主不该各写一遍。
         services.AddHostedService<RootAccountSeeder>();
 
-        return services;
+        return services.AddCommittedFactPolicyMaintenance("identity", configuration.GetSection("Identity:AuditDelivery:PolicyMaintenance")
+            .Get<FactCapacityPolicyMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -110,13 +119,24 @@ public static class IdentityModule
         // 而不是每个端点各自的记性。公开的端点由框架的 `AllowAnonymous()` 显式标注。
         identity.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
-        identity.MapGet("/audit-capacity", async ([FromKeyedServices("identity")] ICommittedFactCapacityReader reader,
+        identity.MapGet("/audit-capacity", async ([FromKeyedServices("identity")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
-            var result = await reader.ReadAsync(token).ConfigureAwait(false);
-            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+            var diagnostic = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
+            return diagnostic.IsSuccess ? (IResult)responses.Ok(diagnostic.Value) : Failure(diagnostic.Error);
         }).RequireAuthorization().RequirePermission("/api/identity/audit-capacity", "GET")
-            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>();
+            .Produces<ApiResponse<FactCapacityPolicySnapshot>>();
+
+        identity.MapPut("/audit-capacity", async (FactCapacityPolicyRequest request, ICurrentUser user,
+            IClock clock, IExecutionContext execution, ApiResponses responses, CancellationToken token,
+            [FromKeyedServices("identity")] ICommittedFactCapacityPolicyStore policies) =>
+        {
+            var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-capacity", "PUT")
+            .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(409, 415)
+            .WithMetadata(new OperationDescription("identity.fact-capacity-policy.adjust", "调整所属事实容量策略"));
 
         // 自述端点：说明这个服务是什么。**不返回任何假数据。**
         identity.MapGet("/", (ApiResponses responses, IClock clock) => responses.Ok(new
@@ -345,6 +365,8 @@ public static class IdentityModule
             "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
+            "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
+            "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
         },

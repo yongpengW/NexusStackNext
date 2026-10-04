@@ -29,6 +29,8 @@ public sealed record AuditFact(Guid MessageId, string EventName, string Source, 
     public AuditExecution? Execution { get; init; }
     /// <summary>发生时有明确业务关系的另一客体；不从当前业务状态补造。</summary>
     public AuditSubjectReference? RelatedSubject { get; init; }
+    /// <summary>容量治理事实的明确前后数值；普通业务事实为空。</summary>
+    public AuditCapacityPolicyChange? CapacityPolicyChange { get; init; }
 }
 
 /// <summary>由上下文、类型与内部标识共同确定的关联客体。</summary>
@@ -77,6 +79,9 @@ public sealed class AuditEntry : AggregateRoot<AuditEntryId>
             || !Valid(fact.SubjectType, 100) || !Valid(fact.SubjectId, 200)
             || (fact.ActorId is not null && !Valid(fact.ActorId, 200))
             || !Valid(fact.TraceId, 128) || !Valid(fact.CorrelationId, 128)
+            || (fact.CapacityPolicyChange is null && (fact.SubjectType == "fact-capacity-policy"
+                || fact.EventName == fact.Source + ".fact-capacity-policy-changed.v1"))
+            || (fact.CapacityPolicyChange is { } policy && !ValidPolicy(fact, policy))
             || (fact.RelatedSubject is { } related && (!Valid(related.Context, 64) || !Valid(related.Type, 100) || !Valid(related.Id, 200)))
             || (fact.Execution is { } execution && (execution.OperationId == Guid.Empty || execution.RootOperationId == Guid.Empty
                 || !Valid(execution.Source, 64) || !Valid(execution.RootSource, 64)
@@ -89,4 +94,14 @@ public sealed class AuditEntry : AggregateRoot<AuditEntryId>
 
     private static bool Valid(string? value, int maximum) => !string.IsNullOrWhiteSpace(value)
         && value.Length <= maximum && !value.Any(char.IsControl);
+
+    private static bool ValidPolicy(AuditFact fact, AuditCapacityPolicyChange policy) => policy.RequestId != Guid.Empty
+        && policy.PolicyRevision > 1 && policy.PolicyRevision == fact.SubjectVersion && policy.Reason == "operator-adjustment"
+        && fact.SubjectType == "fact-capacity-policy" && fact.SubjectId == fact.Source && Valid(fact.ActorId, 200)
+        && fact.Action == fact.Source + ".fact-capacity-policy.changed"
+        && fact.EventName == fact.Source + ".fact-capacity-policy-changed.v1"
+        && ValidLimits(policy.Previous) && ValidLimits(policy.Current) && policy.Previous != policy.Current;
+
+    private static bool ValidLimits(AuditCapacityPolicyLimits? limits) => limits is { MaxRecords: > 0, MaxPayloadBytes: > 0, MaxRecordPayloadBytes: > 0 }
+        && limits.MaxRecordPayloadBytes <= limits.MaxPayloadBytes;
 }

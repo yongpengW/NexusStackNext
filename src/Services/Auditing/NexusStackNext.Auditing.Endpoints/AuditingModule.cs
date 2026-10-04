@@ -30,6 +30,12 @@ public static class AuditingModule
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
         services.AddKeyedScoped<IIntegrationEventProcessor, PlatformAuditIngestion>(SettingCommittedV1.Name);
+        AddPolicyIngestion<SettingFactCapacityPolicyChangedV1>(services, "platform", SettingFactCapacityPolicyChangedV1.Name);
+        AddPolicyIngestion<IdentityFactCapacityPolicyChangedV1>(services, "identity", IdentityFactCapacityPolicyChangedV1.Name);
+        AddPolicyIngestion<FilesFactCapacityPolicyChangedV1>(services, "files", FilesFactCapacityPolicyChangedV1.Name);
+        AddPolicyIngestion<SchedulingFactCapacityPolicyChangedV1>(services, "scheduling", SchedulingFactCapacityPolicyChangedV1.Name);
+        AddPolicyIngestion<CostingFactCapacityPolicyChangedV1>(services, "costing", CostingFactCapacityPolicyChangedV1.Name);
+        AddPolicyIngestion<PricingFactCapacityPolicyChangedV1>(services, "pricing", PricingFactCapacityPolicyChangedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, IdentityAuditIngestion>(IdentityEntityCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, FilesAuditIngestion>(StoredFileCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, SchedulingAuditIngestion>(PlanCommittedV1.Name);
@@ -42,6 +48,12 @@ public static class AuditingModule
             broker.Validate();
             var consumer = configuration.GetValue<string>("Auditing:Messaging:ConsumerName") ?? AuditIngestion.ConsumerName;
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = IdentityFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = FilesFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SchedulingFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = CostingFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
+            services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = PricingFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingCommittedV1.Name, ConsumerName = consumer });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = IdentityEntityCommittedV1.Name, ConsumerName = consumer + "-identity" });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = StoredFileCommittedV1.Name, ConsumerName = consumer + "-files" });
@@ -78,6 +90,10 @@ public static class AuditingModule
         }
         return services.AddAuditingPostgresStorage(connection);
     }
+
+    private static void AddPolicyIngestion<TEvent>(IServiceCollection services, string source, string eventName) where TEvent : FactCapacityPolicyChanged =>
+        services.AddKeyedScoped<IIntegrationEventProcessor>(eventName, (provider, _) => new FactCapacityPolicyAuditIngestion<TEvent>(
+            provider.GetRequiredService<AuditIngestion>(), provider.GetRequiredService<IIntegrationEventSerializer>(), source, eventName));
 
     /// <summary>只公开调查查询；审计事实不接受 HTTP 写入。</summary>
     /// <param name="endpoints">路由。</param>

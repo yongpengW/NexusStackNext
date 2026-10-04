@@ -117,7 +117,51 @@ PostgreSQL 通过 Scheduling 自己的 `fact_capacity` 对计划事实实行条�
 
 策略和占用由数据库持久化，重启不重置；新迁移从既有计划事实回填占用。
 确认交付不释放容量，只有按保留期清理已确认事实副本才释放；未交付、死信与普通业务消息不会被该清理删除。
-该容量约束目前只接入 PostgreSQL；开发 Memory 模式的容量语义仍由父票据 #64 跟踪。
+开发 Memory 模式也使用同一业务事实容量语义，但不承诺重启后的状态保留。
+
+## 来源事实容量策略（实施中）
+
+Scheduling 的 Memory / PostgreSQL 已接入 `GET /api/scheduling/audit-capacity` 的策略版本与独立控制额度诊断，
+以及同路径 `PUT` 的条件调整。使用独立 PUT 资源权限并检查当前会话；GET 权限不能授权写入。
+请求传 UUID `requestId`、`expectedPolicyRevision`、三个正数额度及固定 `reason=operator-adjustment`，
+长整数沿用 HTTP 十进制字符串契约；来源、schema、操作者及事件类型由模块声明，不来自请求。
+
+业务额度满时，受权操作者仍可利用独立控制额度扩容；降低到当前占用以下不删除既有事实。
+真实变化增加 PolicyRevision 并生成 `SchedulingFactCapacityPolicyChangedV1`，空操作只保存有界凭据。
+两者都不改变计划 Version、ScheduleRevision、TriggerSequence、首次委托、Occurrence 或 ScheduleDecision。
+控制事实和普通 `ScheduleTriggeredV1` 消息都不计入计划业务事实占用。
+条件冲突返回 409 / `scheduling.audit_policy.conflict`，控制额度不足返回 503 / `scheduling.audit_policy.control_exhausted`。
+
+控制池默认 1000 条、16MiB 总载荷、16KiB 单个请求及事实载荷；空操作也占用名额。
+Memory 可用 `Scheduling:AuditDelivery:MemoryPolicyControl` 在启动时缩小控制池：
+`MaxRecords` 为1–1000，`MaxPayloadBytes` 为1–16MiB，`MaxRecordPayloadBytes` 为1–16KiB且不超过总量。
+不配置时沿用默认值；关闭维护也不会绕过启动校验，不支持在线修改，也不覆盖PostgreSQL持久额度。
+凭据至少保留七天，有控制事实时还须确认交付且确认副本至少保留二十四小时。
+未交付、死信或未到期限的凭据和副本不会被清理。期限之后仍保留的凭据继续重放原裁决，
+只有安全清理后才重新按普通条件版本处理。清理通过所属公开端口执行有限批次；工作区已接入
+`Scheduling:AuditDelivery:PolicyMaintenance` 调度与 `scheduling-policy-cleanup` 诊断，参数见[共同维护说明](committed-auditing.md)。
+
+新增 `20261004162527_AuditedFactCapacityPolicy` 迁移保留原策略、计划事实占用及旧迁移；
+有已接受控制历史时 Down 明确拒绝，不能通过回退删除治理证据。
+策略和凭据由 PostgreSQL 持久化，启动配置不覆盖已保存策略；Memory 仍为明确的开发适配器。
+最早清理期限在 PostgreSQL 中向上取整到微秒，响应保留原精度，避免时间截断导致提前释放凭据。
+
+Scheduling的策略隔离验证同时使用Memory与真实PostgreSQL宿主，在公开存储端口登记真实计划、
+非空调度决定和发生，并让原发生经历一次普通失败及一次最终死信失败。策略序列化失败、预取消、
+重试及有限控制清理均保留计划状态、版本、原决定/发生、失败次数和交付状态，也不改业务事实占用。
+待投递控制凭据即使过期仍不释放；完成控制清理后，原死信发生仍能按原停止时刻条件恢复，
+不新建发生、不推进计划版本。验证读取已有记录，不能用空历史声明“不变”；
+Memory中让控制清理误删无关死信副本的可编译变异，会在原发生查询端口失败。
+本阶段证据只覆盖所述序列化故障和预取消，其他持久写故障、争用及取消时点仍按#101补齐。
+
+实施与逐项验收由 [#101](https://github.com/yongpengW/NexusStackNext/issues/101) 跟踪，设计见
+[ADR-0026](adr/0026-audited-fact-capacity-policy-changes.md)。当前工作尚未提交或合并；
+六来源已通过真实 MQ 与中央 typed 调查阶段验证，包含中央离线、生产者退出后接收及中央进程恢复；四平台 Memory 仅保证已发布消息的此项验证。后台控制维护已接入；已有计划发生/决定的故障隔离及最终门禁仍待完成，不能把阶段测试当作整票验收。
+
+本阶段 `SchedulingFactCapacityPolicyTests` 验证双存储满额扩容、计划/规则修订/交付历史保留与重放；
+`FactCapacityPolicyAccessTests` 验证三套路由的独立写权限、撤权、注销、可信操作者和大整数契约；
+`FactCapacityPolicyMigrationTests` 验证旧额度/占用保留、模型一致、重复迁移及历史回退拒绝。
+最终相关回归279项各一次通过（其中43项策略测试），构建和格式通过；这不是全量验收。
 
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
 

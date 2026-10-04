@@ -20,7 +20,15 @@ public sealed class EfOutboxStore<TContext>(TContext context) : IOutboxStore whe
     /// <inheritdoc />
     public Task MarkDeliveredAsync(Guid id, DateTimeOffset now, CancellationToken cancellationToken = default) =>
         UpdateAsync(id, entry => entry.IsDelivered ? entry
-            : entry.MarkDelivered(now) with { DeadLetteredAt = null, NextAttemptAt = null }, cancellationToken);
+            : entry.MarkDelivered(ConfirmationTime(now)) with { DeadLetteredAt = null, NextAttemptAt = null }, cancellationToken);
+
+    private static DateTimeOffset ConfirmationTime(DateTimeOffset now)
+    {
+        // PostgreSQL stores whole microseconds. Rounding down could expire a confirmed copy before its minimum retention.
+        // Preserve the first ACK and use the earliest representable instant that is not earlier than that ACK.
+        var remainder = now.UtcTicks % 10;
+        return (remainder == 0 ? now : now.AddTicks(10 - remainder)).ToUniversalTime();
+    }
 
     /// <inheritdoc />
     public Task<bool> MarkFailedAsync(Guid id, string failure, DateTimeOffset nextAttemptAt, long expectedRetryRevision, CancellationToken cancellationToken = default) =>

@@ -271,7 +271,7 @@ internal sealed class SchedulingMemoryState : ICommittedFactCapacityReader
     internal Lock Writes { get; } = new();
     internal Dictionary<Guid, ScheduleOccurrence> Occurrences { get; } = [];
     internal Dictionary<Guid, ScheduleDecision> Decisions { get; } = [];
-    internal Dictionary<Guid, OutboxEntry> Outbox { get; } = [];
+    internal Dictionary<Guid, OutboxEntry> Outbox { get; set; } = [];
     internal Dictionary<long, ExecutionOrigin?> Origins { get; } = [];
 }
 
@@ -284,12 +284,23 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     /// <param name="services">容器。</param>
     /// <param name="capacity">本存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
+    /// <param name="control">所属 Memory 控制池的启动上限。</param>
     /// <returns>原容器。</returns>
     public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
     {
         ArgumentNullException.ThrowIfNull(services);
+        var controlLimits = control ?? new();
+        controlLimits.Validate();
         services.AddSingleton(new SchedulingMemoryState(capacity, write));
+        services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>(OutboxKey, (provider, _) =>
+        {
+            var state = provider.GetRequiredService<SchedulingMemoryState>();
+            return new(state.Writes, state.Capacity, () => state.Outbox, prepared => state.Outbox = prepared,
+                new("scheduling", SchedulingFactCapacityPolicyChangedV1.From), provider.GetRequiredService<IIntegrationEventSerializer>(), controlLimits);
+        });
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyStore>(OutboxKey, (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>(OutboxKey));
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyCleanup>(OutboxKey, (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>(OutboxKey));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<SchedulingMemoryState>());
         services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddScoped(provider => new InMemoryScheduledTaskStore(provider.GetRequiredService<IIntegrationEventSerializer>(),

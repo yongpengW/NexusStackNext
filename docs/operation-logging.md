@@ -132,6 +132,8 @@ endpoint.WithMetadata(new OperationDescription("costing.task.retry", "重试成�
 
 Action 最多 200 字符、Description 最多 256 字符，均为固定文本；没有声明时 Action 使用 `http.get` 等固定方法分类，与路由模板共同识别入口。非常规方法使用有界分类，未知方法为 `OTHER`，不保存任意方法原文。路由模板超过 500 字符或不满足安全格式时为空，绝不退回原始路径。
 
+六个来源的容量策略 PUT 声明固定动作 `<context>.fact-capacity-policy.adjust`（context 为 platform、identity、files、scheduling、costing、pricing），描述为“调整所属事实容量策略”。声明只引用 Auditing.Contracts，不自行写日志。平台宿主中的 Identity / Files / Scheduling 观察来源仍为 platform，动作表示实际拥有策略的上下文；不把模块归属伪称部署来源。策略重放和拒绝各有自己的操作，已提交治理事实只关联首次真实变更的操作；观察 completed 不能代替数值变更事实。请求中的 RequestId、任意理由、正文及敏感头不作为动态说明或客体采集。四平台 Memory / PostgreSQL 及两业务 PostgreSQL 的资格与整票交付见 [#101](https://github.com/yongpengW/NexusStackNext/issues/101)。
+
 Subject 仅从指定路由参数读取非空 Guid 或正 Int64，统一为字符串；`9007199254740993` 不会经 JavaScript number 丢精度。非法值整体省略 Subject，不丢弃该次请求；body 中的 ItemId 不自动采集。Subject 表示请求指向的客体，不证明它存在或已经成功授权。成本和定价的重试接口给出了两个真实用例。
 
 低价值轮询可声明 `new OperationLogSuppression("明确的静态原因")`，优先于描述；不能因为旧 PoS 某接口曾标记 NoLogging 就批量复制排除范围。

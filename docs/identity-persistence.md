@@ -61,7 +61,7 @@ AppHost 启动脚本只接受明确的运行库配置，不再把 `NEXUSSTACK_TE
 PostgreSQL 事实容量由 `IdentityFactCapacity` 独立迁移启用；默认 100,000 条、正文总量 256 MiB、单条正文 16 KiB。
 整批事实与业务同事务，满额返回 `identity.audit_capacity.exhausted` / HTTP 503，不留下半批变化，
 也不执行提交后的权限失效。错误密码只有失败计数及事实成功提交后才返回原有凭据错误。
-恢复依靠安全清理已确认副本；可审计策略调整、容量诊断及 Memory 准入仍待完成。
+恢复依靠安全清理已确认副本；容量诊断和 Memory 准入已完成，可审计策略调整正在票据 #101 的工作分支实施。
 设计与测试边界见 [ADR-0006](../src/Services/Identity/docs/adr/0006-fact-capacity-rejects-the-whole-command.md)。
 
 会话版本由 User 持有；访问令牌和刷新令牌都记录签发时版本，重启后旧版本继续被拒绝。
@@ -70,3 +70,36 @@ PostgreSQL 事实容量由 `IdentityFactCapacity` 独立迁移启用；默认 10
 每个 Identity 受保护请求会查询用户的当前安全状态，数据库失败时不会接受旧的缓存结论。
 已有令牌流程的跨聚合事务建模债务、固定 WorkerId 以及提交结果不确定时的命令幂等仍未解决。
 此轮支持单实例持久化运行，不宣称已经具备多副本高可用。
+
+## 来源事实容量策略（实施中）
+
+[票据 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 的当前工作区已接入 Identity 自己的
+Memory / PostgreSQL 策略读取、条件调整及有界清理，尚未提交、合并或完成整票验收。
+`GET /api/identity/audit-capacity` 增加单调 `policyRevision` 和独立 `controlCapacity`；
+`PUT` 同路径要求单独的 PUT 资源权限，仍先验证当前会话，不使用读权限代替写权限。
+请求只接受 UUID `requestId`、`expectedPolicyRevision`、三个新额度和固定
+`reason=operator-adjustment`，所有 Int64 沿用十进制字符串 HTTP 契约。
+
+策略从版本1开始，实际额度变化才递增；空操作只保留有限凭据。重放先于版本比较，
+同请求身份、相同可信操作者和内容返回原裁决，异内容或异操作者冲突。
+操作者、所属 schema 与 `identity.fact-capacity-policy-changed.v1` 事件由模块声明，
+不接受调用方指定。控制事实不占业务事实额度，默认控制池为1000个请求、16MiB总量和16KiB单条，
+每个请求按凭据与实际控制正文的 UTF-8 字节计量；空操作也占一个请求名额。
+
+Memory 可用 `Identity:AuditDelivery:MemoryPolicyControl` 在启动时缩小控制池：
+`MaxRecords` 为1–1000，`MaxPayloadBytes` 为1–16MiB，`MaxRecordPayloadBytes` 为1–16KiB且不超过总量。
+不配置时沿用默认值；关闭维护也不会绕过启动校验。不支持在线修改，PostgreSQL不使用这组配置覆盖持久额度。
+
+Memory 在原有业务写锁内准备与发布，策略管理不提交用户/角色工作副本，不失效权限缓存，
+不推进用户或会话版本。PostgreSQL 使用自己的独立连接与本地事务；
+`20261004152243_AuditedFactCapacityPolicy` 是正常增量迁移，不改已有迁移和业务占用。
+已接受凭据及对应事实的身份、时间和正文有不可变保护；有控制历史时 Down 明确拒绝破坏性回退。
+`FactCapacityPolicyMigrationTests` 已通过私有库的真实升级、重复迁移与治理历史回退拒绝，
+经公开策略/仓储端口检查旧额度、占用、角色版本、原授权集合及行审计保持。
+该旅程重建的是同一测试进程内的宿主实例；真实进程恢复与本票最终资格仍按 #101 续验，不能混称。
+
+凭据最早保留七天，真实控制事实还需实际交付至少24小时，满足两条条件后才原子删除并释放控制额度。
+待投递和死信一直保留；仍被保留的凭据在最早期限之后继续支持重放，只有安全清理后才回到普通版本比较。
+公开维护端口支持稳定顺序的一至一千条批次。工作区已接入 `Identity:AuditDelivery:PolicyMaintenance` 调度与
+`identity-policy-cleanup` 诊断，参数及期限约束见[共同维护说明](committed-auditing.md)；清理故障不影响业务就绪检查。
+中央 typed 摄入、完整配额/故障边界及六来源共同协议仍在实施，最终资格见票据记录。

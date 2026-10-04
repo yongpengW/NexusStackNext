@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Platform.Domain.Settings;
 
@@ -22,6 +23,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
+        modelBuilder.ConfigureFactCapacityPolicy();
         var setting = modelBuilder.Entity<GlobalSetting>();
         setting.ToTable("global_settings");
         setting.HasKey(item => item.Id);

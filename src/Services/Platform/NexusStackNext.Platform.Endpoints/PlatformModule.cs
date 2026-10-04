@@ -1,5 +1,8 @@
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -43,7 +46,8 @@ public static class PlatformModule
                 throw new InvalidOperationException("Platform:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
             services.AddPlatformInMemoryStorage(configuration.GetSection("Platform:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
-                configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
+                configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
+                configuration.GetSection("Platform:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
             services.AddPlatformMemoryFactCleanup(configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -55,6 +59,11 @@ public static class PlatformModule
             }
             var capacityWrite = configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
             services.AddPlatformPostgresStorage(capacityWrite.ConfigureConnection(connection));
+            services.AddKeyedScoped<PostgresFactCapacityPolicyStore>("platform", (provider, _) => new(
+                capacityWrite.ConfigureConnection(connection), provider.GetRequiredService<IIntegrationEventSerializer>(), capacityRead.Timeout,
+                new("platform", SettingFactCapacityPolicyChangedV1.From)));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyStore>("platform", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("platform"));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyCleanup>("platform", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("platform"));
             services.AddCommittedFactCapacityReader<PlatformDbContext>("platform", capacityRead);
             services.AddCommittedFactCleanup<PlatformDbContext>("platform", SettingCommittedV1.Name,
                 configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -63,7 +72,8 @@ public static class PlatformModule
         {
             throw new InvalidOperationException("Platform:Storage:Provider 仅支持 Postgres / Memory。");
         }
-        return services;
+        return services.AddCommittedFactPolicyMaintenance("platform", configuration.GetSection("Platform:AuditDelivery:PolicyMaintenance")
+            .Get<FactCapacityPolicyMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -73,14 +83,26 @@ public static class PlatformModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
 
-        endpoints.MapGet("/api/platform/audit-capacity", async ([FromKeyedServices("platform")] ICommittedFactCapacityReader reader,
+        endpoints.MapGet("/api/platform/audit-capacity", async ([FromKeyedServices("platform")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
-            var result = await reader.ReadAsync(token).ConfigureAwait(false);
-            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+            var diagnostic = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
+            return diagnostic.IsSuccess ? (IResult)responses.Ok(diagnostic.Value) : Failure(diagnostic.Error);
         }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
             .RequirePermission("/api/platform/audit-capacity", "GET")
-            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
+            .Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(401, 403, 503);
+
+        endpoints.MapPut("/api/platform/audit-capacity", async (FactCapacityPolicyRequest request,
+            ICurrentUser user, IClock clock, IExecutionContext execution, ApiResponses responses, CancellationToken token,
+            [FromKeyedServices("platform")] ICommittedFactCapacityPolicyStore policies) =>
+        {
+            var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
+            .RequirePermission("/api/platform/audit-capacity", "PUT")
+            .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415, 503)
+            .WithMetadata(new OperationDescription("platform.fact-capacity-policy.adjust", "调整所属事实容量策略"));
 
         // 设置可能包含受限元数据；读取与管理都必须显式授权并检查当前会话。
         var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500, 503);
@@ -182,8 +204,9 @@ public static class PlatformModule
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
         statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code
-            || error.Code == CommittedFactCapacityErrors.Busy.Code ? StatusCodes.Status503ServiceUnavailable
-            : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
+            || error.Code == CommittedFactCapacityErrors.Busy.Code || error.Code == SettingFactCapacityPolicyErrors.Exhausted.Code ? StatusCodes.Status503ServiceUnavailable
+            : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code
+                || error.Code == SettingFactCapacityPolicyErrors.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 

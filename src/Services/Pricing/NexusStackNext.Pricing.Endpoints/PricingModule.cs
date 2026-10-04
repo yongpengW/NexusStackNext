@@ -8,6 +8,9 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -15,6 +18,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Application;
+using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Pricing.Infrastructure;
 
 namespace NexusStackNext.Pricing.Endpoints;
@@ -36,8 +40,14 @@ public static class PricingModule
         var capacityWrite = configuration.GetSection("Pricing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
         connection = capacityWrite.ConfigureConnection(connection);
         services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache);
-        services.AddPricingFactCapacityReader(
-            configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>());
+        var capacityRead = configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
+        capacityRead.Validate();
+        services.AddPricingFactCapacityReader(capacityRead);
+        services.AddKeyedScoped<PostgresFactCapacityPolicyStore>("pricing", (provider, _) => new(
+            connection, provider.GetRequiredService<IIntegrationEventSerializer>(), capacityRead.Timeout,
+            new("pricing", PricingFactCapacityPolicyChangedV1.From)));
+        services.AddKeyedScoped<ICommittedFactCapacityPolicyStore>("pricing", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("pricing"));
+        services.AddKeyedScoped<ICommittedFactCapacityPolicyCleanup>("pricing", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("pricing"));
         if (cache?.Enabled == true) { services.AddPricingCacheInvalidationWorker(); }
         services.AddSingleton(new PricingConnection(connection));
         services.AddHostedService<PricingStartupCheck>();
@@ -60,7 +70,8 @@ public static class PricingModule
         services.AddHealthChecks().AddAsyncCheck("pricing-database", async cancellationToken =>
             await PricingDatabase.IsReadyAsync(connection, cancellationToken).ConfigureAwait(false)
                 ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("Pricing 数据库不可用或需要迁移。"), tags: ["ready"]);
-        return services;
+        return services.AddCommittedFactPolicyMaintenance("pricing", configuration.GetSection("Pricing:AuditDelivery:PolicyMaintenance")
+            .Get<FactCapacityPolicyMaintenanceOptions>());
     }
 
     /// <summary>映射需要 pricing-operator 策略的业务接口；执行协议不暴露给 HTTP。</summary>
@@ -71,12 +82,21 @@ public static class PricingModule
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/pricing").RequireAuthorization("pricing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
-        group.MapGet("/audit-capacity", async ([FromKeyedServices("pricing")] ICommittedFactCapacityReader reader,
+        group.MapGet("/audit-capacity", async ([FromKeyedServices("pricing")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
-            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            var result = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(503);
+        }).Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(503);
+        group.MapPut("/audit-capacity", async (FactCapacityPolicyRequest request, ICurrentUser user, IClock clock,
+            IExecutionContext execution, ApiResponses responses, CancellationToken token,
+            [FromKeyedServices("pricing")] ICommittedFactCapacityPolicyStore policies) =>
+        {
+            var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 409, 415, 503)
+            .WithMetadata(new OperationDescription("pricing.fact-capacity-policy.adjust", "调整所属事实容量策略"));
         group.MapPost("/cost", async (UpdatePricingCost request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
@@ -125,8 +145,8 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
+            "pricing.audit_policy.control_exhausted" or "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
+            "pricing.audit_policy.conflict" or "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

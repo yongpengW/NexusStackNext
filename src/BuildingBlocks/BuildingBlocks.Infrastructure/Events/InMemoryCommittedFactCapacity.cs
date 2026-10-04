@@ -9,7 +9,7 @@ public sealed class InMemoryCommittedFactCapacity
 {
     private readonly Lock _gate;
     private readonly string _eventName;
-    private readonly MemoryCommittedFactCapacityOptions _policy;
+    private MemoryCommittedFactCapacityOptions _policy;
     private readonly TimeSpan _writeTimeout;
     private long _records;
     private long _bytes;
@@ -44,6 +44,23 @@ public sealed class InMemoryCommittedFactCapacity
     /// <returns>必须在同线程释放的作用域。</returns>
     public InMemoryCommittedFactWriteScope Enter(CancellationToken cancellationToken = default)
         => TryEnter(out var scope, cancellationToken) ? scope : throw new CommittedFactCapacityBusyException();
+
+    /// <summary>在原锁内与所属控制证据共同替换额度，不清理任何业务事实。</summary>
+    /// <param name="policy">经过校验的新额度。</param>
+    /// <param name="publish">已经准备完毕的所属控制证据发布。</param>
+    /// <param name="cancellationToken">开始发布之前可取消。</param>
+    public void ChangePolicy(MemoryCommittedFactCapacityOptions policy, Action publish, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(publish);
+        policy.Validate();
+        using (Enter(cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            publish();
+            _policy = policy;
+        }
+    }
 
     /// <summary>读取与准入和清理一致的快照；争锁时立即报告不可用，不阻塞诊断请求。</summary>
     /// <param name="owner">装配代码声明的上下文。</param>

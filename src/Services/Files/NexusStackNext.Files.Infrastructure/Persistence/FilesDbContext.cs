@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Files.Domain.Stored;
 
@@ -27,6 +28,7 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
+        modelBuilder.ConfigureFactCapacityPolicy();
         var file = modelBuilder.Entity<StoredFile>();
         file.ToTable("stored_files");
         file.HasKey(item => item.Id);

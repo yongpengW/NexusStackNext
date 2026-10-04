@@ -82,3 +82,17 @@ _Avoid_: 业务成功、成本计算结果
 触发、合并、跳过关联本上下文的 ScheduleDecision。当前后台执行者为空，首次定义的发起关系独立保留。
 不包含计划编码、规则或业务目标载荷，通过 Scheduling.Contracts 交给 Auditing 调查。
 _Avoid_: 业务完成、请求成功、OccurrenceDelivery
+
+**FactCapacityPolicy**:
+Scheduling 自己拥有的计划事实保留额度。受权调整只改变这份策略，不改变计划、规则修订、发生序号或交付状态。
+策略治理凭据及控制事实使用独立有限额度，普通触发消息仍不计入计划事实额度。
+_Avoid_: Platform 设置、中央日志额度、计划配置
+
+**PolicyRevision**:
+容量策略的条件版本。三个额度真正变化时才递增，与计划 Version、ScheduleRevision、TriggerSequence 相互独立。
+_Avoid_: 计划版本、消息重试代次
+
+**PolicyChangeReceipt**:
+本来源已经接受的条件调整裁决。相同请求身份、可信操作者及同内容重放原结果；最早保留期限不等于强制删除期限。
+只有安全清理后才可把该请求身份作为新的条件尝试，每次真正变化仍产生新的事实身份。
+_Avoid_: HTTP 成功日志、永久幂等承诺
