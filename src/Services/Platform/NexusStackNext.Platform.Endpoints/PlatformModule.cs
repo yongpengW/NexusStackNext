@@ -1,7 +1,9 @@
 using NexusStackNext.BuildingBlocks.Application.Auditing;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Platform.Application;
 using NexusStackNext.Platform.Contracts;
@@ -30,6 +32,8 @@ public static class PlatformModule
 
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
+        var capacityRead = configuration.GetSection("Platform:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
+        capacityRead.Validate();
         var provider = configuration["Platform:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
@@ -49,6 +53,7 @@ public static class PlatformModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Platform；开发测试可显式选择 Platform:Storage:Provider=Memory。");
             }
             services.AddPlatformPostgresStorage(connection);
+            services.AddCommittedFactCapacityReader<PlatformDbContext>("platform", capacityRead);
             services.AddCommittedFactCleanup<PlatformDbContext>("platform", SettingCommittedV1.Name,
                 configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
@@ -65,6 +70,15 @@ public static class PlatformModule
     public static IEndpointRouteBuilder MapPlatformEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        endpoints.MapGet("/api/platform/audit-capacity", async ([FromKeyedServices("platform")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
+            .RequirePermission("/api/platform/audit-capacity", "GET")
+            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
 
         // 设置可能包含受限元数据；读取与管理都必须显式授权并检查当前会话。
         var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
@@ -165,7 +179,7 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code ? StatusCodes.Status503ServiceUnavailable
+        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code ? StatusCodes.Status503ServiceUnavailable
             : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

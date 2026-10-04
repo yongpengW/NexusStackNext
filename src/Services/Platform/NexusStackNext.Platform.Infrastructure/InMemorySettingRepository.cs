@@ -21,7 +21,7 @@ namespace NexusStackNext.Platform.Infrastructure;
 /// 对象被其他请求偷偷改动，或让两个旧版本写入都成功。
 /// </para>
 /// </summary>
-public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore, ISettingAuditDelivery
+public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore, ISettingAuditDelivery, ICommittedFactCapacityReader
 {
     private readonly IIntegrationEventSerializer _serializer;
     private readonly InMemoryCommittedFactCapacity _capacity;
@@ -41,6 +41,10 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
 
     internal ICommittedFactCleanup CreateFactCleanup(CommittedFactCleanupOptions options, IClock clock)
         => new InMemoryCommittedFactCleanup(_writes, () => _outbox, SettingCommittedV1.Name, options, clock, _capacity);
+
+    /// <inheritdoc />
+    public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(_capacity.Read("platform", cancellationToken));
 
     /// <inheritdoc />
     public Task<GlobalSetting?> FindAsync(SettingKey key, CancellationToken cancellationToken = default)
@@ -209,6 +213,7 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy));
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
+        services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddSingleton<ISettingAuditDelivery>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddScoped<SettingStore>();
 

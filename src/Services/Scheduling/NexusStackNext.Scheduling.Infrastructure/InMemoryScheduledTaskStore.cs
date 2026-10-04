@@ -250,8 +250,11 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     }
 }
 
-internal sealed class SchedulingMemoryState
+internal sealed class SchedulingMemoryState : ICommittedFactCapacityReader
 {
+    public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(Capacity.Read("scheduling", cancellationToken));
+
     internal SchedulingMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
     {
         Capacity = new(Writes, PlanCommittedV1.Name, capacity);
@@ -279,6 +282,7 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddSingleton(new SchedulingMemoryState(capacity));
+        services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<SchedulingMemoryState>());
         services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddScoped(provider => new InMemoryScheduledTaskStore(provider.GetRequiredService<IIntegrationEventSerializer>(),
             provider.GetRequiredService<SchedulingMemoryState>(), provider.GetRequiredService<ScheduledPlanCommittedFacts>()));

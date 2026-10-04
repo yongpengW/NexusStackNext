@@ -1,8 +1,10 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Contracts;
@@ -43,6 +45,8 @@ public static class IdentityModule
         ArgumentNullException.ThrowIfNull(configuration);
 
         ArgumentNullException.ThrowIfNull(environment);
+        var capacityRead = configuration.GetSection("Identity:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
+        capacityRead.Validate();
         var provider = configuration["Identity:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider))
         {
@@ -67,6 +71,7 @@ public static class IdentityModule
             }
 
             services.AddIdentityEntityFrameworkStorage(connection);
+            services.AddCommittedFactCapacityReader<IdentityDbContext>("identity", capacityRead);
             services.AddIdentityDatabaseChecks();
             services.AddCommittedFactCleanup<IdentityDbContext>("identity", IdentityEntityCommittedV1.Name,
                 configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -102,6 +107,14 @@ public static class IdentityModule
         // **授权过滤器挂在整个分组上**，于是"这个模块的端点默认都要过一遍授权"是结构性的，
         // 而不是每个端点各自的记性。公开的端点由框架的 `AllowAnonymous()` 显式标注。
         identity.AddEndpointFilter<NexusStackAuthorizationFilter>();
+
+        identity.MapGet("/audit-capacity", async ([FromKeyedServices("identity")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-capacity", "GET")
+            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>();
 
         // 自述端点：说明这个服务是什么。**不返回任何假数据。**
         identity.MapGet("/", (ApiResponses responses, IClock clock) => responses.Ok(new
@@ -327,6 +340,7 @@ public static class IdentityModule
     private static IResult Failure(Error error) => Results.Problem(
         statusCode: error.Code switch
         {
+            "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,

@@ -1,5 +1,6 @@
 using System.Text;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Domain;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
@@ -23,6 +24,24 @@ public sealed class InMemoryCommittedFactCapacity
         _eventName = eventName;
         _policy = policy ?? new();
         _policy.Validate();
+    }
+
+    /// <summary>读取与准入和清理一致的快照；争锁时立即报告不可用，不阻塞诊断请求。</summary>
+    /// <param name="owner">装配代码声明的上下文。</param>
+    /// <param name="cancellationToken">调用者取消。</param>
+    /// <returns>单一账本快照或暂不可读。</returns>
+    public Result<CommittedFactCapacitySnapshot> Read(string owner, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(owner);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!_gate.TryEnter()) { return Result.Failure<CommittedFactCapacitySnapshot>(CommittedFactCapacityErrors.Unavailable); }
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Result.Success(new CommittedFactCapacitySnapshot(owner, false, _policy.MaxRecords,
+                _policy.MaxPayloadBytes, _policy.MaxRecordPayloadBytes, _records, _bytes));
+        }
+        finally { _gate.Exit(); }
     }
 
     /// <summary>整批准入后发布预备好的状态；拒绝、取消或发布前异常不消耗额度。</summary>

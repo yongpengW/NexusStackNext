@@ -192,8 +192,11 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     }
 }
 
-internal sealed class FilesMemoryState
+internal sealed class FilesMemoryState : ICommittedFactCapacityReader
 {
+    public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(Capacity.Read("files", cancellationToken));
+
     internal FilesMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
     {
         Capacity = new(Writes, StoredFileCommittedV1.Name, capacity);
@@ -218,6 +221,7 @@ public static class FilesMemoryServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddSingleton(new FilesMemoryState(capacity));
+        services.AddKeyedSingleton<ICommittedFactCapacityReader>("files", (provider, _) => provider.GetRequiredService<FilesMemoryState>());
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddScoped(provider => new InMemoryStoredFileRepository(provider.GetRequiredService<FilesMemoryState>(),
             provider.GetRequiredService<StoredFileCommittedFacts>(), provider.GetRequiredService<IClock>(),

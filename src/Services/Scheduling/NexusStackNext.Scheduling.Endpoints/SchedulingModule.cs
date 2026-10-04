@@ -1,8 +1,10 @@
 using NexusStackNext.BuildingBlocks.Application.Auditing;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Contracts;
@@ -33,6 +35,8 @@ public static class SchedulingModule
 
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
+        var capacityRead = configuration.GetSection("Scheduling:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
+        capacityRead.Validate();
         services.AddSingleton<IScheduleCalendar, CronScheduleCalendar>();
         services.AddHostedService<SchedulingCalendarRuntimeCheck>();
         services.AddHealthChecks().AddCheck<SchedulingCalendarRuntimeCheck>("scheduling-calendar");
@@ -55,6 +59,7 @@ public static class SchedulingModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Scheduling；开发测试可显式选择 Scheduling:Storage:Provider=Memory。");
             }
             services.AddSchedulingPostgresStorage(connection);
+            services.AddCommittedFactCapacityReader<SchedulingDbContext>("scheduling", capacityRead);
             services.AddCommittedFactCleanup<SchedulingDbContext>("scheduling", PlanCommittedV1.Name,
                 configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
@@ -85,6 +90,14 @@ public static class SchedulingModule
 
         // 计划管理是后台执行委托：认证之外还须检查操作权限和当前会话。
         var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        endpoints.MapGet("/api/scheduling/audit-capacity", async ([FromKeyedServices("scheduling")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
+            .RequirePermission("/api/scheduling/audit-capacity", "GET")
+            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
         tasks.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         tasks.MapPost("/preview", (PreviewScheduleRequest request, IScheduleCalendar calendar, ApiResponses responses) =>
@@ -229,7 +242,7 @@ public static class SchedulingModule
         statusCode: error.Code switch
         {
             "scheduling.task.not_found" => StatusCodes.Status404NotFound,
-            "scheduling.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
+            "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         },

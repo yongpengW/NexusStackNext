@@ -16,6 +16,13 @@ namespace NexusStackNext.Pricing.Infrastructure;
 /// <summary>显式装配 Pricing 的 PostgreSQL 命令与查询适配器。</summary>
 public static class PricingServices
 {
+    /// <summary>显式接入本上下文账本的有界只读诊断。</summary>
+    /// <param name="services">宿主服务。</param>
+    /// <param name="options">独立读取预算。</param>
+    /// <returns>原服务集合。</returns>
+    public static IServiceCollection AddPricingFactCapacityReader(this IServiceCollection services, CommittedFactCapacityReadOptions? options = null)
+        => services.AddCommittedFactCapacityReader<PricingDbContext>("pricing", options);
+
     /// <summary>显式启动本上下文已交付审计事实副本的维护。</summary>
     /// <param name="services">容器。</param>
     /// <param name="options">本上下文保留与维护策略。</param>
