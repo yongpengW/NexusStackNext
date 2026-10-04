@@ -128,19 +128,9 @@ Write-Host '  注意：这台库可能同时被配置中心等别的服务使用
 Write-Host '  测试会逐个项目**串行**跑；如果你还要跑第二份，先等这一份结束。' -ForegroundColor Yellow
 
 # ---------- 全局互斥：同时只允许一份全量在跑 ----------
-$lockFile = Join-Path ([System.IO.Path]::GetTempPath()) 'nexusstack-run-tests.lock'
-if (Test-Path $lockFile) {
-    $age = (Get-Date) - (Get-Item $lockFile).LastWriteTime
-    if ($age.TotalMinutes -lt 120) {
-        Write-Host ''
-        Write-Host "已经有一份全量测试在跑（锁文件 $lockFile，$([math]::Round($age.TotalMinutes,1)) 分钟前建立）。" -ForegroundColor Red
-        Write-Host '同时跑两份会把那台共享数据库压得更狠——这正是上一次事故的成因。' -ForegroundColor Red
-        Write-Host '确认没有在跑的话，删掉锁文件再试。' -ForegroundColor Yellow
-        exit 1
-    }
-    Write-Host "  （发现过期的锁文件，$([math]::Round($age.TotalMinutes,0)) 分钟前的，忽略）" -ForegroundColor DarkGray
-}
-Set-Content -Path $lockFile -Value $PID -Encoding UTF8
+Import-Module (Join-Path $PSScriptRoot 'test-ownership.psm1') -Force
+$ownership = Enter-TestOwnership
+$workloadReturned = $true
 try {
 
 # ---------- 关掉 MSBuild 的节点复用 ----------
@@ -157,7 +147,9 @@ $env:MSBUILDDISABLENODEREUSE = '1'
 Write-Host ''
 if (-not $NoBuild) {
     Write-Host '构建…' -ForegroundColor Cyan
+    $workloadReturned = $false
     & dotnet build $solution --configuration $Configuration --nologo -v q
+    $workloadReturned = $true
     if ($LASTEXITCODE -ne 0) {
         Write-Host '构建失败，测试不跑。' -ForegroundColor Red
         exit $LASTEXITCODE
@@ -197,7 +189,9 @@ if ($testProjects.Count -eq 0) {
 
 $ciResults = @()
 if ($CiShard -ge 0) {
+    $workloadReturned = $false
     $inventory = @($testProjects | ForEach-Object { Get-DiscoveredTests $_.FullName $Configuration })
+    $workloadReturned = $true
     $plan = @(New-CiTestPlan $inventory)
     $selected = @($plan | Where-Object Shard -EQ $CiShard)
     $testProjects = @($testProjects | Where-Object { $_.BaseName -in $selected.Project })
@@ -224,7 +218,9 @@ foreach ($project in $testProjects) {
     }
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $workloadReturned = $false
     $output = & dotnet @dotnetArgs 2>&1
+    $workloadReturned = $true
     $testExitCode = $LASTEXITCODE
     $watch.Stop()
     if ($CiShard -ge 0) { $ciResults += @(Get-TestReportResults $reportPath $name) }
@@ -291,7 +287,7 @@ exit 0
 
 }
 finally {
-    # **锁一定要释放**，包括构建失败、测试失败、以及被 Ctrl+C 打断这些路径。
-    # `exit` 在 PowerShell 里会触发 finally，所以上面那些 exit 不会把锁留下。
-    Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
+    # Normal external-command returns release ownership even on nonzero exit.
+    # Interrupted commands leave persistent active state; their children may still be running.
+    Exit-TestOwnership $ownership $workloadReturned
 }
