@@ -123,7 +123,7 @@ try {
     }
     Write-Output 'PASS: simultaneous runners in two workspaces admit exactly one external workload'
     $before = @(Get-ChildItem -LiteralPath $scratch -Filter '*.entry').Count
-    foreach ($badState in @('[{"Version":1,"State":"idle"},{"Version":1,"State":"idle"}]',
+    foreach ($badState in @('[{"Version":1,"State":"idle"}]', '[{"Version":1,"State":"idle"},{"Version":1,"State":"idle"}]',
         '', '{', '17', '{"Version":2,"State":"idle"}', '{"Version":[1],"State":"idle"}', '{"Version":1,"State":["idle"]}',
         ('{"Version":1,"State":"active","Pid":' + $PID + ',"StartedUtcTicks":0}'),
         '{"Version":1,"State":"active","Pid":2147483647,"StartedUtcTicks":0}')) {

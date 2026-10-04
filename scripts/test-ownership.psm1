@@ -19,8 +19,8 @@ function Enter-TestOwnership {
             if ($stream.Length -gt 4096) { throw 'Invalid guard state.' }
             $bytes = [byte[]]::new([int]$stream.Length)
             $stream.ReadExactly($bytes)
-            $state = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) | ConvertFrom-Json -ErrorAction Stop
-            if ($state -isnot [pscustomobject] -or $state.Version -isnot [long] -or $state.Version -ne 1 -or $state.State -isnot [string] -or $state.State -ne 'idle') { throw 'Prior workload termination is unproven.' }
+            $state = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) | ConvertFrom-Json -NoEnumerate -ErrorAction Stop
+            if ($null -eq $state -or $state.GetType() -ne [System.Management.Automation.PSCustomObject] -or $state.Version -isnot [long] -or $state.Version -ne 1 -or $state.State -isnot [string] -or $state.State -ne 'idle') { throw 'Prior workload termination is unproven.' }
         }
         $owner = [ordered]@{ Version = 1; State = 'active'; Pid = $PID; StartedUtcTicks = [Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks }
         Set-TestOwnershipState $stream $owner
