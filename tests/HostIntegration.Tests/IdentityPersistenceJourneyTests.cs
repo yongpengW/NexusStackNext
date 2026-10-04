@@ -280,7 +280,7 @@ public sealed class IdentityPersistenceJourneyTests
     }
 }
 
-internal sealed class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
+internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
 {
     private readonly string _connectionString;
     private readonly string _platformConnectionString;

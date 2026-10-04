@@ -155,6 +155,7 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         services.AddSingleton(new IdentityMemoryState(capacity));
+        services.AddKeyedSingleton<ICommittedFactCapacityReader>("identity", (provider, _) => provider.GetRequiredService<IdentityMemoryState>());
         services.AddScoped<IdentityMemorySession>();
         services.AddScoped<IdentityMemoryFacts>();
         services.AddKeyedSingleton<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey,

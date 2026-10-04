@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Contracts;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure;
@@ -32,6 +33,8 @@ public static class CostingModule
         var connection = configuration.GetConnectionString("Costing");
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Costing，使用独立业务数据库。"); }
         services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>());
+        services.AddCostingFactCapacityReader(
+            configuration.GetSection("Costing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>());
         services.AddSingleton(new CostingConnection(connection));
         services.AddHostedService<CostingStartupCheck>();
         services.AddCostingFactCleanup(configuration.GetSection("Costing:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -67,6 +70,12 @@ public static class CostingModule
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/costing").RequireAuthorization("costing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+        group.MapGet("/audit-capacity", async ([FromKeyedServices("costing")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(503);
         group.MapGet("/schedule-receipts/{occurrenceId:guid}", async (Guid occurrenceId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetScheduledCostReceipt(occurrenceId), token).ConfigureAwait(false);
@@ -125,7 +134,7 @@ public static class CostingModule
         statusCode: error.Code switch
         {
             "costing.not_found" => StatusCodes.Status404NotFound,
-            "costing.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
+            "costing.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Http.Features;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Files.Application;
 using NexusStackNext.Files.Contracts;
@@ -41,6 +43,8 @@ public static class FilesModule
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
         ArgumentNullException.ThrowIfNull(environment);
+        var capacityRead = configuration.GetSection("Files:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
+        capacityRead.Validate();
         services.AddSingleton(new FileUploadLimits(
             configuration.GetValue<long?>("Files:Upload:MaxBytes") ?? 64 * 1024 * 1024,
             configuration.GetValue<int?>("Files:Upload:MaxConcurrentUploads") ?? 4));
@@ -69,6 +73,7 @@ public static class FilesModule
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Files；开发测试可显式选择 Files:Storage:Provider=Memory。");
             }
             services.AddFilesPostgresMetadata(connection);
+            services.AddCommittedFactCapacityReader<FilesDbContext>("files", capacityRead);
             services.AddCommittedFactCleanup<FilesDbContext>("files", StoredFileCommittedV1.Name,
                 configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
@@ -110,6 +115,13 @@ public static class FilesModule
 
         // 会话撤销检查先于归属判断；根管理员也不隐式拥有其他人的私有文件。
         var fileEndpoints = endpoints.MapGroup("/api/files").RequireAuthorization().RequireAuthenticated();
+        fileEndpoints.MapGet("/audit-capacity", async ([FromKeyedServices("files")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/files/audit-capacity", "GET")
+            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
         fileEndpoints.AddEndpointFilter<NexusStackAuthorizationFilter>();
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
@@ -229,7 +241,7 @@ public static class FilesModule
         {
             "files.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
-            "files.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
+            "files.audit_capacity.exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,
             _ => StatusCodes.Status400BadRequest,

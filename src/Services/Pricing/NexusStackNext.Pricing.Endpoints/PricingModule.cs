@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using NexusStackNext.Auditing.Contracts;
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure;
@@ -33,6 +34,8 @@ public static class PricingModule
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Pricing，使用独立业务数据库。"); }
         var cache = configuration.GetSection("Pricing:Cache").Get<PricingCacheOptions>();
         services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache);
+        services.AddPricingFactCapacityReader(
+            configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>());
         if (cache?.Enabled == true) { services.AddPricingCacheInvalidationWorker(); }
         services.AddSingleton(new PricingConnection(connection));
         services.AddHostedService<PricingStartupCheck>();
@@ -66,6 +69,12 @@ public static class PricingModule
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/pricing").RequireAuthorization("pricing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+        group.MapGet("/audit-capacity", async ([FromKeyedServices("pricing")] ICommittedFactCapacityReader reader,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(503);
         group.MapPost("/cost", async (UpdatePricingCost request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
@@ -114,7 +123,7 @@ public static class PricingModule
         statusCode: error.Code switch
         {
             "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" => StatusCodes.Status503ServiceUnavailable,
+            "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

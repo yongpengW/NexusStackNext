@@ -41,7 +41,7 @@ HealthCheckService 的 `<context>-fact-cleanup` 注册项提供 `enabled`、`cle
 正文总量 256 MiB、单条正文 16 KiB，按 UTF-8 字节计算。待投递、死信和未过保留期的已确认记录都占用额度。
 额度不足时设置写入返回 HTTP 503 / `platform.audit_capacity.exhausted`，业务与事实一起回滚；
 同值空操作仍可成功，安全清理已确认副本后释放额度。其他业务消息不计入这个事实额度。
-策略当前存于数据库，不受多宿主启动顺序影响；可审计调整入口、容量健康诊断与其他适配器尚在实施，
+策略当前存于数据库，不受多宿主启动顺序影响；可审计调整入口仍待实现，受权只读诊断见下节，
 不要直接修改占用计数。该逻辑上限不等于数据库磁盘文件上限。
 详见 [Platform ADR-0002](../src/Services/Platform/docs/adr/0002-setting-fact-capacity-shares-the-business-transaction.md)。
 
@@ -74,6 +74,29 @@ Platform、Identity、Files、Scheduling 分别从 `<Context>:AuditDelivery:Memo
 Identity 失败时不失效权限缓存，错误密码计数也只有准入后才保存。Scheduling 决定拒绝报告 failed。
 既有清理释放额度后可重试；未投递 Memory 数据仍会随进程结束丢失。
 真实 broker 旅程仅证明已交付消息在来源结束后仍可被中央接收。完整发布资格及后续治理由 #80 / #64 / #60 跟踪。
+
+### 来源事实容量只读诊断
+
+六个来源模块显式提供 `GET /api/<context>/audit-capacity`，其中 `<context>` 为
+`identity`、`platform`、`files`、`scheduling`、`costing` 或 `pricing`。返回沿用统一 `ApiResponse`。
+四个平台必须具备对应路径的 GET 权限；根主体仍须通过当前会话校验。
+Costing / Pricing 沿用当前根操作者策略，普通业务主体不能读取；这不代表 #54 的普通业务授权已完成。
+
+`context` 说明所属上下文，`isPersistent=false` 表示仅当前进程存活期间保留的 Memory 账本。
+`maxRecords`、`maxPayloadBytes`、`maxRecordPayloadBytes` 分别为条数、正文 UTF-8 总字节和单条字节上限；
+`retainedRecords`、`retainedPayloadBytes` 为仍保留的占用，包含待投递、死信和确认尚未清理的副本。
+`remainingRecords` / `remainingPayloadBytes` 最小为零；`overLimit` 明确标记历史占用超过当前条数或总量策略，
+不扫描历史正文推断单条是否超限。Int64 字段按既有 HTTP 契约输出字符串，避免 JavaScript 精度损失。
+
+每个上下文只读取自己的账本。PostgreSQL 在一次查询中读取策略与计数，不扫描 Outbox 正文；
+Memory 与准入和清理共用原写锁，争锁时立即报告暂不可读。查询不会改变业务、事实或权限缓存。
+HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类记录。
+
+`<Context>:AuditDelivery:CapacityRead:Timeout` 默认 `00:00:03`，允许 50ms 至 30s，非法值拒绝宿主装配。
+这是容量读取适配器连接与查询的独立预算；身份与权限校验仍使用现有安全边界，不能把该数值当成整条 HTTP 链路的截止时间。
+读取不可用、账本缺失或超时返回 HTTP 503 / `audit_capacity.unavailable`，不会伪造零占用快照。
+此接口不修改持久容量策略，也不改变业务写入的锁等待预算；后续调整、恢复和保留治理由 #64 / #60 继续跟踪。
+本轮验收与评审进度见 [#91](https://github.com/yongpengW/NexusStackNext/issues/91)。
 
 ### 中央存储与消息摄入
 

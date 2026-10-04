@@ -17,7 +17,7 @@ namespace NexusStackNext.Identity.Infrastructure;
 
 internal sealed class IdentityMemoryConflictException(string message) : InvalidOperationException(message);
 
-internal sealed class IdentityMemoryState
+internal sealed class IdentityMemoryState : ICommittedFactCapacityReader
 {
     internal IdentityMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
     {
@@ -28,6 +28,9 @@ internal sealed class IdentityMemoryState
     internal IdentityMemoryData Data { get; set; } = new();
     internal Lock Gate { get; } = new();
     internal Dictionary<Guid, OutboxEntry> Outbox { get; set; } = [];
+
+    public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(Capacity.Read("identity", cancellationToken));
 }
 
 internal sealed class IdentityMemoryData
