@@ -44,7 +44,7 @@ public static class SchedulingModule
             {
                 throw new InvalidOperationException("Scheduling:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddSchedulingInMemoryStorage();
+            services.AddSchedulingInMemoryStorage(configuration.GetSection("Scheduling:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
             services.AddSchedulingMemoryFactCleanup(configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))

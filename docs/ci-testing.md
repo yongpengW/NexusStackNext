@@ -131,4 +131,8 @@ CI 默认运行全部探针，未知探针名称失败。本轮实现和 Linux �
 [CI 37173639608](https://github.com/yongpengW/NexusStackNext/actions/runs/37173639608)
 1293 项全部通过，含排队 **11 分 39 秒**，其中首次 runner 排队 23 秒、实际执行 11 分 16 秒，
 旧汇总任务墙钟 232 秒。仓库检查并行改造由 [#88](https://github.com/yongpengW/NexusStackNext/issues/88)
-跟踪；收益以该票最终 Linux CI 的任务时间线为准，不能把移动检查本身当作提速证据。
+跟踪，已通过 [PR #89](https://github.com/yongpengW/NexusStackNext/pull/89) 合并。
+最终 [CI 37175673550](https://github.com/yongpengW/NexusStackNext/actions/runs/37175673550) 六个任务全部成功，
+1293 项各执行一次，无失败、跳过、重复或遗漏。含排队 **9 分 41 秒**，首次排队 3 秒，
+测试关键路径 502 秒，并行仓库检查 181 秒，最终汇总 73 秒；相对上一轮总耗时减少 118 秒、
+汇总任务减少 159 秒。两轮初始排队相差 20 秒，测试 runner 也有波动；这是两次运行的结果，不是固定时长承诺。

@@ -3,7 +3,9 @@ using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Scheduling.Application;
+using NexusStackNext.Scheduling.Contracts;
 using NexusStackNext.Scheduling.Domain.Tasks;
 
 namespace NexusStackNext.Scheduling.Infrastructure;
@@ -18,8 +20,9 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     /// <summary>创建独立的内存存储；宿主装配使用共享状态及每次调用的事实上下文。</summary>
     /// <param name="serializer">消息序列化。</param>
     /// <param name="clock">独立应用的事实时钟。</param>
-    public InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, IClock? clock = null)
-        : this(serializer, new SchedulingMemoryState(), new ScheduledPlanCommittedFacts(clock ?? new SystemClock(), serializer)) { }
+    /// <param name="capacity">本存储的事实保留上限。</param>
+    public InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null)
+        : this(serializer, new SchedulingMemoryState(capacity), new ScheduledPlanCommittedFacts(clock ?? new SystemClock(), serializer)) { }
 
     internal InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, SchedulingMemoryState state, ScheduledPlanCommittedFacts facts)
     {
@@ -80,14 +83,20 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         cancellationToken.ThrowIfCancellationRequested();
         lock (_state.Writes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_state.Tasks.ContainsKey(task.Id.Value) || _state.Tasks.Values.Any(existing => existing.Code.Equals(task.Code)))
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.CodeTaken));
             }
             var facts = _facts.Create(null, task);
-            _state.Tasks.Add(task.Id.Value, task.Snapshot());
-            _state.Origins.Add(task.Id.Value, origin);
-            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = task.Snapshot();
+            if (!_state.Capacity.TryCommit(facts, () =>
+            {
+                _state.Tasks.Add(task.Id.Value, snapshot);
+                _state.Origins.Add(task.Id.Value, origin);
+                foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+            }, cancellationToken)) { return Task.FromResult(Result.Failure(TaskRegistry.AuditCapacityExceeded)); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -107,13 +116,19 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         cancellationToken.ThrowIfCancellationRequested();
         lock (_state.Writes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!_state.Tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion)
             {
                 return Task.FromResult(Result.Failure(TaskRegistry.Conflict));
             }
             var facts = _facts.Create(current, task);
-            _state.Tasks[task.Id.Value] = task.Snapshot();
-            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = task.Snapshot();
+            if (!_state.Capacity.TryCommit(facts, () =>
+            {
+                _state.Tasks[task.Id.Value] = snapshot;
+                foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+            }, cancellationToken)) { return Task.FromResult(Result.Failure(TaskRegistry.AuditCapacityExceeded)); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -128,6 +143,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         var pending = occurrence is null ? null : OutboxEntry.From(occurrence.ToEvent(), _serializer);
         lock (_state.Writes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (_state.Decisions.TryGetValue(decision.DecisionId, out var existing))
             {
                 var original = decision.OccurrenceId is { } id ? _state.Occurrences.GetValueOrDefault(id) : null;
@@ -139,14 +155,19 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
                 return Task.FromResult(Result.Failure(TaskRegistry.Conflict));
             }
             var facts = _facts.Create(current, task, decision);
-            _state.Tasks[task.Id.Value] = task.Snapshot();
-            _state.Decisions.Add(decision.DecisionId, decision);
-            foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
-            if (occurrence is not null)
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = task.Snapshot();
+            if (!_state.Capacity.TryCommit(facts, () =>
             {
-                _state.Occurrences.Add(occurrence.OccurrenceId, occurrence);
-                _state.Outbox.Add(pending!.Id, pending);
-            }
+                _state.Tasks[task.Id.Value] = snapshot;
+                _state.Decisions.Add(decision.DecisionId, decision);
+                foreach (var fact in facts) { _state.Outbox.Add(fact.Id, fact); }
+                if (occurrence is not null)
+                {
+                    _state.Occurrences.Add(occurrence.OccurrenceId, occurrence);
+                    _state.Outbox.Add(pending!.Id, pending);
+                }
+            }, cancellationToken)) { return Task.FromResult(Result.Failure(TaskRegistry.AuditCapacityExceeded)); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -231,6 +252,12 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
 
 internal sealed class SchedulingMemoryState
 {
+    internal SchedulingMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    {
+        Capacity = new(Writes, PlanCommittedV1.Name, capacity);
+    }
+
+    internal InMemoryCommittedFactCapacity Capacity { get; }
     internal Dictionary<long, ScheduledTask> Tasks { get; } = [];
     internal Lock Writes { get; } = new();
     internal Dictionary<Guid, ScheduleOccurrence> Occurrences { get; } = [];
@@ -246,11 +273,12 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     public const string OutboxKey = "scheduling";
     /// <summary>注册内存存储和应用入口。</summary>
     /// <param name="services">容器。</param>
+    /// <param name="capacity">本存储的事实保留上限。</param>
     /// <returns>原容器。</returns>
-    public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services)
+    public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton<SchedulingMemoryState>();
+        services.AddSingleton(new SchedulingMemoryState(capacity));
         services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddScoped(provider => new InMemoryScheduledTaskStore(provider.GetRequiredService<IIntegrationEventSerializer>(),
             provider.GetRequiredService<SchedulingMemoryState>(), provider.GetRequiredService<ScheduledPlanCommittedFacts>()));

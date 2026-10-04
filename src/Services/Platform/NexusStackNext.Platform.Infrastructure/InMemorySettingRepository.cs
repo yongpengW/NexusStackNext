@@ -21,15 +21,26 @@ namespace NexusStackNext.Platform.Infrastructure;
 /// 对象被其他请求偷偷改动，或让两个旧版本写入都成功。
 /// </para>
 /// </summary>
-/// <param name="serializer">最小事件序列化器。</param>
-public sealed class InMemorySettingRepository(IIntegrationEventSerializer serializer) : ISettingRepository, IOutboxStore, ISettingAuditDelivery
+public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore, ISettingAuditDelivery
 {
+    private readonly IIntegrationEventSerializer _serializer;
+    private readonly InMemoryCommittedFactCapacity _capacity;
     private readonly ConcurrentDictionary<(string Scope, string Name), GlobalSetting> _settings = new();
     private readonly Lock _writes = new();
     private readonly Dictionary<Guid, OutboxEntry> _outbox = new();
 
+    /// <summary>创建独立的开发存储与有限容量账本。</summary>
+    /// <param name="serializer">最小事件序列化器。</param>
+    /// <param name="capacity">本存储的事实保留上限。</param>
+    public InMemorySettingRepository(IIntegrationEventSerializer serializer, MemoryCommittedFactCapacityOptions? capacity = null)
+    {
+        ArgumentNullException.ThrowIfNull(serializer);
+        _serializer = serializer;
+        _capacity = new(_writes, SettingCommittedV1.Name, capacity);
+    }
+
     internal ICommittedFactCleanup CreateFactCleanup(CommittedFactCleanupOptions options, IClock clock)
-        => new InMemoryCommittedFactCleanup(_writes, () => _outbox, SettingCommittedV1.Name, options, clock);
+        => new InMemoryCommittedFactCleanup(_writes, () => _outbox, SettingCommittedV1.Name, options, clock, _capacity);
 
     /// <inheritdoc />
     public Task<GlobalSetting?> FindAsync(SettingKey key, CancellationToken cancellationToken = default)
@@ -66,14 +77,20 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
         ArgumentNullException.ThrowIfNull(setting);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var pending = OutboxEntry.From(audit, serializer);
+        var pending = OutboxEntry.From(audit, _serializer);
         lock (_writes)
         {
-            if (!_settings.TryAdd((setting.Key.Scope, setting.Key.Name), setting.Snapshot()))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (_settings.ContainsKey((setting.Key.Scope, setting.Key.Name)))
             {
                 return Task.FromResult(Result.Failure(SettingStore.Conflict));
             }
-            _outbox.Add(pending.Id, pending);
+            var snapshot = setting.Snapshot();
+            if (!_capacity.TryCommit([pending], () =>
+            {
+                _outbox.Add(pending.Id, pending);
+                _settings[(setting.Key.Scope, setting.Key.Name)] = snapshot;
+            }, cancellationToken)) { return Task.FromResult(Result.Failure(SettingStore.AuditCapacityExhausted)); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -83,16 +100,21 @@ public sealed class InMemorySettingRepository(IIntegrationEventSerializer serial
     {
         ArgumentNullException.ThrowIfNull(setting);
         cancellationToken.ThrowIfCancellationRequested();
-        var pending = audit is null ? null : OutboxEntry.From(audit, serializer);
+        var pending = audit is null ? null : OutboxEntry.From(audit, _serializer);
         lock (_writes)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var key = (setting.Key.Scope, setting.Key.Name);
             if (!_settings.TryGetValue(key, out var current) || current.Version != originalVersion)
             {
                 return Task.FromResult(Result.Failure(SettingStore.Conflict));
             }
-            _settings[key] = setting.Snapshot();
-            if (pending is not null) { _outbox.Add(pending.Id, pending); }
+            var snapshot = setting.Snapshot();
+            if (!_capacity.TryCommit(pending is null ? [] : [pending], () =>
+            {
+                if (pending is not null) { _outbox.Add(pending.Id, pending); }
+                _settings[key] = snapshot;
+            }, cancellationToken)) { return Task.FromResult(Result.Failure(SettingStore.AuditCapacityExhausted)); }
             return Task.FromResult(Result.Success());
         }
     }
@@ -177,12 +199,14 @@ public static class PlatformInfrastructureServiceCollectionExtensions
     public const string OutboxKey = "platform";
     /// <summary>注册内存配置存储与读写服务。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。</summary>
     /// <param name="services">服务集合。</param>
+    /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
-    public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services)
+    public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-
-        services.AddSingleton<InMemorySettingRepository>();
+        var policy = capacity ?? new();
+        policy.Validate();
+        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy));
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddSingleton<ISettingAuditDelivery>(provider => provider.GetRequiredService<InMemorySettingRepository>());

@@ -17,6 +17,6 @@ public static class SchedulingFactCleanupServices
         {
             var state = provider.GetRequiredService<SchedulingMemoryState>();
             return new InMemoryCommittedFactCleanup(state.Writes, () => state.Outbox, PlanCommittedV1.Name,
-                policy, provider.GetRequiredService<IClock>());
+                policy, provider.GetRequiredService<IClock>(), state.Capacity);
         }, options);
 }

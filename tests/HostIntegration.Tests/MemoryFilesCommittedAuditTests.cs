@@ -175,7 +175,7 @@ public sealed class MemoryFilesCommittedAuditTests
     public async Task FactBatchFailureAndCancellation_PreserveMetadataAndFirstDeletionOrigin_AndSameScopeCanRetry()
     {
         var serializer = new InterruptibleFileSerializer();
-        await using var baseApp = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
+        await using var baseApp = new MemoryFactCapacityApp("Files", 4) { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IIntegrationEventSerializer>(serializer)));
         await using var scope = app.Services.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -210,6 +210,7 @@ public sealed class MemoryFilesCommittedAuditTests
         await Assert.ThrowsAsync<FileMetadataConflictException>(() => files.SaveAsync(file, 2, failedOrigin));
         Assert.Equal(4, (await ReadFactsAsync(outbox)).Length);
         Assert.Equal(winner, await files.ReadDeletionOriginAsync(file.Id));
+        await Assert.ThrowsAsync<FileAuditCapacityException>(() => files.SaveAsync(NewFile(76603)));
     }
 
     private static StoredFile NewFile(long id) => StoredFile.Register(new StoredFileId(id), FileName.Create("private-file.bin").Value,

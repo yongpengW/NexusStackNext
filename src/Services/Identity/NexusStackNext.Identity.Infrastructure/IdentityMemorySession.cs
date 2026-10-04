@@ -3,6 +3,9 @@ using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Contracts;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.Identity.Domain.Menus;
@@ -16,6 +19,12 @@ internal sealed class IdentityMemoryConflictException(string message) : InvalidO
 
 internal sealed class IdentityMemoryState
 {
+    internal IdentityMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    {
+        Capacity = new(Gate, IdentityEntityCommittedV1.Name, capacity);
+    }
+
+    internal InMemoryCommittedFactCapacity Capacity { get; }
     internal IdentityMemoryData Data { get; set; } = new();
     internal Lock Gate { get; } = new();
     internal Dictionary<Guid, OutboxEntry> Outbox { get; set; } = [];
@@ -121,11 +130,15 @@ internal sealed class IdentityMemorySession(IdentityMemoryState state, IdentityM
                 throw new IdentityMemoryConflictException("Identity Memory 唯一约束冲突。");
             }
             token.ThrowIfCancellationRequested();
-            var nextOutbox = new Dictionary<Guid, OutboxEntry>(state.Outbox);
-            foreach (var fact in facts.Create(_original, saved)) { nextOutbox.Add(fact.Id, fact); }
-            token.ThrowIfCancellationRequested();
-            state.Data = next;
-            state.Outbox = nextOutbox;
+            var batch = facts.Create(_original, saved);
+            if (!state.Capacity.TryCommit(batch, () =>
+            {
+                var nextOutbox = new Dictionary<Guid, OutboxEntry>(state.Outbox);
+                foreach (var fact in batch) { nextOutbox.Add(fact.Id, fact); }
+                token.ThrowIfCancellationRequested();
+                state.Data = next;
+                state.Outbox = nextOutbox;
+            }, token)) { throw new IdentityAuditCapacityException(); }
         }
     }
 

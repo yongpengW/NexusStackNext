@@ -58,7 +58,7 @@ public static class FilesModule
             {
                 throw new InvalidOperationException("Files:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddFilesInMemoryMetadata();
+            services.AddFilesInMemoryMetadata(configuration.GetSection("Files:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
             services.AddFilesMemoryFactCleanup(configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))

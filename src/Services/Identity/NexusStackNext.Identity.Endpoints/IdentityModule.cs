@@ -55,7 +55,7 @@ public static class IdentityModule
                 throw new InvalidOperationException("Identity:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
 
-            services.AddIdentityInMemoryStorage();
+            services.AddIdentityInMemoryStorage(configuration.GetSection("Identity:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
             services.AddIdentityMemoryFactCleanup(configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))

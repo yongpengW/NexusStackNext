@@ -53,7 +53,7 @@ public sealed class MemoryIdentityTransactionTests
     public async Task StandaloneSave_FactBatchFailureCanRetryTrackedChangesWithoutRestaging()
     {
         var serializer = new FailingIdentitySerializer { FailOperation = "menu-granted" };
-        await using var baseApp = new PlatformApp { SchedulingWorkerEnabled = false };
+        await using var baseApp = new MemoryFactCapacityApp("Identity", 2) { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IIntegrationEventSerializer>(serializer)));
         await using var scope = app.Services.CreateAsyncScope();
         var role = Role.Create(new RoleId(99001), RoleCode.Create("retry-fact-batch").Value, RoleName.Create("Private role").Value);
@@ -72,6 +72,9 @@ public sealed class MemoryIdentityTransactionTests
         await unit.SaveChangesAsync();
         Assert.Equal(new[] { "created", "menu-granted" }, (await FactsAsync(outbox)).Select(fact => fact.Operation).Order(StringComparer.Ordinal));
         Assert.NotEqual(default, role.CreatedAt);
+        await scope.ServiceProvider.GetRequiredService<IRoleRepository>().AddAsync(Role.Create(new RoleId(99003),
+            RoleCode.Create("over-fact-capacity").Value, RoleName.Create("Over capacity").Value));
+        await Assert.ThrowsAsync<IdentityAuditCapacityException>(() => unit.SaveChangesAsync());
     }
 
     [Theory]
@@ -82,7 +85,7 @@ public sealed class MemoryIdentityTransactionTests
     public async Task RejectedOrCanceledCommit_DiscardsStateAndFacts(string mode)
     {
         var serializer = new FailingIdentitySerializer();
-        await using var baseApp = new PlatformApp { SchedulingWorkerEnabled = false };
+        await using var baseApp = new MemoryFactCapacityApp("Identity", 3) { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IIntegrationEventSerializer>(serializer)));
         await using var scope = app.Services.CreateAsyncScope();
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
@@ -114,6 +117,9 @@ public sealed class MemoryIdentityTransactionTests
         Assert.Single(await FactsAsync(scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)));
         serializer.BeforeSerialize = null;
         Assert.True((await sender.SendAsync(new LoginCommand("memory-cancellation", "a-strong-password"))).IsSuccess);
+        Assert.Equal(3, (await FactsAsync(scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey))).Length);
+        Assert.Equal(IdentityAuditCapacityException.Exhausted,
+            (await sender.SendAsync(new CreateUserCommand("memory-cancellation-excess", "a-strong-password"))).Error);
     }
 
     [Fact]
