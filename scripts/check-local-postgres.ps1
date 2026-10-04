@@ -114,6 +114,28 @@ foreach ($contents in @('', '{', (New-FixtureConnection 'shared-fixture.invalid'
         $invalid.Output.Contains('fixture-only-sentinel')) { throw 'Invalid local selection entered a workload or exposed a fixture credential.' }
 }
 Write-Output 'PASS: invalid, shared-target and credential-incomplete selections fail before workload entry'
+foreach ($alias in @('Server', 'Data Source', 'User ID', 'Options')) {
+    $settings = [Data.Common.DbConnectionStringBuilder]::new()
+    $settings.set_ConnectionString($local)
+    $settings[$alias] = 'shared-fixture.invalid'
+    [IO.File]::WriteAllText($connectionFile, $settings.get_ConnectionString())
+    $invalid = Invoke-Runner -Arguments @('-LocalPostgresConnectionFile', $connectionFile)
+    if ($invalid.Exit -eq 0 -or (Test-Path -LiteralPath $entry) -or -not $invalid.Output.Contains('LOCAL_POSTGRES_CONFIGURATION_REJECTED')) {
+        throw 'An unvalidated provider alias or option reached the workload through the local connection seam.'
+    }
+}
+Write-Output 'PASS: provider aliases and extra options refuse entry before workload starts'
+$settings = [Data.Common.DbConnectionStringBuilder]::new()
+$settings.set_ConnectionString($local)
+$settings['Server'] = 'shared-fixture.invalid'
+$settings['Count'] = 5
+$settings['Keys'] = 'Host'
+[IO.File]::WriteAllText($connectionFile, $settings.get_ConnectionString())
+$invalid = Invoke-Runner -Arguments @('-LocalPostgresConnectionFile', $connectionFile)
+if ($invalid.Exit -eq 0 -or (Test-Path -LiteralPath $entry) -or -not $invalid.Output.Contains('LOCAL_POSTGRES_CONFIGURATION_REJECTED')) {
+    throw 'Dictionary member aliases hid extra connection keys from the local selection guard.'
+}
+Write-Output 'PASS: dictionary member aliases cannot hide extra provider keys'
 [IO.File]::WriteAllText($connectionFile, $local)
 foreach ($mode in @('-CiShard', '-Init')) {
     $arguments = @('-LocalPostgresConnectionFile', $connectionFile, $mode)

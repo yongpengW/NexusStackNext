@@ -43,6 +43,8 @@ $bin = 'C:\Tools\pgsql\bin' # 使用自己解压后的路径
 客户端认证经 `PGPASSFILE`，真实测试经私有连接文件，口令不进入命令参数或公共输出。
 连接文件只允许回环 PostgreSQL 目标；显式空路径、无效内容、非回环目标或缺少凭据时拒绝启动，
 不能退回原共享目标。CI 分片及 `-Init` 也拒绝这项本地覆盖。
+该入口仅接受工具生成的 Host / Port / Database / Username / Password 五个规范键，
+再从已验证字段重建连接串；拒绝提供程序别名及其他选项，避免 Npgsql 对原串作不同解释。
 
 监听只绑定 `127.0.0.1`，不建立 Unix socket；保留 `fsync`、`synchronous_commit`、
 `full_page_writes`，时区为 UTC，认证为 SCRAM。就绪验证读取真实服务的数据目录、端口、监听、

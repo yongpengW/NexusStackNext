@@ -117,11 +117,16 @@ if ($LocalPostgresConnectionFile) {
         $connection = [IO.File]::ReadAllText($file.FullName).Trim()
         $settings = [Data.Common.DbConnectionStringBuilder]::new()
         $settings.set_ConnectionString($connection)
+        $canonicalKeys = @('Host', 'Port', 'Database', 'Username', 'Password')
+        if ($settings.get_Count() -ne $canonicalKeys.Count -or @($settings.get_Keys() | Where-Object { $_ -notin $canonicalKeys }).Count -ne 0) { throw 'Unsupported local connection keys.' }
         $port = 0
         if ($settings['Host'] -cne '127.0.0.1' -or $settings['Database'] -cne 'postgres' -or
             -not [int]::TryParse([string]$settings['Port'], [ref]$port) -or $port -lt 1 -or $port -gt 65535 -or
             [string]::IsNullOrWhiteSpace([string]$settings['Username']) -or [string]::IsNullOrWhiteSpace([string]$settings['Password'])) { throw 'Invalid local target.' }
-        $env:NEXUSSTACK_TEST_POSTGRES = $connection
+        $verified = [Data.Common.DbConnectionStringBuilder]::new()
+        foreach ($key in $canonicalKeys) { $verified[$key] = $settings[$key] }
+        $verified['Port'] = $port
+        $env:NEXUSSTACK_TEST_POSTGRES = $verified.get_ConnectionString()
         Write-Host '  已选择私有文件中的本地 PostgreSQL（其他测试配置保留）'
     }
     catch { throw 'LOCAL_POSTGRES_CONFIGURATION_REJECTED: invalid private loopback connection file; no workload started.' }
