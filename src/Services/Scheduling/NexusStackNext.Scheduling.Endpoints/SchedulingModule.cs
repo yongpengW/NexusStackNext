@@ -58,7 +58,8 @@ public static class SchedulingModule
             {
                 throw new InvalidOperationException("必须配置 ConnectionStrings:Scheduling；开发测试可显式选择 Scheduling:Storage:Provider=Memory。");
             }
-            services.AddSchedulingPostgresStorage(connection);
+            var capacityWrite = configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
+            services.AddSchedulingPostgresStorage(capacityWrite.ConfigureConnection(connection));
             services.AddCommittedFactCapacityReader<SchedulingDbContext>("scheduling", capacityRead);
             services.AddCommittedFactCleanup<SchedulingDbContext>("scheduling", PlanCommittedV1.Name,
                 configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -242,7 +243,7 @@ public static class SchedulingModule
         statusCode: error.Code switch
         {
             "scheduling.task.not_found" => StatusCodes.Status404NotFound,
-            "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         },

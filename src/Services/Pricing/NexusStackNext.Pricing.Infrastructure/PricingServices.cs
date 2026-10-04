@@ -142,10 +142,10 @@ internal sealed class PricingCommands(PricingDbContext database, IExecutionConte
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch (DbUpdateException error) when (PricingFactCapacityFailure.IsExhausted(error))
+        catch (DbUpdateException error) when (CommittedFactCapacityFailure.Read(error, "pricing", PricingErrors.AuditCapacityExceeded) is { } reason)
         {
             database.ChangeTracker.Clear();
-            return Result.Failure<RecalculationStatus>(PricingErrors.AuditCapacityExceeded);
+            return Result.Failure<RecalculationStatus>(reason);
         }
         return Result.Success(task.ToStatus());
     }

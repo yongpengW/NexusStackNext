@@ -94,7 +94,7 @@ internal sealed class IdentityCommandHandler<TCommand>(
     public async Task<Result> HandleAsync(TCommand command, CancellationToken cancellationToken = default)
     {
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
-        catch (IdentityAuditCapacityException) { return Result.Failure(IdentityAuditCapacityException.Exhausted); }
+        catch (IdentityAuditCapacityException error) { return Result.Failure(error.Reason); }
     }
 }
 
@@ -106,6 +106,6 @@ internal sealed class IdentityCommandHandler<TCommand, TResult>(
     public async Task<Result<TResult>> HandleAsync(TCommand command, CancellationToken cancellationToken = default)
     {
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
-        catch (IdentityAuditCapacityException) { return Result.Failure<TResult>(IdentityAuditCapacityException.Exhausted); }
+        catch (IdentityAuditCapacityException error) { return Result.Failure<TResult>(error.Reason); }
     }
 }

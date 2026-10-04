@@ -98,6 +98,16 @@ HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类
 此接口不修改持久容量策略，也不改变业务写入的锁等待预算；后续调整、恢复和保留治理由 #64 / #60 继续跟踪。
 本轮验收与评审进度见 [#91](https://github.com/yongpengW/NexusStackNext/issues/91)。
 
+### PostgreSQL 来源容量锁等待
+
+六个持久来源使用 `<Context>:AuditDelivery:CapacityWrite:Timeout` 配置触发器内每次容量锁获取的等待上限，默认 `00:00:03`；允许 50ms 至 30s 的整毫秒值，非法配置拒绝启动。由各上下文新增的 `FactCapacityWaitBudget` 迁移接入 V2，升级/降级保留既有事实、策略和占用，历史 V1 不改写。
+
+容量行锁或表锁争用返回 HTTP 503 / `audit_capacity.busy`；额度真正不足仍使用原来各上下文的 exhausted 错误。失败不提交业务及对应的事实、任务或结果消息，也不触发提交后的权限或价格缓存失效；释放锁后可重新提交。已受理的文件删除若无法保存完成事实，继续作为可恢复待办处理。
+
+预算只在事实准入和过期已确认副本清理访问容量账本时生效；不改变普通业务消息、业务表的锁等待或原会话设置，调用者更短的正数锁等待及取消继续有效。它不是整个 HTTP / 事务的时限。原始锁超时在数据库内转为不可自动重试的精确容量错误，避免 EF 自动重试放大争用。清理遇到争用则整批回滚并沿用已有维护重试。
+
+实现依据和边界见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)，当前验收跟踪 [#93](https://github.com/yongpengW/NexusStackNext/issues/93)。Memory 提交锁预算、策略调整审计、专用恢复与保留治理仍在 #64 / #60 跟踪。
+
 ### 中央存储与消息摄入
 
 Auditing 默认 PostgreSQL，独占 `auditing` schema 与迁移历史。配置 `ConnectionStrings:Auditing`（环境变量 `ConnectionStrings__Auditing`），可以与平台其他模块暂用同一个数据库，也可以指向独立数据库。每个上下文只读写自己的数据。

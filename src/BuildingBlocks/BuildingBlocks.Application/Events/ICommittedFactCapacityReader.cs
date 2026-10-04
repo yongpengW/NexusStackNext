@@ -11,9 +11,12 @@ public interface ICommittedFactCapacityReader
     Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default);
 }
 
-/// <summary>容量诊断的稳定错误；写入容量耗尽仍使用所属业务模块的原错误。</summary>
+/// <summary>容量访问的稳定错误；写入容量耗尽仍使用所属业务模块的原错误。</summary>
 public static class CommittedFactCapacityErrors
 {
     /// <summary>账本暂不可读、缺失或读取预算用尽。</summary>
     public static readonly Error Unavailable = new("audit_capacity.unavailable", "事实容量暂时不可查询。");
+
+    /// <summary>容量账本争用超时；不代表额度已经耗尽。</summary>
+    public static readonly Error Busy = new("audit_capacity.busy", "审计事实容量账本繁忙，本次变更未提交，请稍后重试。");
 }

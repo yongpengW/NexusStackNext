@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -214,7 +215,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
             !trigger ? "Skipped" : misfire ? "Coalesced" : "Triggered", scheduledAt, now, next.Value, occurrence?.OccurrenceId);
         var saved = await store.RecordDecisionAsync(task, expectedVersion, decision, occurrence, cancellationToken).ConfigureAwait(false);
         // 容量拒绝是登记失败，不能冒充合法跳过，也不再争用剩余额度写另一条退避事实。
-        if (saved.IsFailure && saved.Error.Code == TaskRegistry.AuditCapacityExceeded.Code) { return DecisionResult.Failed; }
+        if (saved.IsFailure && (saved.Error.Code == TaskRegistry.AuditCapacityExceeded.Code || saved.Error.Code == CommittedFactCapacityErrors.Busy.Code)) { return DecisionResult.Failed; }
         return saved.IsFailure ? DecisionResult.Rejected : trigger ? DecisionResult.Triggered : DecisionResult.Skipped;
     }
 
