@@ -7,7 +7,7 @@ internal sealed class IdentityMemoryOutbox(IdentityMemoryState state) : IOutboxS
     public Task<IReadOnlyList<OutboxEntry>> ReadPendingAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (state.Gate)
+        using (state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<OutboxEntry>>(state.Outbox.Values.Where(entry => entry.IsPending
                 && (entry.NextAttemptAt is null || entry.NextAttemptAt <= now)).OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id).Take(batchSize).ToArray());
@@ -24,7 +24,7 @@ internal sealed class IdentityMemoryOutbox(IdentityMemoryState state) : IOutboxS
     private Task<bool> UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        lock (state.Gate)
+        using (state.Capacity.Enter(token))
         {
             if (!state.Outbox.TryGetValue(id, out var before)) { return Task.FromResult(false); }
             var after = update(before);

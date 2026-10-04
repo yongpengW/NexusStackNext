@@ -48,7 +48,8 @@ public static class SchedulingModule
             {
                 throw new InvalidOperationException("Scheduling:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddSchedulingInMemoryStorage(configuration.GetSection("Scheduling:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
+            services.AddSchedulingInMemoryStorage(configuration.GetSection("Scheduling:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
+                configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
             services.AddSchedulingMemoryFactCleanup(configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -90,7 +91,7 @@ public static class SchedulingModule
         })).AllowAnonymous();
 
         // 计划管理是后台执行委托：认证之外还须检查操作权限和当前会话。
-        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500, 503);
         endpoints.MapGet("/api/scheduling/audit-capacity", async ([FromKeyedServices("scheduling")] ICommittedFactCapacityReader reader,
             ApiResponses responses, CancellationToken token) =>
         {
@@ -110,7 +111,7 @@ public static class SchedulingModule
         }).Produces<ApiResponse<SchedulePreview>>().ProducesApiErrors(415)
             .RequirePermission("/api/scheduling/tasks/preview", "POST");
 
-        var occurrences = endpoints.MapGroup("/api/scheduling/occurrences").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        var occurrences = endpoints.MapGroup("/api/scheduling/occurrences").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500, 503);
         occurrences.AddEndpointFilter<NexusStackAuthorizationFilter>();
         occurrences.MapPost("/{id:guid}/retry", async (Guid id, RetryOccurrenceRequest request, IScheduledTaskStore store,
             ApiResponses responses, CancellationToken cancellationToken) =>

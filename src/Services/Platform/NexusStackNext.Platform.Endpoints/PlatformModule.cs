@@ -42,7 +42,8 @@ public static class PlatformModule
             {
                 throw new InvalidOperationException("Platform:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddPlatformInMemoryStorage(configuration.GetSection("Platform:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
+            services.AddPlatformInMemoryStorage(configuration.GetSection("Platform:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
+                configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
             services.AddPlatformMemoryFactCleanup(configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -82,7 +83,7 @@ public static class PlatformModule
             .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
 
         // 设置可能包含受限元数据；读取与管理都必须显式授权并检查当前会话。
-        var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500);
+        var settings = endpoints.MapGroup("/api/platform/settings").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500, 503);
         settings.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         // 读一个配置值。**键不合法与键没配过是两件事**：前者 400，后者 200 + value=null。
@@ -151,7 +152,7 @@ public static class PlatformModule
         }).ProducesApiErrors(503).Produces(204).RequirePermission("/api/platform/settings/{key}", "DELETE");
 
         var deliveries = endpoints.MapGroup("/api/platform/audit-deliveries").RequireAuthorization()
-            .ProducesApiErrors(400, 401, 403, 409, 500);
+            .ProducesApiErrors(400, 401, 403, 409, 500, 503);
         deliveries.AddEndpointFilter<NexusStackAuthorizationFilter>();
         deliveries.MapGet("/", async (ISettingAuditDelivery delivery, ApiResponses responses, CancellationToken token,
             string state = "Pending", int limit = 50) =>

@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
@@ -155,7 +156,9 @@ public sealed class FileService(
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
 
-        var file = await files.FindAsync(id, cancellationToken).ConfigureAwait(false);
+        StoredFile? file;
+        try { file = await files.FindAsync(id, cancellationToken).ConfigureAwait(false); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure<(StoredFile, Stream)>(CommittedFactCapacityBusyException.Reason); }
         if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal))
         {
             return Result.Failure<(StoredFile, Stream)>(new Error(
@@ -222,6 +225,12 @@ public sealed class FileService(
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
 
+        try { return await DeleteCoreAsync(id, ownerId, cancellationToken).ConfigureAwait(false); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure<bool>(CommittedFactCapacityBusyException.Reason); }
+    }
+
+    private async Task<Result<bool>> DeleteCoreAsync(StoredFileId id, string ownerId, CancellationToken cancellationToken)
+    {
         var file = await files.FindAsync(id, cancellationToken).ConfigureAwait(false)
             ?? await files.FindDeletedAsync(id, cancellationToken).ConfigureAwait(false);
         if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal))

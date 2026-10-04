@@ -3,7 +3,7 @@ using Npgsql;
 
 namespace NexusStackNext.BuildingBlocks.Infrastructure.Events;
 
-/// <summary>PostgreSQL 事实触发器获取容量锁的等待预算；不改变普通业务命令预算。</summary>
+/// <summary>事实容量共用锁的获取预算；PostgreSQL 在触发器内应用，Memory 用于所属共用写锁。</summary>
 public sealed record CommittedFactCapacityWriteOptions
 {
     /// <summary>每次容量锁获取的上限，默认三秒；支持五十毫秒至三十秒的整毫秒值。</summary>

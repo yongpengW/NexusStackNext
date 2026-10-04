@@ -21,8 +21,10 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     /// <param name="serializer">消息序列化。</param>
     /// <param name="clock">独立应用的事实时钟。</param>
     /// <param name="capacity">本存储的事实保留上限。</param>
-    public InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null)
-        : this(serializer, new SchedulingMemoryState(capacity), new ScheduledPlanCommittedFacts(clock ?? new SystemClock(), serializer)) { }
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
+    public InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
+        : this(serializer, new SchedulingMemoryState(capacity, write), new ScheduledPlanCommittedFacts(clock ?? new SystemClock(), serializer)) { }
 
     internal InMemoryScheduledTaskStore(IIntegrationEventSerializer serializer, SchedulingMemoryState state, ScheduledPlanCommittedFacts facts)
     {
@@ -35,7 +37,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     public Task<IReadOnlyList<ScheduledTask>> ReadDueAsync(DateTimeOffset now, int batchSize, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<ScheduledTask>>(_state.Tasks.Values.Where(task => task.IsDue(now))
                 .OrderBy(task => task.NextRunAt).ThenBy(task => task.Id.Value).Take(batchSize).Select(task => task.Snapshot()).ToArray());
@@ -46,7 +48,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     public Task<IReadOnlyList<ScheduledTask>> ListAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<ScheduledTask>>(_state.Tasks.Values.OrderBy(task => task.Code.Value, StringComparer.Ordinal)
                 .Select(task => task.Snapshot()).ToArray());
@@ -58,7 +60,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes) { return Task.FromResult(_state.Tasks.GetValueOrDefault(id.Value)?.Snapshot()); }
+        using (_state.Capacity.Enter(cancellationToken)) { return Task.FromResult(_state.Tasks.GetValueOrDefault(id.Value)?.Snapshot()); }
     }
 
     /// <inheritdoc />
@@ -69,7 +71,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, TaskRegistry.MaximumPageSize);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult(new ScheduledTaskPage(_state.Tasks.Values.OrderBy(task => task.Id.Value)
                 .Skip((page - 1) * limit).Take(limit).Select(task => task.Snapshot()).ToArray(), _state.Tasks.Count));
@@ -81,7 +83,8 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     {
         ArgumentNullException.ThrowIfNull(task);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        if (!_state.Capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_state.Tasks.ContainsKey(task.Id.Value) || _state.Tasks.Values.Any(existing => existing.Code.Equals(task.Code)))
@@ -106,7 +109,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes) { return Task.FromResult(_state.Origins.GetValueOrDefault(id.Value)); }
+        using (_state.Capacity.Enter(cancellationToken)) { return Task.FromResult(_state.Origins.GetValueOrDefault(id.Value)); }
     }
 
     /// <inheritdoc />
@@ -114,7 +117,8 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     {
         ArgumentNullException.ThrowIfNull(task);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        if (!_state.Capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!_state.Tasks.TryGetValue(task.Id.Value, out var current) || current.Version != expectedVersion)
@@ -141,7 +145,8 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         cancellationToken.ThrowIfCancellationRequested();
         if (decision.OccurrenceId != occurrence?.OccurrenceId) { return Task.FromResult(Result.Failure(TaskRegistry.Conflict)); }
         var pending = occurrence is null ? null : OutboxEntry.From(occurrence.ToEvent(), _serializer);
-        lock (_state.Writes)
+        if (!_state.Capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_state.Decisions.TryGetValue(decision.DecisionId, out var existing))
@@ -179,7 +184,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             var query = _state.Decisions.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.PlanVersion);
             return Task.FromResult(new ScheduleDecisionPage(query.Skip((int)Math.Min(offset, int.MaxValue)).Take(limit).ToArray(), query.LongCount()));
@@ -193,7 +198,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
         ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             var query = _state.Occurrences.Values.Where(item => item.PlanId == planId).OrderByDescending(item => item.TriggerSequence);
             return Task.FromResult(new ScheduleOccurrencePage(query.Skip((int)Math.Min(offset, int.MaxValue)).Take(limit)
@@ -206,7 +211,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<OutboxEntry>>(_state.Outbox.Values.Where(entry => entry.IsPending
                 && (entry.NextAttemptAt is null || entry.NextAttemptAt <= now)).OrderBy(entry => entry.OccurredAt)
@@ -226,7 +231,7 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     private Task<bool> UpdateDeliveryAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             if (!_state.Outbox.TryGetValue(id, out var entry)) { return Task.FromResult(false); }
             var updated = update(entry);
@@ -239,7 +244,8 @@ public sealed class InMemoryScheduledTaskStore : IScheduledTaskStore, IOutboxSto
     public Task<Result<ScheduleOccurrenceDelivery>> RetryOccurrenceAsync(Guid occurrenceId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        if (!_state.Capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure<ScheduleOccurrenceDelivery>(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             _state.Outbox.TryGetValue(occurrenceId, out var entry);
             var retry = ScheduleOccurrenceDelivery.Retry(entry, expectedDeadLetteredAt);
@@ -255,9 +261,9 @@ internal sealed class SchedulingMemoryState : ICommittedFactCapacityReader
     public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(Capacity.Read("scheduling", cancellationToken));
 
-    internal SchedulingMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    internal SchedulingMemoryState(MemoryCommittedFactCapacityOptions? capacity = null, CommittedFactCapacityWriteOptions? write = null)
     {
-        Capacity = new(Writes, PlanCommittedV1.Name, capacity);
+        Capacity = new(Writes, PlanCommittedV1.Name, capacity, write);
     }
 
     internal InMemoryCommittedFactCapacity Capacity { get; }
@@ -277,11 +283,13 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     /// <summary>注册内存存储和应用入口。</summary>
     /// <param name="services">容器。</param>
     /// <param name="capacity">本存储的事实保留上限。</param>
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <returns>原容器。</returns>
-    public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
+    public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton(new SchedulingMemoryState(capacity));
+        services.AddSingleton(new SchedulingMemoryState(capacity, write));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<SchedulingMemoryState>());
         services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddScoped(provider => new InMemoryScheduledTaskStore(provider.GetRequiredService<IIntegrationEventSerializer>(),

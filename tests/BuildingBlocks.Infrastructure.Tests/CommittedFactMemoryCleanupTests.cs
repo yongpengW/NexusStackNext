@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.TestSupport;
@@ -6,6 +7,71 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.Tests;
 
 public sealed class CommittedFactMemoryCleanupTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StandaloneCleanup_UsesFiniteDefaultOrExplicitWriteBudget_ThenRecovers(bool explicitBudget)
+    {
+        var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
+        var entry = Entry(now) with { DeliveredAt = now.AddDays(-1) };
+        var entries = new Dictionary<Guid, OutboxEntry> { [entry.Id] = entry };
+        var gate = new Lock();
+        var cleanup = new InMemoryCommittedFactCleanup(gate, () => entries, "fact.v1",
+            new() { DeliveredRetention = TimeSpan.FromHours(1) }, new FixedClock(now),
+            write: explicitBudget ? new() { Timeout = TimeSpan.FromMilliseconds(150) } : null);
+        using var release = new ManualResetEventSlim();
+        var locked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var holder = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                locked.SetResult();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+        });
+        Task? waiting = null;
+        try
+        {
+            await locked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var started = Stopwatch.GetTimestamp();
+            waiting = Task.Run(() => cleanup.CleanupAsync());
+            await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await waiting.WaitAsync(TimeSpan.FromSeconds(6)));
+            if (!explicitBudget) { Assert.InRange(Stopwatch.GetElapsedTime(started).TotalSeconds, 2.5, 5.5); }
+            Assert.Equal(entry, Assert.Single(entries.Values));
+        }
+        finally
+        {
+            release.Set();
+            await holder;
+            if (waiting is not null)
+            {
+                try { await waiting; }
+                catch (CommittedFactCapacityBusyException) { }
+            }
+        }
+        Assert.Equal(1, await Task.Run(() => cleanup.CleanupAsync()).WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Empty(entries);
+        Assert.Equal(0, await cleanup.CleanupAsync());
+    }
+
+    [Fact]
+    public async Task StandaloneCleanup_PreservesUnknownCallbackFailure_AndReleasesGateForAnotherThread()
+    {
+        var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
+        var entry = Entry(now) with { DeliveredAt = now.AddDays(-1) };
+        var entries = new Dictionary<Guid, OutboxEntry> { [entry.Id] = entry };
+        var error = new InvalidOperationException("Injected committed snapshot failure.");
+        var reject = true;
+        var cleanup = new InMemoryCommittedFactCleanup(new Lock(), () => reject ? throw error : entries, "fact.v1",
+            new() { DeliveredRetention = TimeSpan.FromHours(1) }, new FixedClock(now),
+            write: new() { Timeout = TimeSpan.FromMilliseconds(150) });
+        Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() => cleanup.CleanupAsync()));
+        Assert.Equal(entry, Assert.Single(entries.Values));
+        reject = false;
+        Assert.Equal(1, await Task.Run(() => cleanup.CleanupAsync()).WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Empty(entries);
+    }
+
     [Fact]
     public async Task Cleanup_CanCancelWhileWaitingForWriter_WithoutDeletingAnything()
     {

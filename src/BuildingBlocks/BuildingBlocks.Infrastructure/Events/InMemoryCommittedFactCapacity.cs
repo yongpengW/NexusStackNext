@@ -10,6 +10,7 @@ public sealed class InMemoryCommittedFactCapacity
     private readonly Lock _gate;
     private readonly string _eventName;
     private readonly MemoryCommittedFactCapacityOptions _policy;
+    private readonly TimeSpan _writeTimeout;
     private long _records;
     private long _bytes;
 
@@ -17,14 +18,32 @@ public sealed class InMemoryCommittedFactCapacity
     /// <param name="gate">与业务发布、交付更新、清理共用的写锁。</param>
     /// <param name="eventName">本上下文事实契约；普通业务消息不计入。</param>
     /// <param name="policy">本上下文策略；省略时仍使用有限默认值。</param>
-    public InMemoryCommittedFactCapacity(Lock gate, string eventName, MemoryCommittedFactCapacityOptions? policy = null)
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
+    public InMemoryCommittedFactCapacity(Lock gate, string eventName, MemoryCommittedFactCapacityOptions? policy = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
         _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         _eventName = eventName;
         _policy = policy ?? new();
         _policy.Validate();
+        var budget = write ?? new();
+        budget.Validate();
+        _writeTimeout = budget.Timeout;
     }
+
+    /// <summary>有限、可取消地获取所属共用写锁；失败时不修改状态。</summary>
+    /// <param name="scope">成功时必须在同线程释放的作用域。</param>
+    /// <param name="cancellationToken">等待与取得锁时的调用者取消。</param>
+    /// <returns>取得锁；false 表示争用预算耗尽。</returns>
+    public bool TryEnter(out InMemoryCommittedFactWriteScope scope, CancellationToken cancellationToken = default)
+        => InMemoryCommittedFactWriteLock.TryEnter(_gate, _writeTimeout, cancellationToken, out scope);
+
+    /// <summary>为无 Result 的端口获取有限作用域；忙时抛出稳定的已知异常。</summary>
+    /// <param name="cancellationToken">等待与取得锁时的调用者取消。</param>
+    /// <returns>必须在同线程释放的作用域。</returns>
+    public InMemoryCommittedFactWriteScope Enter(CancellationToken cancellationToken = default)
+        => TryEnter(out var scope, cancellationToken) ? scope : throw new CommittedFactCapacityBusyException();
 
     /// <summary>读取与准入和清理一致的快照；争锁时立即报告不可用，不阻塞诊断请求。</summary>
     /// <param name="owner">装配代码声明的上下文。</param>
@@ -53,7 +72,7 @@ public sealed class InMemoryCommittedFactCapacity
     {
         ArgumentNullException.ThrowIfNull(batch);
         ArgumentNullException.ThrowIfNull(commit);
-        lock (_gate)
+        using (Enter(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             long records = 0;
@@ -83,7 +102,7 @@ public sealed class InMemoryCommittedFactCapacity
     {
         ArgumentNullException.ThrowIfNull(batch);
         ArgumentNullException.ThrowIfNull(commit);
-        lock (_gate)
+        using (Enter(cancellationToken))
         {
             cancellationToken.ThrowIfCancellationRequested();
             long records = 0;

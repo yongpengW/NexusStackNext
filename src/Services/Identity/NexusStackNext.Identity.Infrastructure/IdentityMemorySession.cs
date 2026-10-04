@@ -19,9 +19,9 @@ internal sealed class IdentityMemoryConflictException(string message) : InvalidO
 
 internal sealed class IdentityMemoryState : ICommittedFactCapacityReader
 {
-    internal IdentityMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    internal IdentityMemoryState(MemoryCommittedFactCapacityOptions? capacity = null, CommittedFactCapacityWriteOptions? write = null)
     {
-        Capacity = new(Gate, IdentityEntityCommittedV1.Name, capacity);
+        Capacity = new(Gate, IdentityEntityCommittedV1.Name, capacity, write);
     }
 
     internal InMemoryCommittedFactCapacity Capacity { get; }
@@ -64,7 +64,7 @@ internal sealed class IdentityMemorySession(IdentityMemoryState state, IdentityM
     {
         token.ThrowIfCancellationRequested();
         if (_working is not null) { return _working; }
-        lock (state.Gate)
+        using (state.Capacity.Enter(token))
         {
             _original = state.Data;
             return _working = _original.Snapshot();
@@ -91,6 +91,7 @@ internal sealed class IdentityMemorySession(IdentityMemoryState state, IdentityM
             return Task.FromResult(changed);
         }
         catch (OperationCanceledException) { Reset(); throw; }
+        catch (CommittedFactCapacityBusyException) { Reset(); throw; }
         catch (IdentityMemoryConflictException) { Reset(); throw; }
         catch { _saved = null; throw; }
     }
@@ -114,7 +115,7 @@ internal sealed class IdentityMemorySession(IdentityMemoryState state, IdentityM
 
     private void Commit(IdentityMemoryData saved, CancellationToken token)
     {
-        lock (state.Gate)
+        using (state.Capacity.Enter(token))
         {
             var next = state.Data.Snapshot();
             Merge(saved.Users, _original!.Users, next.Users);

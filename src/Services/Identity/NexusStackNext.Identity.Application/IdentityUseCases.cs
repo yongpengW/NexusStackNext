@@ -534,6 +534,14 @@ public sealed class SeedRootAccountHandler(
 /// <summary>注册 Identity 的用例处理器。<b>显式注册，不做程序集扫描</b>（不变量 8）。</summary>
 public static class IdentityUseCaseServiceCollectionExtensions
 {
+    private static void AddQuery<TQuery, TResult, THandler>(IServiceCollection services)
+        where TQuery : IQuery<TResult>
+        where THandler : class, IQueryHandler<TQuery, TResult>
+    {
+        services.AddScoped<THandler>();
+        services.AddScoped<IQueryHandler<TQuery, TResult>>(provider => new IdentityQueryHandler<TQuery, TResult>(provider.GetRequiredService<THandler>()));
+    }
+
     private static void AddCommand<TCommand, THandler>(IServiceCollection services)
         where TCommand : ICommand
         where THandler : class, ICommandHandler<TCommand>
@@ -569,7 +577,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         // 令牌签发与轮换。它不是"基础设施"——里面全是策略（轮换、重放检测、撤销整条链）。
         services.AddScoped<TokenIssuer>();
 
-        services.AddScoped<IQueryHandler<GetSessionVersionQuery, long>, GetSessionVersionHandler>();
+        AddQuery<GetSessionVersionQuery, long, GetSessionVersionHandler>(services);
         services.AddScoped<ISessionValidator, GetSessionVersionHandler>();
         AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
@@ -578,15 +586,15 @@ public static class IdentityUseCaseServiceCollectionExtensions
 
         // 菜单这一环（票据 67）：建节点、读整棵树。
         AddCommand<CreateMenuCommand, MenuCreated, CreateMenuHandler>(services);
-        services.AddScoped<IQueryHandler<GetMenusQuery, IReadOnlyList<MenuView>>, GetMenusHandler>();
+        AddQuery<GetMenusQuery, IReadOnlyList<MenuView>, GetMenusHandler>(services);
 
         // 根账号播种。它是**命令**而不是"启动时的一段内联代码"：
         // 于是它的幂等性、口令哈希、`isBuiltIn` 三件事都能被单独测到，
         // 而宿主那边只剩"读配置 + 发这条命令"。
         AddCommand<SeedRootAccountCommand, bool, SeedRootAccountHandler>(services);
 
-        services.AddScoped<IQueryHandler<GetUserPermissionsQuery, IReadOnlyList<string>>, GetUserPermissionsHandler>();
-        services.AddScoped<IQueryHandler<AuthorizeQuery, AuthorizationOutcome>, AuthorizeHandler>();
+        AddQuery<GetUserPermissionsQuery, IReadOnlyList<string>, GetUserPermissionsHandler>(services);
+        AddQuery<AuthorizeQuery, AuthorizationOutcome, AuthorizeHandler>(services);
 
         // ---------- 验证码 ----------
         //
