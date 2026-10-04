@@ -5,6 +5,9 @@ CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL�
 每个端口只绑定回环地址。测试类内部的原有并发设置和故障断言保持不变。
 本地原子保护与异常退出恢复见 [测试负载所有权](local-test-ownership.md)；
 统一门禁以外部 fake dotnet CLI 验证这层保护，不额外连接共享数据库。
+Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) 复用私有实例，仍串行执行。
+统一门禁验证连接选择、拒绝回退与非 Windows 生命周期拒绝；真实 Windows 生命周期另经本机验证，
+不能把 Linux 的便携入口探针当成 Windows 实例验证。
 
 ## 分组与安全边界
 
@@ -107,4 +110,9 @@ CI 默认运行全部探针，未知探针名称失败。本轮实现和 Linux �
 第二轮 [PR #74](https://github.com/yongpengW/NexusStackNext/pull/74) 已合并；
 [CI 37137608993](https://github.com/yongpengW/NexusStackNext/actions/runs/37137608993) 完整耗时 **10 分 11 秒**，
 1265 项全部通过，无跳过、重复或漏跑。相比原基线减少约 69%，相比第一轮减少约 29%。
+后续 [CI 37169430595](https://github.com/yongpengW/NexusStackNext/actions/runs/37169430595)
+在 1293 项测试下五个任务全部成功，含排队总耗时 **12 分 49 秒**；首次 runner 启动前等待约 65 秒，
+实际执行约 **11 分 44 秒**。三个宿主分片累计用例耗时约 256 / 263 / 259 秒，
+汇总门禁墙钟为 **4 分 22 秒**。这组数据指出后续应测量汇总阶段的准备与检查成本，
+不能把用例累计耗时、排队时间和整个 CI 墙钟混作同一个指标。
 后续按慢测试报告维护权重；跨 runner 构建产物复用仍需测量收益后决定。

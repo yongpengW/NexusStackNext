@@ -157,6 +157,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-test-ownership.ps1
 
+      - name: 验证本地隔离数据库入口
+        shell: pwsh
+        run: ./scripts/check-local-postgres.ps1
+
       - name: 验证票据读取失败门禁
         shell: pwsh
         run: ./scripts/check-issue-fetching.ps1

@@ -29,16 +29,23 @@ param(
     [ValidateRange(-1, 3)]
     [int] $CiShard = -1,
 
-    [string] $ReportDirectory
+    [string] $ReportDirectory,
+
+    [string] $LocalPostgresConnectionFile
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($PSBoundParameters.ContainsKey('LocalPostgresConnectionFile') -and [string]::IsNullOrWhiteSpace($LocalPostgresConnectionFile)) {
+    throw 'LOCAL_POSTGRES_CONFIGURATION_REJECTED: explicit local selection requires a private connection file.'
+}
 
 $repoRoot = Split-Path $PSScriptRoot -Parent
 $envFile = Join-Path $repoRoot 'env\test.dev'
 $solution = Join-Path $repoRoot 'NexusStackNext.slnx'
 
 # Fail before reading env/test.dev, building, discovering, or starting any test process.
+if ($LocalPostgresConnectionFile -and ($CiShard -ge 0 -or $Init)) { throw 'LOCAL_POSTGRES_CONFIGURATION_REJECTED: local connection files are unavailable for CI shards or initialization.' }
 if ($CiShard -ge 0) {
     Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
     Assert-CiIsolation $repoRoot
@@ -84,7 +91,7 @@ NEXUSSTACK_TEST_POSTGRES=Host=;Port=5432;Database=nexusstack_platform;Username=;
 }
 
 # ---------- 注入环境变量 ----------
-if (-not (Test-Path $envFile) -and [string]::IsNullOrWhiteSpace($env:NEXUSSTACK_TEST_POSTGRES)) {
+if (-not (Test-Path $envFile) -and [string]::IsNullOrWhiteSpace($env:NEXUSSTACK_TEST_POSTGRES) -and -not $LocalPostgresConnectionFile) {
     Write-Host "找不到 $envFile" -ForegroundColor Red
     Write-Host ''
     Write-Host '先生成它：pwsh -File scripts/run-tests.ps1 -Init' -ForegroundColor Yellow
@@ -101,6 +108,28 @@ foreach ($line in $(if (Test-Path $envFile) { Get-Content $envFile -Encoding UTF
     $key = $parts[0].Trim()
     [Environment]::SetEnvironmentVariable($key, $parts[1], 'Process')
     Write-Host "  已注入 $key"
+}
+
+if ($LocalPostgresConnectionFile) {
+    try {
+        $file = Get-Item -LiteralPath $LocalPostgresConnectionFile -ErrorAction Stop
+        if ($file.PSIsContainer -or $file.Length -eq 0 -or $file.Length -gt 4096) { throw 'Invalid private file.' }
+        $connection = [IO.File]::ReadAllText($file.FullName).Trim()
+        $settings = [Data.Common.DbConnectionStringBuilder]::new()
+        $settings.set_ConnectionString($connection)
+        $canonicalKeys = @('Host', 'Port', 'Database', 'Username', 'Password')
+        if ($settings.get_Count() -ne $canonicalKeys.Count -or @($settings.get_Keys() | Where-Object { $_ -notin $canonicalKeys }).Count -ne 0) { throw 'Unsupported local connection keys.' }
+        $port = 0
+        if ($settings['Host'] -cne '127.0.0.1' -or $settings['Database'] -cne 'postgres' -or
+            -not [int]::TryParse([string]$settings['Port'], [ref]$port) -or $port -lt 1 -or $port -gt 65535 -or
+            [string]::IsNullOrWhiteSpace([string]$settings['Username']) -or [string]::IsNullOrWhiteSpace([string]$settings['Password'])) { throw 'Invalid local target.' }
+        $verified = [Data.Common.DbConnectionStringBuilder]::new()
+        foreach ($key in $canonicalKeys) { $verified[$key] = $settings[$key] }
+        $verified['Port'] = $port
+        $env:NEXUSSTACK_TEST_POSTGRES = $verified.get_ConnectionString()
+        Write-Host '  已选择私有文件中的本地 PostgreSQL（其他测试配置保留）'
+    }
+    catch { throw 'LOCAL_POSTGRES_CONFIGURATION_REJECTED: invalid private loopback connection file; no workload started.' }
 }
 
 # ---------- 缺连接串就失败 ----------

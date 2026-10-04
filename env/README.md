@@ -123,6 +123,10 @@ PlatformHost 与 PricingHost 还需独立执行 `migrate-operation-journal`；�
 **为什么不从配置中心读。** 测试最不该有的依赖就是配置中心——那会让"跑测试"变成
 需要网络与凭据才能开始的动作，而测试恰恰是**在任何机器上都该能跑**的东西。
 
+Windows 可使用 [本地隔离 PostgreSQL 工具](../docs/local-postgres-testing.md) 初始化并复用私有测试实例。
+其 `Test` 操作只在子进程中覆盖 PostgreSQL；既有 `env/test.dev` 保持原样，
+Redis / RabbitMQ 仍使用其中的配置，所有工程仍串行执行。首次启动需指定官方免安装运行时路径。
+
 ### 测试不会碰你的数据
 
 每个测试用实例**建一个独立 schema**（`test_<随机>`），用完 `DROP … CASCADE`。
