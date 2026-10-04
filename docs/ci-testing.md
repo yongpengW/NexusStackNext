@@ -3,6 +3,8 @@
 共享开发 PostgreSQL 同时承担配置中心负载，本机测试继续由 `scripts/run-tests.ps1` 串行执行。
 CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL、Redis、RabbitMQ，
 每个端口只绑定回环地址。测试类内部的原有并发设置和故障断言保持不变。
+本地原子保护与异常退出恢复见 [测试负载所有权](local-test-ownership.md)；
+统一门禁以外部 fake dotnet CLI 验证这层保护，不额外连接共享数据库。
 
 ## 分组与安全边界
 

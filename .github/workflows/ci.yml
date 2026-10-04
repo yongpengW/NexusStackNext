@@ -153,6 +153,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-ci-tests.ps1
 
+      - name: 验证本地测试负载所有权
+        shell: pwsh
+        run: ./scripts/check-test-ownership.ps1
+
       - name: 验证票据读取失败门禁
         shell: pwsh
         run: ./scripts/check-issue-fetching.ps1
