@@ -34,10 +34,10 @@ public sealed class MemoryFileRecoveryBudgetTests
             var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("files");
             var capacity = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityReader>("files");
             var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("files");
-            using var cancellation = new CancellationTokenSource();
+            await using var cancellation = new TimedCallerCancellation();
             storage.PauseNextDelete();
             var deletion = service.DeleteAsync(upload.Value.Id, "owner", cancellation.Token);
-            Task<int>? holder = null;
+            PausedFactCleanup? holder = null;
             try
             {
                 Assert.Equal(upload.Value.StorageKey, await storage.Paused.WaitAsync(TimeSpan.FromSeconds(5)));
@@ -46,12 +46,8 @@ public sealed class MemoryFileRecoveryBudgetTests
                 Assert.Equal(3, accepted.Version);
                 Assert.Null(accepted.BytesRemovedAt);
                 Assert.Equal(3, (await outbox.ReadPendingAsync(10, clock.UtcNow)).Count);
-                holder = Task.Run(() =>
-                {
-                    clock.PauseNextReadOnCurrentThread();
-                    return cleanup.CleanupAsync();
-                });
-                await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+                holder = new PausedFactCleanup(clock, cleanup);
+                await holder.WaitUntilPausedAsync();
                 storage.Resume();
                 if (cancel)
                 {
@@ -68,8 +64,7 @@ public sealed class MemoryFileRecoveryBudgetTests
             finally
             {
                 storage.Resume();
-                clock.Resume();
-                if (holder is not null) { await holder; }
+                if (holder is not null) { await holder.ReleaseAsync(); }
                 try { await deletion; }
                 catch (OperationCanceledException) when (cancel && cancellation.IsCancellationRequested) { }
             }
@@ -115,23 +110,19 @@ public sealed class MemoryFileRecoveryBudgetTests
             var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("files");
             var capacity = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityReader>("files");
             var scanCutoff = clock.UtcNow.AddDays(1);
-            using var uploadCancellation = new CancellationTokenSource();
-            using var retirementCancellation = new CancellationTokenSource();
+            await using var uploadCancellation = new TimedCallerCancellation();
+            await using var retirementCancellation = new TimedCallerCancellation();
             using var content = new MemoryStream([9, 8, 7]);
             storage.PauseNextWrite();
             var upload = service.UploadAsync(FileName.Create("orphan.bin").Value, "application/octet-stream", content, "owner", uploadCancellation.Token);
-            Task<int>? holder = null;
+            PausedFactCleanup? holder = null;
             Task? retirement = null;
             string key;
             try
             {
                 key = await storage.Paused.WaitAsync(TimeSpan.FromSeconds(5));
-                holder = Task.Run(() =>
-                {
-                    clock.PauseNextReadOnCurrentThread();
-                    return cleanup.CleanupAsync();
-                });
-                await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+                holder = new PausedFactCleanup(clock, cleanup);
+                await holder.WaitUntilPausedAsync();
                 // Even an old candidate cannot reach the busy metadata gate while its upload protection is held.
                 await disk.CollectOrphansAsync(files.RetireUnreferencedStorageAsync, scanCutoff, 10);
                 storage.Resume();
@@ -145,13 +136,13 @@ public sealed class MemoryFileRecoveryBudgetTests
                 var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 retirement = Task.Run(async () =>
                 {
+                    if (cancelRetirement) { retirementCancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                     started.SetResult();
                     await disk.CollectOrphansAsync(files.RetireUnreferencedStorageAsync, scanCutoff, 10, retirementCancellation.Token);
                 });
                 await started.Task;
                 if (cancelRetirement)
                 {
-                    retirementCancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                     await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await retirement.WaitAsync(TimeSpan.FromSeconds(2)));
                 }
                 else { await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await retirement.WaitAsync(TimeSpan.FromSeconds(2))); }
@@ -160,8 +151,7 @@ public sealed class MemoryFileRecoveryBudgetTests
             finally
             {
                 storage.Resume();
-                clock.Resume();
-                if (holder is not null) { await holder; }
+                if (holder is not null) { await holder.ReleaseAsync(); }
                 try { await upload; }
                 catch (OperationCanceledException) when (cancelUpload && uploadCancellation.IsCancellationRequested) { }
                 if (retirement is not null)

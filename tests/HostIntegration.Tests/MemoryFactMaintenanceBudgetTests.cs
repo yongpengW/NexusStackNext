@@ -9,7 +9,6 @@ using NexusStackNext.Platform.Domain.Settings;
 using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.TestSupport;
-using BudgetApp = NexusStackNext.HostIntegration.Tests.MemoryFactWriteBudgetTests.BudgetApp;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -36,7 +35,7 @@ public sealed class MemoryFactMaintenanceBudgetTests
     public async Task MaintenanceRefusal_PreservesConfirmedOrDeadLetteredFact_AndRecoveryKeepsConfirmationPriority(string context, bool delivered, bool cancel)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, context) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, context) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var now = clock.UtcNow;
         await SeedAsync(scope.ServiceProvider, context, now);
@@ -48,21 +47,18 @@ public sealed class MemoryFactMaintenanceBudgetTests
         else { Assert.True(await outbox.MarkDeadLetteredAsync(original.Id, "stopped", now, original.RetryRevision)); }
         var beforeCapacity = (await reader.ReadAsync()).Value;
         Assert.Empty(await outbox.ReadPendingAsync(10, now));
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? attempt = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             foreach (var operation in new[] { "read", "deliver", "failure", "dead-letter", "cleanup" })
             {
-                using var cancellation = new CancellationTokenSource();
+                await using var cancellation = new TimedCallerCancellation();
                 var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 attempt = Task.Run(async () =>
                 {
+                    if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                     started.SetResult();
                     // An improperly accepted confirmation of a dead letter would be immediately eligible for cleanup.
                     await PerformAsync(outbox, cleanup, original, operation, now.AddDays(-8), cancellation.Token);
@@ -70,7 +66,6 @@ public sealed class MemoryFactMaintenanceBudgetTests
                 await started.Task;
                 if (cancel)
                 {
-                    cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                     await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await attempt.WaitAsync(TimeSpan.FromSeconds(2)));
                 }
                 else { await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await attempt.WaitAsync(TimeSpan.FromSeconds(2))); }
@@ -78,8 +73,7 @@ public sealed class MemoryFactMaintenanceBudgetTests
         }
         finally
         {
-            clock.Resume();
-            Assert.Equal(0, await holder);
+            Assert.Equal(0, await holder.ReleaseAsync());
             if (attempt is not null)
             {
                 try { await attempt; }
@@ -128,7 +122,7 @@ public sealed class MemoryFactMaintenanceBudgetTests
     public async Task MaintenanceRefusal_PreservesPendingFactAndCapacity_ThenSameOperationRecovers(string context, string operation, bool cancel)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, context) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, context) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var now = clock.UtcNow;
         await SeedAsync(scope.ServiceProvider, context, now);
@@ -137,26 +131,22 @@ public sealed class MemoryFactMaintenanceBudgetTests
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>(context);
         var before = Assert.Single(await outbox.ReadPendingAsync(10, now));
         var beforeCapacity = (await reader.ReadAsync()).Value;
-        using var cancellation = new CancellationTokenSource();
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        await using var cancellation = new TimedCallerCancellation();
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? attempt = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             attempt = Task.Run(async () =>
             {
+                if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                 started.SetResult();
                 await PerformAsync(outbox, cleanup, before, operation, now, cancellation.Token);
             });
             await started.Task;
             if (cancel)
             {
-                cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await attempt.WaitAsync(TimeSpan.FromSeconds(2)));
             }
             else { await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await attempt.WaitAsync(TimeSpan.FromSeconds(2))); }
@@ -164,8 +154,7 @@ public sealed class MemoryFactMaintenanceBudgetTests
         }
         finally
         {
-            clock.Resume();
-            Assert.Equal(0, await holder);
+            Assert.Equal(0, await holder.ReleaseAsync());
             if (attempt is not null)
             {
                 try { await attempt; }

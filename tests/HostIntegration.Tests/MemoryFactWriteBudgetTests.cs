@@ -32,20 +32,16 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task OmittedWriteBudget_UsesFiniteThreeSecondDefault(string context)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, context, timeout: null) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, context, timeout: null) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>(context);
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(context);
         var now = clock.UtcNow;
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? reading = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = Stopwatch.GetTimestamp();
             reading = Task.Run(() => outbox.ReadPendingAsync(10, now));
             await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await reading.WaitAsync(TimeSpan.FromSeconds(6)));
@@ -53,8 +49,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (reading is not null)
             {
                 try { await reading; }
@@ -70,7 +65,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task SchedulingApplicationWrite_ReportsBusyDuringRead_AndPreservesPlanVersion(bool changingRule)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var registry = scope.ServiceProvider.GetRequiredService<TaskRegistry>();
         var plan = await registry.DefineAsync(TaskCode.Create("application-budget").Value, TimeSpan.FromHours(1),
@@ -80,23 +75,18 @@ public sealed class MemoryFactWriteBudgetTests
         var before = Assert.Single(await outbox.ReadPendingAsync(10, clock.UtcNow));
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("scheduling");
         var rule = new ScheduleRuleInput("Interval", IntervalSeconds: 7200);
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var attempt = Task.Run(() => changingRule ? registry.UpdateRuleAsync(plan.Value.Id, 1, rule) : registry.PauseAsync(plan.Value.Id, 1));
             writing = attempt;
             Assert.Equal("audit_capacity.busy", (await attempt.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code);
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null)
             {
                 try { await writing; }
@@ -121,7 +111,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task FileApplicationResult_ReportsBusyDuringMetadataRead_WithoutStartingDeletion(bool deleting)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Files") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Files") { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var service = scope.ServiceProvider.GetRequiredService<FileService>();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -130,15 +120,11 @@ public sealed class MemoryFactWriteBudgetTests
         var file = StoredFile.Register(new StoredFileId(97321), FileName.Create("read-budget.bin").Value, "application/octet-stream", "owner", clock.UtcNow).Value;
         await files.SaveAsync(file);
         var before = Assert.Single(await outbox.ReadPendingAsync(10, clock.UtcNow));
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? reading = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var attempt = Task.Run(async () =>
             {
                 if (deleting) { return (NexusStackNext.BuildingBlocks.Domain.Result)await service.DeleteAsync(file.Id, "owner"); }
@@ -149,8 +135,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (reading is not null)
             {
                 try { await reading; }
@@ -176,7 +161,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task SenderQuery_ReportsBusyAsResultOrPropagatesCancellation_ThenReadsCommittedMenuWithoutAddingFacts(bool cancel)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
         await using var seed = app.Services.CreateAsyncScope();
         var created = await seed.ServiceProvider.GetRequiredService<ISender>().SendAsync(new CreateMenuCommand("Budget", 0, null));
         Assert.True(created.IsSuccess);
@@ -186,19 +171,16 @@ public sealed class MemoryFactWriteBudgetTests
         var before = await outbox.ReadPendingAsync(10, clock.UtcNow);
         Assert.Equal(2, before.Count);
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("identity");
-        using var cancellation = new CancellationTokenSource();
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        await using var cancellation = new TimedCallerCancellation();
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? querying = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var attempt = Task.Run(async () =>
             {
+                if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                 started.SetResult();
                 return await sender.QueryAsync(new GetMenusQuery(), cancellation.Token);
             });
@@ -206,15 +188,13 @@ public sealed class MemoryFactWriteBudgetTests
             await started.Task;
             if (cancel)
             {
-                cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await attempt.WaitAsync(TimeSpan.FromSeconds(2)));
             }
             else { Assert.Equal("audit_capacity.busy", (await attempt.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code); }
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (querying is not null)
             {
                 try { await querying; }
@@ -235,25 +215,22 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task WaitingWriter_PropagatesCallerCancellation_WithoutPublishingAnyFacts(string context)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, context) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, context) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>(context);
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(context);
         var reader = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityReader>(context);
         var now = clock.UtcNow;
-        using var cancel = new CancellationTokenSource();
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        await using var cancel = new TimedCallerCancellation();
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             writing = Task.Run(async () =>
             {
+                cancel.CancelAfter(TimeSpan.FromMilliseconds(50));
                 started.SetResult();
                 switch (context)
                 {
@@ -275,13 +252,11 @@ public sealed class MemoryFactWriteBudgetTests
                 }
             });
             await started.Task;
-            cancel.CancelAfter(TimeSpan.FromMilliseconds(50));
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await writing.WaitAsync(TimeSpan.FromSeconds(2)));
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null)
             {
                 try { await writing; }
@@ -303,20 +278,16 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task HttpAuthorizationRead_WhenIdentityIsBusy_ReturnsStable503_AndRecovers()
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Identity", root: true) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Identity", root: true) { SchedulingWorkerEnabled = false };
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         await using var scope = app.Services.CreateAsyncScope();
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("identity");
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task<HttpResponseMessage>? request = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             request = client.GetAsync(new Uri("/api/identity/menus", UriKind.Relative));
             using var response = await request.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
@@ -327,8 +298,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (request is not null) { (await request).Dispose(); }
         }
         using var recovered = await client.GetAsync(new Uri("/api/identity/menus", UriKind.Relative));
@@ -339,7 +309,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task SchedulingDecision_RefusesBusyWithoutAdvancingPlanOrInventingSkipped_ThenRecoversOnce()
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<IScheduledTaskStore>();
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("scheduling");
@@ -354,23 +324,18 @@ public sealed class MemoryFactWriteBudgetTests
         var id = Guid.NewGuid();
         var occurrence = new ScheduleOccurrence(id, plan.Id.Value, plan.TriggerSequence, now, now, plan.Target.Kind, plan.Target.SubjectId, plan.DelegatedBy);
         var decision = new ScheduleDecision(id, plan.Id.Value, plan.Version, plan.ScheduleRevision, plan.Rule, "Triggered", now, now, now.AddHours(1), id);
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var attempt = Task.Run(() => store.RecordDecisionAsync(plan, 1, decision, occurrence));
             writing = attempt;
             Assert.Equal("audit_capacity.busy", (await attempt.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code);
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null) { await writing; }
         }
         Assert.Equal(1, (await store.FindAsync(plan.Id))!.Version);
@@ -391,30 +356,25 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task FileMetadata_RefusesBusyBeforePublishingStateOrFacts_ThenCommitsOneFact()
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Files") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Files") { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("files");
         var reader = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityReader>("files");
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("files");
         var file = StoredFile.Register(new StoredFileId(97123), FileName.Create("budget.bin").Value, "application/octet-stream", "owner", clock.UtcNow).Value;
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             writing = Task.Run(() => files.SaveAsync(file));
             var busy = await Assert.ThrowsAsync<FileAuditCapacityException>(async () => await writing.WaitAsync(TimeSpan.FromSeconds(2)));
             Assert.Equal("audit_capacity.busy", busy.Reason.Code);
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null)
             {
                 try { await writing; }
@@ -437,7 +397,7 @@ public sealed class MemoryFactWriteBudgetTests
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
         var cache = new RecordingPermissionCache();
-        await using var baseApp = new BudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
+        await using var baseApp = new MemoryBudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services => services.AddSingleton<IPermissionCache>(cache)));
         await using var seed = app.Services.CreateAsyncScope();
         var seedSender = seed.ServiceProvider.GetRequiredService<ISender>();
@@ -454,15 +414,11 @@ public sealed class MemoryFactWriteBudgetTests
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("identity");
         var before = await outbox.ReadPendingAsync(10, clock.UtcNow);
         var invalidations = cache.Invalidations;
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var attempt = Task.Run(() => sender.SendAsync(new AssignRoleCommand(user.Value, role.Value)));
             writing = attempt;
             Assert.Equal("audit_capacity.busy", (await attempt.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code);
@@ -470,8 +426,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null) { await writing; }
         }
         var unchanged = await users.FindAsync(new UserId(user.Value));
@@ -492,7 +447,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task Cleanup_RefusesBusyWithoutReleasingCapacity_ThenRemovesConfirmedExpiredFact()
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<SettingStore>();
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("platform");
@@ -500,22 +455,17 @@ public sealed class MemoryFactWriteBudgetTests
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("platform");
         Assert.True((await store.WriteAsync(SettingKey.Create("budget.cleanup").Value, "value")).IsSuccess);
         var before = Assert.Single(await outbox.ReadPendingAsync(10, clock.UtcNow));
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? cleaning = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             cleaning = Task.Run(() => cleanup.CleanupAsync());
             await Assert.ThrowsAsync<CommittedFactCapacityBusyException>(async () => await cleaning.WaitAsync(TimeSpan.FromSeconds(2)));
         }
         finally
         {
-            clock.Resume();
-            Assert.Equal(0, await holder);
+            Assert.Equal(0, await holder.ReleaseAsync());
             if (cleaning is not null)
             {
                 try { await cleaning; }
@@ -534,7 +484,7 @@ public sealed class MemoryFactWriteBudgetTests
     public async Task PlatformWrite_RefusesBusyWithinConfiguredBudget_AndRecoversWithoutPartialCommit()
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<SettingStore>();
         var key = SettingKey.Create("budget.setting").Value;
@@ -543,15 +493,11 @@ public sealed class MemoryFactWriteBudgetTests
         var cleanup = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("platform");
         Assert.True((await store.WriteAsync(key, "before")).IsSuccess);
         var before = Assert.Single(await outbox.ReadPendingAsync(10, clock.UtcNow));
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? writing = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var attempt = Task.Run(() => store.WriteAsync(key, "after"));
             writing = attempt;
             var result = await attempt.WaitAsync(TimeSpan.FromSeconds(2));
@@ -563,8 +509,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (writing is not null) { await writing; }
         }
         Assert.Equal(before, Assert.Single(await outbox.ReadPendingAsync(10, clock.UtcNow)));
@@ -575,30 +520,4 @@ public sealed class MemoryFactWriteBudgetTests
         Assert.Equal(2, (await reader.ReadAsync()).Value.RetainedRecords);
     }
 
-    internal sealed class BudgetApp(PausingClock clock, string context = "Platform", bool root = false, string? timeout = "00:00:00.150",
-        IIntegrationEventSerializer? serializer = null) : PlatformApp
-    {
-        protected override IHost CreateHost(IHostBuilder builder)
-        {
-            var settings = new Dictionary<string, string?>
-            {
-                [$"{context}:AuditDelivery:Cleanup:Enabled"] = "false",
-                ["Identity:Root:UserName"] = root ? PlatformAppWithRootAccount.RootUserName : null,
-                ["Identity:Root:Password"] = root ? PlatformAppWithRootAccount.RootPassword : null,
-            };
-            if (timeout is not null) { settings[$"{context}:AuditDelivery:CapacityWrite:Timeout"] = timeout; }
-            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(settings));
-            return base.CreateHost(builder);
-        }
-
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            base.ConfigureWebHost(builder);
-            builder.ConfigureTestServices(services =>
-            {
-                services.AddSingleton<IClock>(clock);
-                if (serializer is not null) { services.AddSingleton(serializer); }
-            });
-        }
-    }
 }

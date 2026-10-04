@@ -6,7 +6,6 @@ using NexusStackNext.Scheduling.Application;
 using NexusStackNext.Scheduling.Contracts;
 using NexusStackNext.Scheduling.Domain.Tasks;
 using NexusStackNext.TestSupport;
-using BudgetApp = NexusStackNext.HostIntegration.Tests.MemoryFactWriteBudgetTests.BudgetApp;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -18,7 +17,7 @@ public sealed class MemoryManualRetryBudgetTests
     public async Task SettingDeadLetterRetry_PreservesConditionAndCapacity_OnBusyOrCancellation(bool cancel)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock) { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock) { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var settings = scope.ServiceProvider.GetRequiredService<SettingStore>();
         var delivery = scope.ServiceProvider.GetRequiredService<ISettingAuditDelivery>();
@@ -34,19 +33,16 @@ public sealed class MemoryManualRetryBudgetTests
         var stopped = Assert.Single(await delivery.ListAsync("DeadLettered", 10));
         Assert.Equal(2, stopped.Attempts);
         var beforeCapacity = (await capacity.ReadAsync()).Value;
-        using var cancellation = new CancellationTokenSource();
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        await using var cancellation = new TimedCallerCancellation();
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? attempt = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var retrying = Task.Run(async () =>
             {
+                if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                 started.SetResult();
                 return await delivery.RetryAsync(original.Id, stopped.DeadLetteredAt!.Value, cancellation.Token);
             });
@@ -54,15 +50,13 @@ public sealed class MemoryManualRetryBudgetTests
             await started.Task;
             if (cancel)
             {
-                cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await retrying.WaitAsync(TimeSpan.FromSeconds(2)));
             }
             else { Assert.Equal("audit_capacity.busy", (await retrying.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code); }
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (attempt is not null)
             {
                 try { await attempt; }
@@ -100,7 +94,7 @@ public sealed class MemoryManualRetryBudgetTests
     public async Task OccurrenceDeadLetterRetry_KeepsOriginalOccurrence_AndDoesNotChargeFactQuota(bool cancel)
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
-        await using var app = new BudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
+        await using var app = new MemoryBudgetApp(clock, "Scheduling") { SchedulingWorkerEnabled = false };
         await using var scope = app.Services.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<IScheduledTaskStore>();
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("scheduling");
@@ -124,19 +118,16 @@ public sealed class MemoryManualRetryBudgetTests
         Assert.Equal(2, stopped.AttemptCount);
         var beforeCapacity = (await capacity.ReadAsync()).Value;
         Assert.Equal(2, beforeCapacity.RetainedRecords);
-        using var cancellation = new CancellationTokenSource();
-        var holder = Task.Run(() =>
-        {
-            clock.PauseNextReadOnCurrentThread();
-            return cleanup.CleanupAsync();
-        });
+        await using var cancellation = new TimedCallerCancellation();
+        var holder = new PausedFactCleanup(clock, cleanup);
         Task? attempt = null;
         try
         {
-            await clock.Paused.WaitAsync(TimeSpan.FromSeconds(5));
+            await holder.WaitUntilPausedAsync();
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var retrying = Task.Run(async () =>
             {
+                if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                 started.SetResult();
                 return await store.RetryOccurrenceAsync(id, stopped.DeadLetteredAt!.Value, cancellation.Token);
             });
@@ -144,15 +135,13 @@ public sealed class MemoryManualRetryBudgetTests
             await started.Task;
             if (cancel)
             {
-                cancellation.CancelAfter(TimeSpan.FromMilliseconds(50));
                 await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await retrying.WaitAsync(TimeSpan.FromSeconds(2)));
             }
             else { Assert.Equal("audit_capacity.busy", (await retrying.WaitAsync(TimeSpan.FromSeconds(2))).Error.Code); }
         }
         finally
         {
-            clock.Resume();
-            await holder;
+            await holder.ReleaseAsync();
             if (attempt is not null)
             {
                 try { await attempt; }

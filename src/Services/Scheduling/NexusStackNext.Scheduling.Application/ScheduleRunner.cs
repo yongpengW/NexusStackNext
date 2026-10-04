@@ -169,6 +169,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
                 else { skipped++; }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (CommittedFactCapacityBusyException) { failed.Add(task.Id.Value); }
             catch (Exception)
             {
                 failed.Add(task.Id.Value);
@@ -185,6 +186,7 @@ public sealed class ScheduleRunner(IScheduledTaskStore store, IClock clock, ISch
     {
         try { return await DecideAsync(task, original, id, now, origin, cancellationToken).ConfigureAwait(false); }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (CommittedFactCapacityBusyException) { return DecisionResult.Failed; }
         catch (Exception)
         {
             // 退避是本次失败执行提交的状态：在观察作用域结束前保存，保留当前操作与原发起关联。

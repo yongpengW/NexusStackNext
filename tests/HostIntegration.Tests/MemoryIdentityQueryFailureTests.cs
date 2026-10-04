@@ -4,7 +4,6 @@ using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.TestSupport;
-using BudgetApp = NexusStackNext.HostIntegration.Tests.MemoryFactWriteBudgetTests.BudgetApp;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -18,7 +17,7 @@ public sealed class MemoryIdentityQueryFailureTests
     {
         using var clock = new PausingClock(DateTimeOffset.UtcNow);
         FaultingPermissionCache? cache = null;
-        await using var baseApp = new BudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
+        await using var baseApp = new MemoryBudgetApp(clock, "Identity") { SchedulingWorkerEnabled = false };
         await using var app = baseApp.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
             services.AddSingleton<IPermissionCache>(provider => cache = new FaultingPermissionCache(
                 new UserPermissionCache(provider.GetRequiredService<IPermissionSource>())))));
