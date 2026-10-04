@@ -106,7 +106,15 @@ HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类
 
 预算只在事实准入和过期已确认副本清理访问容量账本时生效；不改变普通业务消息、业务表的锁等待或原会话设置，调用者更短的正数锁等待及取消继续有效。它不是整个 HTTP / 事务的时限。原始锁超时在数据库内转为不可自动重试的精确容量错误，避免 EF 自动重试放大争用。清理遇到争用则整批回滚并沿用已有维护重试。
 
-实现依据和边界见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)，当前验收跟踪 [#93](https://github.com/yongpengW/NexusStackNext/issues/93)。Memory 提交锁预算、策略调整审计、专用恢复与保留治理仍在 #64 / #60 跟踪。
+实现依据和边界见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)，PostgreSQL 验收见 [#93](https://github.com/yongpengW/NexusStackNext/issues/93)。策略调整审计、专用恢复与保留治理仍在 #64 / #60 跟踪。
+
+### Memory 来源共用写锁等待
+
+四个平台 Memory 来源复用 `<Context>:AuditDelivery:CapacityWrite:Timeout`，默认三秒，允许 50ms 至 30s 的整毫秒值；无效配置在模块装配时拒绝。预算覆盖共用业务写锁的每次获取，包括提交前读取、业务与事实提交、交付状态、条件人工重试和清理。诊断快照仍立即报告 `audit_capacity.unavailable`，不进入三秒等待。
+
+等待期间调用者取消继续传播；预算耗尽报告 `audit_capacity.busy`，公开 Result 边界保留此错误码，HTTP 返回 503，OpenAPI 声明相同的依赖失败响应。它不是整次请求的截止时间，不强制终止已开始的提交或外部回调，也不遗留仍在运行的后台写入任务。
+
+拒绝不提交半批事实、业务状态或容量，也不在提交前失效权限缓存。已受理删除的完成确认遇到争用时保持待办；上传失败仍遵循写入保护与先退役后回收的孤儿协议。调度登记忙拒绝作为失败计划报告，不能成为合法跳过或另造退避事实。独立清理适配器同样使用有限获取预算，未知异常仍传播并释放作用域。实施与完整验收由 [Memory 共用写锁预算 #96](https://github.com/yongpengW/NexusStackNext/issues/96) 跟踪。
 
 ### 中央存储与消息摄入
 

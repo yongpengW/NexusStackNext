@@ -24,9 +24,11 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     /// <param name="serializer">事实消息序列化。</param>
     /// <param name="clock">行审计及事实时钟。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
-    public InMemoryStoredFileRepository(IIntegrationEventSerializer? serializer = null, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null)
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
+    public InMemoryStoredFileRepository(IIntegrationEventSerializer? serializer = null, IClock? clock = null, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
-        _state = new FilesMemoryState(capacity);
+        _state = new FilesMemoryState(capacity, write);
         _clock = clock ?? new SystemClock();
         _facts = new StoredFileCommittedFacts(_clock, serializer ?? new SystemTextJsonIntegrationEventSerializer());
     }
@@ -47,7 +49,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
         ArgumentNullException.ThrowIfNull(id);
 
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult(
                 _state.Files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file.Snapshot() : null);
@@ -59,7 +61,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult(_state.Files.TryGetValue(id.Value, out var file) && file.IsDeleted ? file.Snapshot() : null);
         }
@@ -69,7 +71,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     public Task<IReadOnlyList<StoredFile>> PendingDeletionsAsync(DateTimeOffset now, int limit, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<StoredFile>>(_state.Files.Values
                 .Where(file => file.IsDeleted && file.BytesRemovedAt is null
@@ -84,7 +86,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     {
         ArgumentNullException.ThrowIfNull(id);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes) { return Task.FromResult(_state.DeletionOrigins.GetValueOrDefault(id.Value)); }
+        using (_state.Capacity.Enter(cancellationToken)) { return Task.FromResult(_state.DeletionOrigins.GetValueOrDefault(id.Value)); }
     }
 
     /// <inheritdoc />
@@ -94,7 +96,8 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
         cancellationToken.ThrowIfCancellationRequested();
         if (deletionOrigin is not null && !deletionOrigin.IsValid()) { throw new ArgumentException("删除来源无效。", nameof(deletionOrigin)); }
 
-        lock (_state.Writes)
+        if (!_state.Capacity.TryEnter(out var scope, cancellationToken)) { throw new FileAuditCapacityException(CommittedFactCapacityErrors.Busy); }
+        using (scope)
         {
             if (file.StorageKey is not null && _state.Retired.Contains(file.StorageKey))
             {
@@ -124,7 +127,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     public Task<bool> RetireUnreferencedStorageAsync(string storageKey, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             if (_state.Files.Values.Any(file => string.Equals(file.StorageKey, storageKey, StringComparison.Ordinal))) { return Task.FromResult(false); }
             _state.Retired.Add(storageKey);
@@ -136,7 +139,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     public Task<IReadOnlyList<OutboxEntry>> ReadPendingAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<OutboxEntry>>(_state.Outbox.Values.Where(entry => entry.IsPending
                 && (entry.NextAttemptAt is null || entry.NextAttemptAt <= now)).OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id).Take(batchSize).ToArray());
@@ -153,7 +156,7 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
     private Task<bool> UpdateDeliveryAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_state.Writes)
+        using (_state.Capacity.Enter(cancellationToken))
         {
             if (!_state.Outbox.TryGetValue(id, out var before)) { return Task.FromResult(false); }
             var after = update(before);
@@ -197,9 +200,9 @@ internal sealed class FilesMemoryState : ICommittedFactCapacityReader
     public Task<Result<CommittedFactCapacitySnapshot>> ReadAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(Capacity.Read("files", cancellationToken));
 
-    internal FilesMemoryState(MemoryCommittedFactCapacityOptions? capacity = null)
+    internal FilesMemoryState(MemoryCommittedFactCapacityOptions? capacity = null, CommittedFactCapacityWriteOptions? write = null)
     {
-        Capacity = new(Writes, StoredFileCommittedV1.Name, capacity);
+        Capacity = new(Writes, StoredFileCommittedV1.Name, capacity, write);
     }
 
     internal InMemoryCommittedFactCapacity Capacity { get; }
@@ -216,11 +219,13 @@ public static class FilesMemoryServiceCollectionExtensions
     /// <summary>共享元数据与事实状态，每次调用独立解析当前身份和执行来源。</summary>
     /// <param name="services">服务容器。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <returns>原服务容器。</returns>
-    public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
+    public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton(new FilesMemoryState(capacity));
+        services.AddSingleton(new FilesMemoryState(capacity, write));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>("files", (provider, _) => provider.GetRequiredService<FilesMemoryState>());
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddScoped(provider => new InMemoryStoredFileRepository(provider.GetRequiredService<FilesMemoryState>(),

@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Transactions;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -95,6 +96,7 @@ internal sealed class IdentityCommandHandler<TCommand>(
     {
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
         catch (IdentityAuditCapacityException error) { return Result.Failure(error.Reason); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
     }
 }
 
@@ -107,5 +109,6 @@ internal sealed class IdentityCommandHandler<TCommand, TResult>(
     {
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
         catch (IdentityAuditCapacityException error) { return Result.Failure<TResult>(error.Reason); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure<TResult>(CommittedFactCapacityBusyException.Reason); }
     }
 }

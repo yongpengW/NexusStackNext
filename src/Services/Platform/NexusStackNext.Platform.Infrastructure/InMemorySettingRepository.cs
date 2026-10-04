@@ -32,11 +32,13 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     /// <summary>创建独立的开发存储与有限容量账本。</summary>
     /// <param name="serializer">最小事件序列化器。</param>
     /// <param name="capacity">本存储的事实保留上限。</param>
-    public InMemorySettingRepository(IIntegrationEventSerializer serializer, MemoryCommittedFactCapacityOptions? capacity = null)
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
+    public InMemorySettingRepository(IIntegrationEventSerializer serializer, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentNullException.ThrowIfNull(serializer);
         _serializer = serializer;
-        _capacity = new(_writes, SettingCommittedV1.Name, capacity);
+        _capacity = new(_writes, SettingCommittedV1.Name, capacity, write);
     }
 
     internal ICommittedFactCleanup CreateFactCleanup(CommittedFactCleanupOptions options, IClock clock)
@@ -82,7 +84,8 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
         cancellationToken.ThrowIfCancellationRequested();
 
         var pending = OutboxEntry.From(audit, _serializer);
-        lock (_writes)
+        if (!_capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_settings.ContainsKey((setting.Key.Scope, setting.Key.Name)))
@@ -105,7 +108,8 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
         ArgumentNullException.ThrowIfNull(setting);
         cancellationToken.ThrowIfCancellationRequested();
         var pending = audit is null ? null : OutboxEntry.From(audit, _serializer);
-        lock (_writes)
+        if (!_capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var key = (setting.Key.Scope, setting.Key.Name);
@@ -127,7 +131,7 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     public Task<IReadOnlyList<OutboxEntry>> ReadPendingAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        using (_capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<OutboxEntry>>(_outbox.Values.Where(entry => entry.IsPending
                 && (entry.NextAttemptAt is null || entry.NextAttemptAt <= now)).OrderBy(entry => entry.OccurredAt)
@@ -147,7 +151,7 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     private Task<bool> UpdateAsync(Guid id, Func<OutboxEntry, OutboxEntry> update, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        using (_capacity.Enter(cancellationToken))
         {
             if (!_outbox.TryGetValue(id, out var entry)) { return Task.FromResult(false); }
             var updated = update(entry);
@@ -163,7 +167,7 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
         ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
         if (state is not ("Pending" or "Delivered" or "DeadLettered")) { throw new ArgumentException("未知投递状态。", nameof(state)); }
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        using (_capacity.Enter(cancellationToken))
         {
             return Task.FromResult<IReadOnlyList<SettingAuditDelivery>>(_outbox.Values.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id)
                 .Select(SettingAuditDelivery.From).Where(entry => entry.State == state).Take(limit).ToArray());
@@ -174,7 +178,8 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     public Task<Result<SettingAuditDelivery>> RetryAsync(Guid messageId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        if (!_capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure<SettingAuditDelivery>(CommittedFactCapacityErrors.Busy)); }
+        using (scope)
         {
             _outbox.TryGetValue(messageId, out var entry);
             var retry = SettingAuditDelivery.Retry(entry, expectedDeadLetteredAt);
@@ -204,13 +209,17 @@ public static class PlatformInfrastructureServiceCollectionExtensions
     /// <summary>注册内存配置存储与读写服务。<b>显式注册，不做程序集扫描</b>（架构不变量 8）。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
-    public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
+    public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var policy = capacity ?? new();
         policy.Validate();
-        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy));
+        var budget = write ?? new();
+        budget.Validate();
+        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy, budget));
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());

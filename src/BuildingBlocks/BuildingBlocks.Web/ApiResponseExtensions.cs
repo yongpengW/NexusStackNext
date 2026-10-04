@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using NexusStackNext.BuildingBlocks.Application.Events;
 
 namespace NexusStackNext.BuildingBlocks.Web;
 
@@ -27,7 +28,8 @@ public static class ApiResponseExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IProblemDetailsWriter, ApiProblemDetailsWriter>());
         services.AddProblemDetails();
         services.AddExceptionHandler(options => options.StatusCodeSelector = static error =>
-            error is BadHttpRequestException badRequest ? badRequest.StatusCode : StatusCodes.Status500InternalServerError);
+            error is CommittedFactCapacityBusyException ? StatusCodes.Status503ServiceUnavailable
+            : error is BadHttpRequestException badRequest ? badRequest.StatusCode : StatusCodes.Status500InternalServerError);
         return services;
     }
 

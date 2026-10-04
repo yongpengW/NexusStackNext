@@ -62,7 +62,8 @@ public static class FilesModule
             {
                 throw new InvalidOperationException("Files:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
-            services.AddFilesInMemoryMetadata(configuration.GetSection("Files:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>());
+            services.AddFilesInMemoryMetadata(configuration.GetSection("Files:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
+                configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
             services.AddFilesMemoryFactCleanup(configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -115,7 +116,7 @@ public static class FilesModule
         ArgumentNullException.ThrowIfNull(endpoints);
 
         // 会话撤销检查先于归属判断；根管理员也不隐式拥有其他人的私有文件。
-        var fileEndpoints = endpoints.MapGroup("/api/files").RequireAuthorization().RequireAuthenticated();
+        var fileEndpoints = endpoints.MapGroup("/api/files").RequireAuthorization().RequireAuthenticated().ProducesApiErrors(503);
         fileEndpoints.MapGet("/audit-capacity", async ([FromKeyedServices("files")] ICommittedFactCapacityReader reader,
             ApiResponses responses, CancellationToken token) =>
         {

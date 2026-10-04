@@ -1,4 +1,6 @@
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
+using NexusStackNext.BuildingBlocks.Application.Events;
 
 namespace NexusStackNext.BuildingBlocks.Web;
 
@@ -8,6 +10,10 @@ internal sealed class ApiProblemDetailsWriter(TimeProvider clock) : IProblemDeta
 
     public ValueTask WriteAsync(ProblemDetailsContext context)
     {
+        if (context.HttpContext.Features.Get<IExceptionHandlerFeature>()?.Error is CommittedFactCapacityBusyException)
+        {
+            context.ProblemDetails.Extensions["errorCode"] = CommittedFactCapacityBusyException.Reason.Code;
+        }
         var problem = new ApiProblemDetails(context.ProblemDetails, context.HttpContext, clock);
         context.HttpContext.Response.StatusCode = problem.Code;
         return new ValueTask(context.HttpContext.Response.WriteAsJsonAsync(

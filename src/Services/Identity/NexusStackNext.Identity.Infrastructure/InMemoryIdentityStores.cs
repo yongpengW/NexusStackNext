@@ -150,11 +150,13 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     /// </summary>
     /// <param name="services">服务集合。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
+    /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
-    public static IServiceCollection AddIdentityInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null)
+    public static IServiceCollection AddIdentityInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
+        CommittedFactCapacityWriteOptions? write = null)
     {
         ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton(new IdentityMemoryState(capacity));
+        services.AddSingleton(new IdentityMemoryState(capacity, write));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>("identity", (provider, _) => provider.GetRequiredService<IdentityMemoryState>());
         services.AddScoped<IdentityMemorySession>();
         services.AddScoped<IdentityMemoryFacts>();

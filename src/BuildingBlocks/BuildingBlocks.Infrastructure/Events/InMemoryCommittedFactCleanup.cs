@@ -10,8 +10,10 @@ namespace NexusStackNext.BuildingBlocks.Infrastructure.Events;
 /// <param name="options">本上下文清理策略。</param>
 /// <param name="clock">服务端时钟。</param>
 /// <param name="capacity">所属空存储初始化后随提交维护的账本；独立清理适配器可省略。</param>
+/// <param name="write">独立清理适配器的写锁预算；存在账本时使用账本的所属预算。</param>
 public sealed class InMemoryCommittedFactCleanup(Lock gate, Func<Dictionary<Guid, OutboxEntry>> entries,
-    string eventName, CommittedFactCleanupOptions options, IClock clock, InMemoryCommittedFactCapacity? capacity = null) : ICommittedFactCleanup
+    string eventName, CommittedFactCleanupOptions options, IClock clock, InMemoryCommittedFactCapacity? capacity = null,
+    CommittedFactCapacityWriteOptions? write = null) : ICommittedFactCleanup
 {
     /// <inheritdoc />
     public Task<int> CleanupAsync(CancellationToken cancellationToken = default)
@@ -24,8 +26,14 @@ public sealed class InMemoryCommittedFactCleanup(Lock gate, Func<Dictionary<Guid
         {
             throw new InvalidOperationException("事实副本清理必须使用独立的维护作用域。");
         }
-        while (!gate.TryEnter(25)) { cancellationToken.ThrowIfCancellationRequested(); }
-        try
+        var budget = write ?? new();
+        budget.Validate();
+        InMemoryCommittedFactWriteScope scope;
+        var acquired = capacity is null
+            ? InMemoryCommittedFactWriteLock.TryEnter(gate, budget.Timeout, cancellationToken, out scope)
+            : capacity.TryEnter(out scope, cancellationToken);
+        if (!acquired) { throw new CommittedFactCapacityBusyException(); }
+        using (scope)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var current = entries();
@@ -38,6 +46,5 @@ public sealed class InMemoryCommittedFactCleanup(Lock gate, Func<Dictionary<Guid
             else { capacity.Remove(candidates, Remove, cancellationToken); }
             return Task.FromResult(candidates.Length);
         }
-        finally { gate.Exit(); }
     }
 }

@@ -15,6 +15,35 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class ApiResponseContractTests
 {
     [Fact]
+    public async Task ProtectedMemoryOperations_DeclareDependencyBusyResponse_InPublishedOpenApi()
+    {
+        await using var app = new PlatformApp { SchedulingWorkerEnabled = false };
+        using var client = app.CreateClient();
+        using var response = await client.GetAsync(new Uri("/openapi/v1.json", UriKind.Relative));
+        response.EnsureSuccessStatusCode();
+        var document = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var checkedOperations = 0;
+        foreach (var prefix in new[] { "/api/platform/settings", "/api/platform/audit-deliveries", "/api/scheduling/tasks", "/api/scheduling/occurrences", "/api/files", "/api/identity" })
+        {
+            var paths = document.GetProperty("paths").EnumerateObject().Where(path => path.Name.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+            Assert.NotEmpty(paths);
+            foreach (var path in paths)
+            {
+                var operations = path.Value.EnumerateObject().Where(operation => operation.Name is "get" or "post" or "put" or "delete" or "patch").ToArray();
+                Assert.NotEmpty(operations);
+                foreach (var operation in operations)
+                {
+                    Assert.True(operation.Value.GetProperty("responses").TryGetProperty("503", out var busy), $"{operation.Name} {path.Name} 缺少依赖忙拒绝响应。");
+                    var schema = Resolve(busy.GetProperty("content").GetProperty("application/problem+json").GetProperty("schema"), document);
+                    Assert.True(schema.GetProperty("properties").TryGetProperty("errorCode", out _));
+                    checkedOperations++;
+                }
+            }
+        }
+        Assert.True(checkedOperations > 0);
+    }
+
+    [Fact]
     public async Task UnsupportedMediaType_UsesProblemContract_AndAllJsonRequestsDocumentIt()
     {
         await using var platform = new PlatformApp();

@@ -1,3 +1,4 @@
+using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Ids;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
@@ -139,7 +140,9 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
     /// <returns>更新或条件冲突。</returns>
     public async Task<Result> UpdateRuleAsync(ScheduledTaskId id, long expectedVersion, ScheduleRuleInput rule, CancellationToken cancellationToken = default)
     {
-        var task = await FindAsync(id, cancellationToken).ConfigureAwait(false);
+        ScheduledTask? task;
+        try { task = await FindAsync(id, cancellationToken).ConfigureAwait(false); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
         if (task is null) { return Result.Failure(new Error("scheduling.task.not_found", "计划不存在。")); }
         if (task.Version != expectedVersion) { return Result.Failure(Conflict); }
         var normalized = calendar.Normalize(rule);
@@ -163,7 +166,9 @@ public sealed class TaskRegistry(IScheduledTaskStore store, IIdGenerator ids, IC
         bool enable,
         CancellationToken cancellationToken)
     {
-        var task = await FindAsync(id, cancellationToken).ConfigureAwait(false);
+        ScheduledTask? task;
+        try { task = await FindAsync(id, cancellationToken).ConfigureAwait(false); }
+        catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
         if (task is null)
         {
             return Result.Failure(new Error("scheduling.task.not_found", $"任务不存在：{id.Value}。"));
