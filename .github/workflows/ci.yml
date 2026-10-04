@@ -55,7 +55,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    # 测试分组只需读取代码；票据权限仅授予最后的汇总任务。
+    # 测试分组只需读取代码；票据权限仅授予仓库检查任务。
     permissions:
       contents: read
 
@@ -118,36 +118,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  build-and-test:
-    # Preserve the existing required check name. Missing/failed/cancelled shards fail this gate.
-    name: 构建与测试
-    needs: test-shards
-    if: ${{ always() }}
+  repository-checks:
+    # 与产品测试并行；不启动服务，也不读取仓库的私有开发配置。
+    name: 仓库与工具检查
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       issues: read
     steps:
-      - name: 确认所有分组完成
-        shell: pwsh
-        env:
-          SHARD_RESULT: ${{ needs.test-shards.result }}
-        run: |
-          if ($env:SHARD_RESULT -ne 'success') { throw 'One or more test shards did not succeed.' }
-
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: ci-tests-*
-          path: ${{ runner.temp }}/nsn-ci-reports
-
-      - name: 核对全部测试完整执行
-        shell: pwsh
-        run: ./scripts/ci-test-tools.ps1 -Action Verify -InputPath (Join-Path $env:RUNNER_TEMP 'nsn-ci-reports') -Revision $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -Attempt $env:GITHUB_RUN_ATTEMPT
 
       - name: 验证分组与安全护栏
         shell: pwsh
@@ -164,14 +147,6 @@ jobs:
       - name: 验证票据读取失败门禁
         shell: pwsh
         run: ./scripts/check-issue-fetching.ps1
-
-      - name: 还原格式检查所需依赖
-        run: dotnet restore NexusStackNext.slnx
-      - name: 断言格式符合 .editorconfig
-        # typecheck（构建）→ tests → format：`resolving-merge-conflicts` 要求的三段自动化检查。
-        # 第一次跑它的时候全仓有 448 处违规而构建全绿——"声明了风格"与"检查了风格"是两件事。
-        shell: pwsh
-        run: ./scripts/check-format.ps1
 
       - name: 断言模板生成物不含凭据
         # 见票据 16：参照仓库把生产凭据随模板分发了出去。
@@ -208,3 +183,41 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Template generation failed.' }
           dotnet build "$out/CiProbe.slnx" --configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Generated project build failed.' }
+
+  build-and-test:
+    # Preserve the required check name; always() must never mask an upstream failure.
+    name: 构建与测试
+    needs: [test-shards, repository-checks]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: 确认前置任务全部成功
+        shell: pwsh
+        env:
+          SHARD_RESULT: ${{ needs.test-shards.result }}
+          REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
+        run: ./scripts/ci-test-tools.ps1 -Action Prerequisites -ShardResult $env:SHARD_RESULT -RepositoryResult $env:REPOSITORY_RESULT
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ci-tests-*
+          path: ${{ runner.temp }}/nsn-ci-reports
+
+      - name: 核对全部测试完整执行
+        shell: pwsh
+        run: ./scripts/ci-test-tools.ps1 -Action Verify -InputPath (Join-Path $env:RUNNER_TEMP 'nsn-ci-reports') -Revision $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -Attempt $env:GITHUB_RUN_ATTEMPT
+
+      - name: 还原格式检查所需依赖
+        run: dotnet restore NexusStackNext.slnx
+      - name: 断言格式符合 .editorconfig
+        # typecheck（构建）→ tests → format：`resolving-merge-conflicts` 要求的三段自动化检查。
+        # 第一次跑它的时候全仓有 448 处违规而构建全绿——"声明了风格"与"检查了风格"是两件事。
+        shell: pwsh
+        run: ./scripts/check-format.ps1
