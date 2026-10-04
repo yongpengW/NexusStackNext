@@ -155,10 +155,14 @@ public sealed class FactCapacityDiagnosticsTests
         Assert.DoesNotContain("capacity-private", snapshot.GetRawText(), StringComparison.Ordinal);
         await using var scope = app.Services.CreateAsyncScope();
         var outbox = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("files");
-        foreach (var entry in await outbox.ReadPendingAsync(10, clock.UtcNow))
+        var pending = await outbox.ReadPendingAsync(10, clock.UtcNow);
+        Assert.Equal(2, pending.Count);
+        Assert.All(pending, entry => Assert.Equal(StoredFileCommittedV1.Name, entry.EventName));
+        foreach (var entry in pending)
         {
             Assert.True(await outbox.MarkDeadLetteredAsync(entry.Id, "private-error", clock.UtcNow, entry.RetryRevision));
         }
+        Assert.Empty(await outbox.ReadPendingAsync(10, clock.UtcNow));
         clock.UtcNow = clock.UtcNow.AddDays(8);
         Assert.Equal(0, await scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCleanup>("files").CleanupAsync());
         Assert.Equal(snapshot.GetRawText(), (await ReadAsync(client, "files")).GetRawText());

@@ -93,17 +93,7 @@ public sealed class BusinessFactCapacityDiagnosticsTests
             feeRate = 0.2m,
         });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
-        using var read = await app.Client.GetAsync(path);
-        Assert.Equal(HttpStatusCode.OK, read.StatusCode);
-        var snapshot = await read.Content.ReadApiDataAsync();
-        Assert.Equal("pricing", snapshot.GetProperty("context").GetString());
-        Assert.True(snapshot.GetProperty("isPersistent").GetBoolean());
-        Assert.Equal(1, snapshot.GetProperty("retainedRecords").ReadHttpInt64());
-        Assert.Equal(99999, snapshot.GetProperty("remainingRecords").ReadHttpInt64());
-        Assert.InRange(snapshot.GetProperty("retainedPayloadBytes").ReadHttpInt64(), 1, 1048576);
-        using var repeated = await app.Client.GetAsync(path);
-        Assert.Equal(snapshot.GetRawText(), (await repeated.Content.ReadApiDataAsync()).GetRawText());
-        FactCapacityAccessTests.AssertCapacitySchema(await app.Client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative)), path.OriginalString);
+        await AssertCommittedCapacityAsync(app.Client, "pricing");
     }
 
     [PostgresFact]
@@ -128,16 +118,22 @@ public sealed class BusinessFactCapacityDiagnosticsTests
             freightCost = 20m,
         });
         Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
-        using var read = await app.Client.GetAsync(path);
+        await AssertCommittedCapacityAsync(app.Client, "costing");
+    }
+
+    private static async Task AssertCommittedCapacityAsync(HttpClient client, string owner)
+    {
+        var path = new Uri($"/api/{owner}/audit-capacity", UriKind.Relative);
+        using var read = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         var snapshot = await read.Content.ReadApiDataAsync();
-        Assert.Equal("costing", snapshot.GetProperty("context").GetString());
+        Assert.Equal(owner, snapshot.GetProperty("context").GetString());
         Assert.True(snapshot.GetProperty("isPersistent").GetBoolean());
         Assert.Equal(1, snapshot.GetProperty("retainedRecords").ReadHttpInt64());
         Assert.Equal(99999, snapshot.GetProperty("remainingRecords").ReadHttpInt64());
         Assert.InRange(snapshot.GetProperty("retainedPayloadBytes").ReadHttpInt64(), 1, 1048576);
-        using var repeated = await app.Client.GetAsync(path);
+        using var repeated = await client.GetAsync(path);
         Assert.Equal(snapshot.GetRawText(), (await repeated.Content.ReadApiDataAsync()).GetRawText());
-        FactCapacityAccessTests.AssertCapacitySchema(await app.Client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative)), path.OriginalString);
+        FactCapacityAccessTests.AssertCapacitySchema(await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative)), path.OriginalString);
     }
 }
