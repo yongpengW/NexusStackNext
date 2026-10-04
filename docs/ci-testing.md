@@ -81,6 +81,11 @@ HTTP 429 不自动重试，避免忽略限流策略。
 持续故障、永久错误、stdout 假诊断、异常分页、脱敏、单次超时与累计预算。
 超时探针必须有对应目标路由的 PID / 启动时刻标记，并证明原进程已退出；
 最后的标签请求另验证主进程退出而后代持管道的情况，避免后续请求掩盖超时缺口。
+fixture 的进程身份由 PID 与启动标记组成；Windows 使用启动 UTC ticks，Linux 使用
+`/proc/<pid>/stat` 的内核启动计数。Linux `Process.StartTime` 的 UTC 投影包含按进程缓存的
+[开机时间估算](https://github.com/dotnet/runtime/blob/v10.0.0/src/native/libs/System.Native/pal_time.c)，
+不能在不同进程之间要求该投影逐 tick 相同；内核字段语义见
+[proc 文档](https://docs.kernel.org/filesystems/proc.html)。这层只用于探针归属验证，不改变真实测试互斥。
 只运行部分探针可在 PowerShell 中使用 `./scripts/check-issue-fetching.ps1 -Modes @('request-timeout')`；
 CI 默认运行全部探针，未知探针名称失败。本轮实现和 Linux 资格验证由
 [有界恢复票据](https://github.com/yongpengW/NexusStackNext/issues/82)记录，不能仅凭本节声明通过。

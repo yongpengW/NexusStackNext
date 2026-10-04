@@ -7,14 +7,18 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) ('nsn-issue-probes-' + [Guid]::N
 [void][IO.Directory]::CreateDirectory($scratch)
 $oldPath = $env:PATH
 $oldMode = $env:NSN_ISSUE_PROBE_MODE
+Import-Module (Join-Path $PSScriptRoot 'probe-process-identity.psm1') -Force
 function Stop-OwnedPipeFixture([switch]$RequireRunning) {
     $marker = Join-Path $scratch 'held-pipes'
     if (Test-Path -LiteralPath $marker) {
         $identity = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-        if ($identity.Pid -le 0 -or $identity.StartedUtcTicks -le 0 -or $identity.Route -notmatch '/labels\?') { throw 'Pipe probe has no valid target process identity.' }
+        if ($identity.Pid -le 0 -or [string]::IsNullOrWhiteSpace($identity.StartStamp) -or $identity.Route -notmatch '/labels\?') { throw 'Pipe probe has no valid target process identity.' }
         $owned = Get-Process -Id $identity.Pid -ErrorAction SilentlyContinue
-        $isOriginal = $owned -and $owned.StartTime.ToUniversalTime().Ticks -eq $identity.StartedUtcTicks
+        $isOriginal = $owned -and -not $owned.HasExited -and (Get-ProbeProcessStartStamp $identity.Pid) -ceq $identity.StartStamp
         if ($RequireRunning -and -not $isOriginal) { throw 'Pipe probe has no surviving owned child at CLI exit.' }
+        if ($RequireRunning -and $IsLinux) {
+            Write-Output ('PASS: Linux kernel process identity; UTC stamp differs=' + ($owned.StartTime.ToUniversalTime().Ticks -ne $identity.StartedUtcTicks))
+        }
         if ($isOriginal) {
             $owned.Kill($true)
             if (-not $owned.WaitForExit(5000)) { throw 'Owned pipe fixture did not exit.' }
@@ -24,6 +28,7 @@ function Stop-OwnedPipeFixture([switch]$RequireRunning) {
 $adapter = @'
 #!/usr/bin/env pwsh
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'probe-process-identity.psm1') -Force
 $route = $args[1]
 if ($env:NSN_ISSUE_PROBE_MODE -eq 'accumulated-budget') { Start-Sleep -Milliseconds 600 }
 $timeoutRoute = switch ($env:NSN_ISSUE_PROBE_MODE) {
@@ -33,13 +38,13 @@ $timeoutRoute = switch ($env:NSN_ISSUE_PROBE_MODE) {
     default { $null }
 }
 if ($timeoutRoute -and $route -match $timeoutRoute) {
-    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), (ConvertTo-Json -Compress @{ Pid = $PID; StartedUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks; Route = $route }))
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), (ConvertTo-Json -Compress @{ Pid = $PID; StartStamp = Get-ProbeProcessStartStamp $PID; Route = $route }))
     Start-Sleep -Seconds 15
 }
 if ($route -match '/issues\?') {
     switch ($env:NSN_ISSUE_PROBE_MODE) {
         { $_ -in 'request-timeout', 'total-timeout' } {
-            [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), (ConvertTo-Json -Compress @{ Pid = $PID; StartedUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks; Route = $route }))
+            [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'timed-process'), (ConvertTo-Json -Compress @{ Pid = $PID; StartStamp = Get-ProbeProcessStartStamp $PID; Route = $route }))
             Start-Sleep -Seconds 10
         }
         'persistent-service' {
@@ -110,7 +115,7 @@ if ($env:NSN_ISSUE_PROBE_MODE -eq 'held-pipes-labels' -and $route -match '/label
     foreach ($argument in @('-NoProfile', '-Command', 'Start-Sleep -Seconds 15')) { $start.ArgumentList.Add($argument) }
     # Inherit the adapter's output handles; its exit alone must not bypass the read budget.
     $child = [Diagnostics.Process]::Start($start)
-    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'held-pipes'), (ConvertTo-Json -Compress @{ Pid = $child.Id; StartedUtcTicks = $child.StartTime.ToUniversalTime().Ticks; Route = $route }))
+    [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'held-pipes'), (ConvertTo-Json -Compress @{ Pid = $child.Id; StartedUtcTicks = $child.StartTime.ToUniversalTime().Ticks; StartStamp = Get-ProbeProcessStartStamp $child.Id; Route = $route }))
     $child.Dispose()
 }
 # Real gh emits independent JSON pages unless --slurp wraps the pages in an array.
@@ -120,6 +125,7 @@ if ($args -contains '--slurp') { '[[],' + $items + ']' } else { "[]`n$items" }
 exit 0
 '@
 try {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'probe-process-identity.psm1') -Destination (Join-Path $scratch 'probe-process-identity.psm1')
     $palette = Get-Content (Join-Path $PSScriptRoot '../docs/agents/label-colors.json') -Raw | ConvertFrom-Json
     $labels = @($palette.PSObject.Properties | ForEach-Object { @{ name = $_.Name; color = $_.Value.TrimStart('#') } })
     [IO.File]::WriteAllText((Join-Path $scratch 'labels.json'), (ConvertTo-Json -InputObject $labels))
@@ -191,15 +197,15 @@ exec pwsh -NoProfile -File "$0.ps1" "$@"
                 'request-timeout-labels' { '/labels\?' }
                 default { '/issues\?' }
             }
-            if ($identity.Pid -le 0 -or $identity.StartedUtcTicks -le 0 -or $identity.Route -notmatch $target) { throw 'Timeout probe has no valid target process identity.' }
+            if ($identity.Pid -le 0 -or [string]::IsNullOrWhiteSpace($identity.StartStamp) -or $identity.Route -notmatch $target) { throw 'Timeout probe has no valid target process identity.' }
             $original = Get-Process -Id $identity.Pid -ErrorAction SilentlyContinue
-            if ($original -and $original.StartTime.ToUniversalTime().Ticks -eq $identity.StartedUtcTicks) { throw 'Timed-out adapter is still running.' }
+            if ($original -and -not $original.HasExited -and (Get-ProbeProcessStartStamp $identity.Pid) -ceq $identity.StartStamp) { throw 'Timed-out adapter is still running.' }
         }
         if ($mode -eq 'held-pipes-labels') {
             $marker = Join-Path $scratch 'held-pipes'
             if (-not (Test-Path -LiteralPath $marker)) { throw 'Pipe probe never reached its final labels request.' }
             $identity = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
-            if ($identity.Pid -le 0 -or $identity.StartedUtcTicks -le 0 -or $identity.Route -notmatch '/labels\?') { throw 'Pipe probe has no valid target process identity.' }
+            if ($identity.Pid -le 0 -or [string]::IsNullOrWhiteSpace($identity.StartStamp) -or $identity.Route -notmatch '/labels\?') { throw 'Pipe probe has no valid target process identity.' }
             if ($timer.Elapsed.TotalSeconds -gt 10) { throw 'Tracker CLI waited beyond the budget for inherited output pipes.' }
         }
         Write-Output "PASS: tracker CLI $mode"
