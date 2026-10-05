@@ -18,5 +18,11 @@ triggered / coalesced / skipped 必须携带已登记的决定标识；其他动
 未能读取原始来源时不反查中央日志或猜测关联；存储完全不可用时也无法保证退避落库。
 
 事实通过本上下文 Outbox 交付，中央消费者只依赖 Scheduling.Contracts，按固定动作和决定引用组合校验。
-OccurrenceDelivery 的重试端口只处理业务触发消息，不接纳审计消息；审计来源恢复及容量治理由 #64 继续完成。
+OccurrenceDelivery 的重试端口只处理业务触发消息，不接纳审计消息。来源事实容量治理已由 #75 / #96 / #101 交付，
+条件恢复由 #103 推进：Scheduling 仅声明 `PlanCommittedV1` 与 `SchedulingFactCapacityPolicyChangedV1`，
+`ScheduleTriggeredV1` 不能借新事实接口重投。
+恢复保留原事实内容与身份，只更新投递代次并在同一所属提交中保存有限凭据；不推进计划、不登记新的决定／发生，
+也不消耗计划事实或策略控制额度。Memory 使用原所属写锁，PostgreSQL 使用独立所属连接／事务，
+不清除调用者尚未提交的计划工作副本。原裁决可重放，清理最早七天后有限释放恢复凭据池。
+本轮仍在本机开发，尚未完成六来源及最终门禁，不将阶段适配器声明为整票交付。
 验收使用公开存储端口、HTTP、临时 PostgreSQL 故障和真实进程重启 / RabbitMQ，不以消息类型存在作为完成证据。

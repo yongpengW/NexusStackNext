@@ -24,6 +24,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
+        modelBuilder.ConfigureSettingAuditRecovery();
         var setting = modelBuilder.Entity<GlobalSetting>();
         setting.ToTable("global_settings");
         setting.HasKey(item => item.Id);

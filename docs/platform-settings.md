@@ -81,10 +81,11 @@ Platform 默认使用 PostgreSQL，配置 `ConnectionStrings__Platform`（配置
 参考：[ASP.NET Core Minimal API 认证与授权](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/security?view=aspnetcore-10.0)。
 框架的 RequireAuthorization 负责要求认证，模块的权限规则仍须显式注册；只要求登录不能代替业务授权。
 
-## 来源事实容量策略（实施中）
+## 来源事实容量策略
 
-[来源策略治理 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 正在当前工作区实现，
-尚未完成六来源验收或合入 dev。本节描述 Platform 已接入的接口和维护边界；完整资格以原生票据为准。
+[来源策略治理 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 已完成六来源验收，
+经 [PR #102](https://github.com/yongpengW/NexusStackNext/pull/102) 合入 dev。
+本节描述 Platform 已接入的接口和维护边界；父票中的恢复和中央治理范围仍未全部完成。
 
 GET `/api/platform/audit-capacity` 保留业务容量字段，增加 `policyRevision` 和独立的 `controlCapacity`。
 PUT 同一路径接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloadBytes`、
@@ -112,3 +113,78 @@ Memory 使用所属共用写锁，PostgreSQL 使用所属独立连接和短预�
 固定保留期限不能通过这组配置缩短。`platform-policy-cleanup` 诊断使用 `auditing-diagnostics` 标签，
 报告维护运行、失败、降级与 `releasedRequests`；空操作凭据的释放也计一次。
 失败诊断不输出异常原文，下一轮重新尝试；失败不能发布一半清理结果。
+
+## 来源事实条件恢复（开发中）
+
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放。
+以下接口是 `codex/fact-delivery-recovery-103` 的未提交实现，尚未合入 dev。
+六来源已经阶段接入；专项资格与整票剩余验收见[当前本机状态](handoff-2026-10-03.md)，不代表完整治理交付。
+
+POST `/api/platform/audit-deliveries/{messageId}/retry` 接受稳定 `requestId`、读到的
+`expectedDeadLetteredAt`、`expectedRetryRevision` 和固定 `reason=manual-retry/dependency-restored`。
+恢复只针对所属业务事实和容量策略事实，保留原消息身份、正文及发生时刻；停止时刻和恢复代次
+必须同时匹配。旧的仅凭停止时刻恢复契约正在迁移，应用存储端口已删除弱条件重试方法。
+有界状态列表同时包含普通设置事实与容量策略事实，裁剪后只提供投递证据，不暴露正文或底层异常。
+GET `/api/platform/audit-deliveries/{messageId}` 使用独立单条读取权限，按稳定消息身份调查，
+不受列表批次位置限制；只返回最小状态，不存在或不属于可管理事实的消息返回404。
+Memory/PG 已验证列表范围外的目标消息及 Pending / DeadLettered / Delivered 状态；
+PostgreSQL 单条读取使用所属独立连接与有限预算，不借用调用者事务或读取正文。
+
+成功响应为恢复凭据；相同请求、操作者和内容重放原裁决，不再次开放预算。
+异内容或异操作者返回冲突。GET `/api/platform/audit-deliveries/recoveries/{requestId}`
+用于响应丢失后读回原裁决；读取凭据与执行恢复有独立权限。
+来源、操作者、时刻和执行关联来自可信宿主，不能由客户端正文指定。
+Int64 沿用十进制字符串；凭据表示当时开放预算，不表示 broker 或中央已完成处理。
+
+恢复凭据池与业务事实、容量策略控制池分开，当前默认1000个请求、16MiB总量、16KiB单条，
+固定最早保留七天。Memory 使用所属共用写锁且不持久；PostgreSQL 使用独立所属连接和事务，
+不加入调用者环境事务或清除其工作副本，当前读写总预算为三秒。
+条件状态、凭据和计量同事务提交；对结果未知的写入不盲目重试，使用原请求标识核对。
+
+首轮 PostgreSQL 故障资格通过公开存储端口验证：清理已删除凭据、但容量释放写入失败时，
+凭据和计量一起回滚，未知数据库约束错误保留原语义；恢复已准备消息状态、但凭据写入等待外部锁时，
+调用者取消会结束实际写入并回滚，解除故障后同一请求可重新裁决。
+所属恢复账本锁争用返回明确忙碌，不留下恢复凭据或部分消息状态；这些验证不代表全部失败边界已覆盖。
+
+PostgreSQL 使用正常增量迁移，未接受恢复时允许回退；已有恢复历史时拒绝破坏性回退。
+本轮尚未交付的 `ConditionalFactRecovery` 迁移还为所属恢复凭据增加 UPDATE 不可变保护：
+请求身份、原裁决 JSON、接受时计算的字节数和固定期限均不可改写；同值 UPDATE 不改变记录。
+真实数据库已验证四类改写被所属约束拒绝、原凭据仍可读取和重放、到期清理正常释放额度。
+空恢复历史的非空事实升级、重复迁移、接受后回退拒绝及安全清理后的回退／再升级均已通过；
+原消息身份、内容、发生时刻和当前投递状态保持。本轮迁移尚未合并，既有冻结迁移未修改。
+已验证真实进程重启后的原凭据读取与重放，以及微秒精度下过期条件不能被截断成有效条件。
+GET `/api/platform/audit-deliveries/recovery-capacity` 使用独立读取权限，返回所属来源、是否持久、
+恢复池的上限与当前占用；不返回操作者或原消息正文。重放不重复占用恢复池，恢复不改变另外两池的计量。
+
+到期恢复凭据按最早保留期限、请求标识稳定排序，每轮按有限批次删除并同时释放计量。
+清理只删除恢复凭据；原事实、其投递状态、业务额度与策略控制额度不变。
+PostgreSQL 保留期限向上取整到微秒，防止早于对外凭据的期限清理。
+安全清理后的请求不再承诺旧裁决重放，须按当前停止时刻和恢复代次重新判断。
+
+Memory 可用 `Platform:AuditDelivery:MemoryRecoveryControl` 缩小开发恢复池：
+`MaxRecords` 为1–1000，`MaxPayloadBytes` 为1–16MiB，`MaxRecordPayloadBytes` 为1–16KiB且不超过总量。
+不配置则沿用默认；这些配置不覆盖 PostgreSQL 持久额度，也不能改变既有七天期限。
+
+`Platform:AuditDelivery:RecoveryMaintenance` 调度所属清理：`Enabled` 默认 true，`BatchSize` 默认100
+（1–1000），`Interval` 默认一分钟（1秒–1小时），`Timeout` 默认3秒（50毫秒–30秒）。
+无效调度即使关闭维护也拒绝启动。`platform-recovery-cleanup` 使用 `auditing-diagnostics` 标签，
+报告运行、失败、降级和 `releasedRequests`；诊断不输出异常原文。宿主关闭会取消本轮等待，
+其他维护故障记录后在下一轮尝试，不发布半次清理。
+真实 PostgreSQL 宿主已验证清理失败后的完整回滚、独立降级诊断与下一轮恢复：失败时原凭据、
+容量计数和原事实保持，诊断不携带原始异常，数据库就绪不因维护降级而误报不可用；
+解除受控存储故障后自动清理到期凭据并恢复健康。宿主停止与其他取消边界仍须继续验证。
+
+Identity 成为第二个已验证消费者后，两个来源共同使用 BuildingBlocks 的条件请求、原裁决凭据、
+可信输入校验、重放比较和固定期限／UTF-8 准备规则；HTTP 字段保持不变。
+所属 Memory / PostgreSQL 原子恢复、凭据读取、独立容量诊断与有界清理协议已由两个真实消费者共同使用。
+两个来源的调查端口也使用共同的安全 `FactDeliveryState` 投影及所属存储协议；来源声明继续决定
+可管理事件与未找到的错误。PostgreSQL 列表直接选择六个状态字段，不加载正文或原始失败。
+所属事件白名单与 HTTP 语义继续留在来源，迁移模型仍各自拥有；共享 Memory 维护接受时已计算的 UTF-8 大小，
+清理只释放原计量，不重新序列化凭据。这些阶段资格不等于整票最终评审或合并资格。
+共同维护调度由两个来源的真实宿主行为证明后集中；模块仍显式选择自己的清理端口、
+配置前缀及 `platform-recovery-cleanup` 诊断名称。两种存储的维护故障回滚和下一轮恢复继续经真实宿主验证。
+已有但不在来源事件白名单中的消息以400及 `platform.delivery_recovery.unmanaged` 拒绝，
+不新增凭据或开放预算；其归属先于停止时刻精度比较。Memory 列表也只投影声明的两类事实。
+
+更完整的故障、配置验证和权限边界，以及其他来源、并发和真实消息链路的
+完整验收仍在本票范围内。本机继续开发，不换机；SignalR 与多机高可用仍暂缓。

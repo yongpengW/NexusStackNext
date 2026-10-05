@@ -23,6 +23,7 @@ public sealed class CalendarRuntimeTests
                 ["Scheduling:Storage:Provider"] = "Memory",
                 ["Scheduling:Worker:Enabled"] = "false",
                 ["Scheduling:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Scheduling:AuditDelivery:RecoveryMaintenance:Enabled"] = "false",
             }).Build(), context.HostingEnvironment);
         }).Build();
         var calendar = host.Services.GetRequiredService<IScheduleCalendar>();

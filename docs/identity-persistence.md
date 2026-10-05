@@ -61,7 +61,7 @@ AppHost 启动脚本只接受明确的运行库配置，不再把 `NEXUSSTACK_TE
 PostgreSQL 事实容量由 `IdentityFactCapacity` 独立迁移启用；默认 100,000 条、正文总量 256 MiB、单条正文 16 KiB。
 整批事实与业务同事务，满额返回 `identity.audit_capacity.exhausted` / HTTP 503，不留下半批变化，
 也不执行提交后的权限失效。错误密码只有失败计数及事实成功提交后才返回原有凭据错误。
-恢复依靠安全清理已确认副本；容量诊断和 Memory 准入已完成，可审计策略调整正在票据 #101 的工作分支实施。
+恢复依靠安全清理已确认副本；容量诊断、Memory 准入与可审计策略调整已交付，见已关闭的票据 #101 与合并 PR #102。
 设计与测试边界见 [ADR-0006](../src/Services/Identity/docs/adr/0006-fact-capacity-rejects-the-whole-command.md)。
 
 会话版本由 User 持有；访问令牌和刷新令牌都记录签发时版本，重启后旧版本继续被拒绝。
@@ -71,10 +71,11 @@ PostgreSQL 事实容量由 `IdentityFactCapacity` 独立迁移启用；默认 10
 已有令牌流程的跨聚合事务建模债务、固定 WorkerId 以及提交结果不确定时的命令幂等仍未解决。
 此轮支持单实例持久化运行，不宣称已经具备多副本高可用。
 
-## 来源事实容量策略（实施中）
+## 来源事实容量策略
 
-[票据 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 的当前工作区已接入 Identity 自己的
-Memory / PostgreSQL 策略读取、条件调整及有界清理，尚未提交、合并或完成整票验收。
+[票据 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 已完成并关闭，
+[PR #102](https://github.com/yongpengW/NexusStackNext/pull/102) 已合入 dev `3276cd9`。
+Identity 自己的 Memory / PostgreSQL 策略读取、条件调整及有界清理已在该轮交付。
 `GET /api/identity/audit-capacity` 增加单调 `policyRevision` 和独立 `controlCapacity`；
 `PUT` 同路径要求单独的 PUT 资源权限，仍先验证当前会话，不使用读权限代替写权限。
 请求只接受 UUID `requestId`、`expectedPolicyRevision`、三个新额度和固定
@@ -96,10 +97,86 @@ Memory 在原有业务写锁内准备与发布，策略管理不提交用户/角
 已接受凭据及对应事实的身份、时间和正文有不可变保护；有控制历史时 Down 明确拒绝破坏性回退。
 `FactCapacityPolicyMigrationTests` 已通过私有库的真实升级、重复迁移与治理历史回退拒绝，
 经公开策略/仓储端口检查旧额度、占用、角色版本、原授权集合及行审计保持。
-该旅程重建的是同一测试进程内的宿主实例；真实进程恢复与本票最终资格仍按 #101 续验，不能混称。
+该用例重建的是同一测试进程内的宿主实例，不能将它混称为真实进程恢复；该票完整交付资格以原生完成记录为准。
 
 凭据最早保留七天，真实控制事实还需实际交付至少24小时，满足两条条件后才原子删除并释放控制额度。
 待投递和死信一直保留；仍被保留的凭据在最早期限之后继续支持重放，只有安全清理后才回到普通版本比较。
 公开维护端口支持稳定顺序的一至一千条批次。工作区已接入 `Identity:AuditDelivery:PolicyMaintenance` 调度与
 `identity-policy-cleanup` 诊断，参数及期限约束见[共同维护说明](committed-auditing.md)；清理故障不影响业务就绪检查。
-中央 typed 摄入、完整配额/故障边界及六来源共同协议仍在实施，最终资格见票据记录。
+中央 typed 摄入、配额/故障边界及六来源协议在 #101 的完整交付范围内，资格见原生完成记录；
+后续来源恢复、中央保留归档、导出及遗漏防线继续由 #103 和父 #64 / #60 承载。
+
+## 来源事实条件恢复（开发中）
+
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放，以下是
+`codex/fact-delivery-recovery-103` 的未提交实现，尚未合入 dev，不代表全部六来源验收。
+Identity 已成为 Platform 之后的第二个实际消费者，目前提供有界调查、单条状态、条件恢复、凭据读取和容量诊断：
+GET `/api/identity/audit-deliveries` 默认查询 Pending、50条；只接受 Pending / Delivered / DeadLettered，
+`limit` 为1至100，按发生时刻及消息身份稳定排序。GET `/api/identity/audit-deliveries/{messageId}`
+不受列表位置限制。两者要求独立的 GET 资源授权与当前有效会话，状态只含消息身份、状态、失败次数、
+下次尝试、停投时刻和十进制字符串恢复代次，不返回消息正文或原始失败。
+Memory / PostgreSQL 真实 HTTP 已验证列表之外的单条、三种投递状态、缺失消息404以及容量策略事实。
+PG 两条读取都只投影公开状态列；非受管消息在两个来源的列表中排除，单条以所属404拒绝。
+读取前后的原消息、业务/策略计量及恢复池保持；非法状态和越界条数经 Memory HTTP 验证为400。
+
+POST `/api/identity/audit-deliveries/{messageId}/retry` 接受稳定 `requestId`、观察到的
+`expectedDeadLetteredAt`、`expectedRetryRevision` 及固定 `manual-retry/dependency-restored` 原因；
+来源、操作者、接受时刻和执行关联来自宿主，不能通过正文选择。读写要求各自资源权限及当前有效会话。
+成功后保持原消息身份、正文和发生时刻，仅开放新投递预算；Int64 仍使用十进制字符串。
+
+GET `/api/identity/audit-deliveries/recoveries/{requestId}` 用于核对原裁决。
+GET `/api/identity/audit-deliveries/recovery-capacity` 使用独立读取权限，返回所属来源、持久性和恢复池额度／占用，
+不返回原消息、操作者或异常。Memory／PostgreSQL 的真实 HTTP 已验证首次接受计量、同请求重放不重复占用，
+业务事实和策略控制池计量保持；四条既有身份恢复、真实进程重启和未提交工作保护旅程也通过。
+已有但不属于声明事实的消息以400及 `identity.delivery_recovery.unmanaged` 明确拒绝，
+不开放预算或新增凭据；消息归属先于停止时刻精度比较，保留的原凭据重放仍先于当前消息状态。
+保留期间同一请求、操作者及内容重放原结果，不再次打开后续停投轮次；原裁决不证明当前投递或中央完成。
+恢复使用独立有限池，默认1000个请求、16MiB总量、16KiB单条，最早保留期限固定七天。
+Memory 使用原业务写锁且非持久；PostgreSQL 使用自己的独立连接和事务，不自动加入环境事务，
+当前访问预算三秒，消息状态、凭据与恢复计数同事务提交。
+
+已验证 Memory 的可信 HTTP 恢复与重放，以及 PostgreSQL 首次接受、实际宿主进程退出/重启后的读取与重放。
+两种适配器还已通过公开仓储/恢复端口验证调用者未提交工作：恢复前后新作用域只能读取旧用户/会话版本，
+调用者的修改保持在原工作副本，只有原工作单元显式保存才发布；恢复不代为保存或清除业务跟踪状态。
+Identity 使用正常增量 `ConditionalFactRecovery` 迁移，包含保留历史的 Down 拒绝；
+本轮尚未交付的迁移已增加恢复凭据 UPDATE 不可变保护，请求身份、原裁决 JSON、
+接受时计算的字节数和固定七天期限均不可改写。同值 UPDATE 不改变记录，到期删除仍由有限清理执行。
+真实数据库已验证四类改写被所属约束拒绝，原裁决可继续读回和重放，计量及原消息保持。
+已有停投事实的升级／重复迁移、接受后的回退拒绝及清理后的安全回退／再升级均通过；
+两来源凭据保护与既有 Platform 迁移共三项阶段测试通过，六来源完整迁移资格仍待续验。
+本轮迁移尚未合并，既有冻结迁移未修改。
+两个来源的共同请求／凭据已集中到 BuildingBlocks.Application，固定输入校验、原裁决比较、
+七天期限准备及 UTF-8 计量由四个适配器共同使用；所属事件白名单、错误与 HTTP 映射仍在各上下文。
+两个来源现在共同使用所属 Memory / PostgreSQL 原子恢复、凭据读取、独立容量诊断和有限清理实现。
+共享实现只接收模块声明的所属来源、事件与错误；HTTP 映射、数据模型及增量迁移仍在各上下文。
+阶段 Standards 评审指出两套调查实现重复后，共同安全状态 `FactDeliveryState` 放在应用层，
+单条读取和有界列表集中到共同存储实现；所属适配器仍提供自己的 Outbox 和事件声明。
+PostgreSQL 列表直接投影安全列，Memory 持续使用原业务共用写锁；模块自己的错误码及权限资源保持。
+Memory / PostgreSQL 的公开清理端口已验证七天期限、稳定请求顺序、单条批次和计量释放；
+PostgreSQL 保留期限向上取整到微秒，不早于原凭据公开的期限。清理不改变原消息、业务或策略控制池。
+
+Memory 可用 `Identity:AuditDelivery:MemoryRecoveryControl` 缩小开发恢复池：
+`MaxRecords`、`MaxPayloadBytes`、`MaxRecordPayloadBytes` 均必须为正，最多为默认1000、16MiB、16KiB，
+单条上限不能大于总量。真实 HTTP 已验证单条配额下的满额原子拒绝、同请求重放和清理后重新受理。
+该测试在模块装配前注入配置；此前应用配置钩子注入过晚的失败是夹具问题，不计为产品红绿证据。
+修正夹具后移除模块绑定，构建成功且实际配额断言失败；还原绑定后九项身份恢复相关测试全部通过。
+
+`Identity:AuditDelivery:RecoveryMaintenance` 显式调度所属清理：`Enabled` 默认 true，
+`BatchSize` 默认100、允许1至1000；`Interval` 默认一分钟、允许一秒至一小时；
+`Timeout` 默认三秒、允许50毫秒至30秒。即使关闭仍验证配置，关闭时不启动清理循环。
+`identity-recovery-cleanup` 属于 `auditing-diagnostics`，故障记录安全降级并继续下一轮，
+不输出原始异常，不让维护故障改变数据库就绪结论。Memory 真实模块已验证到期后每轮单条释放；
+PostgreSQL 真实模块已验证容量释放写失败时凭据与计量完整回滚，解除受控故障后下一轮自动恢复。
+该两项与既有配额、恢复及 Platform 维护共十三项测试通过；宿主停止、关闭和更多配置边界仍待续验。
+阶段 Standards 评审指出两个来源重复维护协议后，共同清理端口放在应用层，
+调度、预算与安全诊断放在共享基础设施。Identity 模块显式选择自己的 `IIdentityAuditDelivery`，
+Platform 模块选择自己的 `ISettingAuditDelivery`；两者的配置前缀和诊断名称保持独立。
+提取后两种存储的四条真实宿主维护及 Identity 配额旅程共五项通过，不据此宣称整票验收完成。
+
+三套实际网关路由已通过真实 HTTP 验证 Identity 列表匿名401、根账号有效会话列表/单条200。
+普通读取权限、恢复拒绝和登出后列表/单条401在直打宿主的真实 HTTP 中验证；
+上述历史专项不能混称为普通用户经网关的撤权；六来源新增边缘／授权／安全观察资格见[当前本机状态](handoff-2026-10-03.md)。
+调查及授权共十七项阶段用例已通过，不是全票或整仓资格。
+
+更多事务/取消边界、容量/故障/授权及六来源完整迁移资格仍在本票续验或实现，
+六来源已阶段接入；最新专项资格及整票剩余项见[当前本机状态](handoff-2026-10-03.md)。继续本机开发，不换机；SignalR 与多机 HA 仍暂缓。

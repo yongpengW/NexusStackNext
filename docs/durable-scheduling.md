@@ -112,14 +112,15 @@ PostgreSQL 通过 Scheduling 自己的 `fact_capacity` 对计划事实实行条�
 协议见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)。普通 `ScheduleTriggeredV1` 业务消息不计入事实额度。
 容量不足时，管理接口返回 503 / `scheduling.audit_capacity_exhausted`；计划、决定、发生、业务消息和整批事实
 一起回滚。Runner 将该计划列入 `FailedPlanIds`，不计为已触发或合法跳过，也不额外提交另一条退避事实。
-原到期状态保留，后续扫描可在容量恢复后重试；容量长期耗尽时仍会按既有扫描节拍重试，独立等待预算和容量诊断待后续治理。
+原到期状态保留，后续扫描可在容量恢复后重试；容量长期耗尽时仍会按既有扫描节拍重试。
+所属写锁等待预算与只读容量诊断已经交付，不能把它们解释为计划执行成功或中央日志已经落库。
 相同规则等空操作、已成功决定的幂等重放不增加事实占用；恢复操作会重新计算下次时刻，不能一概视为空操作。
 
 策略和占用由数据库持久化，重启不重置；新迁移从既有计划事实回填占用。
 确认交付不释放容量，只有按保留期清理已确认事实副本才释放；未交付、死信与普通业务消息不会被该清理删除。
 开发 Memory 模式也使用同一业务事实容量语义，但不承诺重启后的状态保留。
 
-## 来源事实容量策略（实施中）
+## 来源事实容量策略
 
 Scheduling 的 Memory / PostgreSQL 已接入 `GET /api/scheduling/audit-capacity` 的策略版本与独立控制额度诊断，
 以及同路径 `PUT` 的条件调整。使用独立 PUT 资源权限并检查当前会话；GET 权限不能授权写入。
@@ -152,18 +153,65 @@ Scheduling的策略隔离验证同时使用Memory与真实PostgreSQL宿主，在
 待投递控制凭据即使过期仍不释放；完成控制清理后，原死信发生仍能按原停止时刻条件恢复，
 不新建发生、不推进计划版本。验证读取已有记录，不能用空历史声明“不变”；
 Memory中让控制清理误删无关死信副本的可编译变异，会在原发生查询端口失败。
-本阶段证据只覆盖所述序列化故障和预取消，其他持久写故障、争用及取消时点仍按#101补齐。
+完整策略资格与实际故障边界见 #101 的完成记录；本段说明计划历史隔离的专项旅程。
 
-实施与逐项验收由 [#101](https://github.com/yongpengW/NexusStackNext/issues/101) 跟踪，设计见
-[ADR-0026](adr/0026-audited-fact-capacity-policy-changes.md)。当前工作尚未提交或合并；
-六来源已通过真实 MQ 与中央 typed 调查阶段验证，包含中央离线、生产者退出后接收及中央进程恢复；四平台 Memory 仅保证已发布消息的此项验证。后台控制维护已接入；已有计划发生/决定的故障隔离及最终门禁仍待完成，不能把阶段测试当作整票验收。
+来源事实策略 [#101](https://github.com/yongpengW/NexusStackNext/issues/101) 已完成并关闭，
+[PR #102](https://github.com/yongpengW/NexusStackNext/pull/102) 已合入 dev；设计见
+[ADR-0026](adr/0026-audited-fact-capacity-policy-changes.md)。六来源的真实 MQ 与中央 typed 调查已验证，
+包含中央离线、生产者退出后接收及中央进程恢复；四平台 Memory 仅保证已发布消息的此项验证。
+后台控制维护、非空计划发生／决定隔离和最终门禁的证据保存在 #101，来源事实专用恢复由 #103 接续。
 
 本阶段 `SchedulingFactCapacityPolicyTests` 验证双存储满额扩容、计划/规则修订/交付历史保留与重放；
 `FactCapacityPolicyAccessTests` 验证三套路由的独立写权限、撤权、注销、可信操作者和大整数契约；
 `FactCapacityPolicyMigrationTests` 验证旧额度/占用保留、模型一致、重复迁移及历史回退拒绝。
-最终相关回归279项各一次通过（其中43项策略测试），构建和格式通过；这不是全量验收。
+这组专项旅程不能单独替代全量验收；#101 最终完整 Linux CI 的 23 个测试工程、1747 项各一次通过，
+独立 Standards / Spec 无未解决发现。父 #64 / #60 的中央保留／归档、导出和覆盖遗漏防线仍开放。
 
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
+
+## 来源事实条件恢复（开发中）
+
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放。Scheduling 已接入所属
+Memory / PostgreSQL 的五个事实管理接口；它们与上面的 OccurrenceDelivery 重试是不同的业务契约：
+
+| 操作 | HTTP |
+|---|---|
+| 有界状态列表 | `GET /api/scheduling/audit-deliveries?state=Pending&limit=50` |
+| 单条状态 | `GET /api/scheduling/audit-deliveries/{messageId}` |
+| 条件恢复 | `POST /api/scheduling/audit-deliveries/{messageId}/retry` |
+| 原恢复裁决 | `GET /api/scheduling/audit-deliveries/recoveries/{requestId}` |
+| 恢复池额度与占用 | `GET /api/scheduling/audit-deliveries/recovery-capacity` |
+
+每个接口检查当前有效会话和独立资源权限，GET 不授予 POST；事实管理只接纳 `PlanCommittedV1`
+及 `SchedulingFactCapacityPolicyChangedV1`。普通 `ScheduleTriggeredV1` 不出现在列表，单条返回404，
+条件恢复明确返回400 / `scheduling.delivery_recovery.unmanaged`，仍须使用原发生重试入口。
+列表只接纳 Pending / Delivered / DeadLettered，limit 一至一百，按发生时刻及消息身份稳定排序；
+六字段状态不包含消息正文或原始异常，恢复代次采用 HTTP 十进制字符串。
+
+恢复正文为稳定 `requestId`、已观察的 `expectedDeadLetteredAt`、`expectedRetryRevision`
+和固定 `reason=manual-retry/dependency-restored`。消息身份来自路径，操作者、来源、时刻和执行关联来自宿主；
+两条件必须共同匹配。相同请求、操作者及同内容在保留期内重放原裁决，不再次开放预算，
+即使消息后来再次停止也如此；相同停止时刻的旧恢复代次返回409。
+接受恢复只表示所属事实重新开放投递预算，不表示中央已保存，不推进计划或登记新的决定／发生。
+
+独立有限恢复池默认1000请求、16MiB UTF-8总量、16KiB单请求，最早保留七天。
+`Scheduling:AuditDelivery:MemoryRecoveryControl` 只配置开发 Memory 额度，不覆盖已持久化的 PostgreSQL 策略；
+Memory 不承诺跨进程保存。新 `20261005053138_ConditionalFactRecovery` 正常增量迁移增加所属恢复账本、
+有限凭据及 UPDATE 不可变保护，保留历史时拒绝破坏性回退；旧冻结迁移不改。
+
+`Scheduling:AuditDelivery:RecoveryMaintenance` 默认启用，批次100（1–1000）、间隔一分钟（1秒–1小时）、
+超时3秒（50毫秒–30秒）。`scheduling-recovery-cleanup` 是独立 auditing-diagnostics 健康项，
+维护失败不将计划执行伪报成功，也不通过日志诊断摘除仍可处理业务的宿主。
+它不重新扫描到期计划、不清理 Occurrence / ScheduleDecision，也不替代事实和容量策略的保留清理。
+
+普通计划事实的 Memory / PostgreSQL HTTP 旅程已通过，保留真实触发后的非空决定、发生和原计划状态，
+验证原消息身份／内容／发生时刻保持、稳定裁决重放、旧代次拒绝及两个恢复入口各自的消息范围。
+Memory 满额原子拒绝与后台释放恢复额度也已通过。策略事实恢复及到期清理在双存储中保持计划、
+非空决定／发生和两个事实池；真实 PostgreSQL 验证凭据四列改写拒绝、空操作 UPDATE、非空升级、
+模型一致、重复迁移、保留历史的安全回退拒绝和到期清理后的 Down / Up。实际宿主进程退出／重建后，
+原裁决可读取并重放，计划及非空决定／发生状态保持。当前七项专项测试通过，完整故障资格继续按 #103 验证；
+本轮尚未提交或合并；六来源已阶段接入，权限／边缘与安全观察已有新增实际专项；完整故障矩阵、真实MQ／中央Inbox恢复及最终门禁仍待验收。最新资格与剩余项见[当前本机状态](handoff-2026-10-03.md)。
+继续在本机开发；SignalR 独立消息中心和多机高可用保持暂缓。
 
 ## 故障语义与范围
 

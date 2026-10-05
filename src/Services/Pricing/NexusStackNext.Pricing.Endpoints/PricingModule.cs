@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -71,7 +72,9 @@ public static class PricingModule
             await PricingDatabase.IsReadyAsync(connection, cancellationToken).ConfigureAwait(false)
                 ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("Pricing 数据库不可用或需要迁移。"), tags: ["ready"]);
         return services.AddCommittedFactPolicyMaintenance("pricing", configuration.GetSection("Pricing:AuditDelivery:PolicyMaintenance")
-            .Get<FactCapacityPolicyMaintenanceOptions>());
+            .Get<FactCapacityPolicyMaintenanceOptions>())
+            .AddFactDeliveryRecoveryMaintenance<IPricingAuditDelivery>("pricing",
+                configuration.GetSection("Pricing:AuditDelivery:RecoveryMaintenance").Get<FactDeliveryRecoveryMaintenanceOptions>());
     }
 
     /// <summary>映射需要 pricing-operator 策略的业务接口；执行协议不暴露给 HTTP。</summary>
@@ -97,6 +100,51 @@ public static class PricingModule
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 409, 415, 503)
             .WithMetadata(new OperationDescription("pricing.fact-capacity-policy.adjust", "调整所属事实容量策略"));
+        group.MapGet("/audit-deliveries", async ([FromServices] IPricingAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token, string state = "Pending", int limit = 50) =>
+        {
+            if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
+            { return Failure(new Error("pricing.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。")); }
+            return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
+        })
+            .Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>();
+
+        group.MapGet("/audit-deliveries/{messageId:guid}", async (Guid messageId,
+            [FromServices] IPricingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        })
+            .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(404, 503);
+
+        group.MapGet("/audit-deliveries/recovery-capacity", async (
+            [FromServices] IPricingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var capacity = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
+            return capacity.IsSuccess ? (IResult)responses.Ok(capacity.Value) : Failure(capacity.Error);
+        })
+            .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>().ProducesApiErrors(503);
+
+        group.MapPost("/audit-deliveries/{messageId:guid}/retry", async (Guid messageId, RetryPricingAuditDeliveryRequest request,
+            [FromServices] IPricingAuditDelivery delivery, ICurrentUser user, IClock clock, IExecutionContext execution,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var recovered = await delivery.RecoverAsync(new(request.RequestId, messageId, request.ExpectedDeadLetteredAt,
+                request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return recovered.IsSuccess ? (IResult)responses.Ok(recovered.Value) : Failure(recovered.Error);
+        })
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(409, 415, 503)
+            .WithMetadata(new OperationDescription("pricing.fact-delivery.recover", "恢复所属事实投递"));
+
+        group.MapGet("/audit-deliveries/recoveries/{requestId:guid}", async (Guid requestId,
+            [FromServices] IPricingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var receipt = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
+            return receipt.IsSuccess ? (IResult)responses.Ok(receipt.Value) : Failure(receipt.Error);
+        })
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(404, 503);
+
         group.MapPost("/cost", async (UpdatePricingCost request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
@@ -144,9 +192,9 @@ public static class PricingModule
     private static IResult Failure(Error error) => Results.Problem(title: error.Message,
         statusCode: error.Code switch
         {
-            "pricing.not_found" => StatusCodes.Status404NotFound,
-            "pricing.audit_policy.control_exhausted" or "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "pricing.audit_policy.conflict" or "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
+            "pricing.not_found" or "pricing.delivery_not_found" or "pricing.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
+            "pricing.delivery_recovery.exhausted" or "pricing.audit_policy.control_exhausted" or "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
+            "pricing.delivery_conflict" or "pricing.delivery_recovery.request_conflict" or "pricing.audit_policy.conflict" or "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
@@ -154,3 +202,5 @@ public static class PricingModule
 internal sealed record RetryRequest(long ExpectedEpoch);
 internal sealed record CancelRequest([property: JsonRequired] long ExpectedEpoch);
 internal sealed record PricingConnection(string Value);
+
+internal sealed record RetryPricingAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt, [property: JsonRequired] long ExpectedRetryRevision, string Reason);

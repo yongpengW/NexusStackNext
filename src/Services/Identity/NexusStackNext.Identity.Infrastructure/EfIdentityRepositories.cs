@@ -217,6 +217,7 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
         // 工作单元与仓储同生命周期（都持有同一个上下文）。
         services.AddScoped<IIdentityUnitOfWork, EfIdentityUnitOfWork>();
         services.AddKeyedScoped<IOutboxStore, EfOutboxStore<IdentityDbContext>>(OutboxKey);
+        services.AddScoped<IIdentityAuditDelivery, EfIdentityAuditDelivery>();
 
         services.AddScoped<UserPermissionReader>();
 

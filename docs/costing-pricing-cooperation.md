@@ -59,7 +59,7 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 首次成本事件创建对象时费率为零。已有人工定价对象接纳第一条成本事件后，由 Costing 接管成本、保留本地费率；
 此后 `/api/pricing/cost` 覆盖不同成本返回 `pricing.cost_owned_by_costing` / 409。正式业务须补充渠道与定价政策。
 
-## 来源事实容量治理（#101 实施中）
+## 来源事实容量治理（#101 已交付）
 
 Costing 与 Pricing 各自提供 `GET /api/<context>/audit-capacity` 和同路径的 `PUT`，
 沿用业务样板的根操作者限制。GET 返回业务额度、`policyRevision` 和独立 `controlCapacity`；
@@ -77,8 +77,8 @@ PUT 仅接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloa
 七天仅是凭据最早保留期；待投递与死信不能因到期删除，已交付控制副本另至少保留二十四小时。
 中央 typed 数值调查已通过真实 MQ 验证：中央离线时提交，生产者退出后接收，中央进程重启后保留数值证据。
 工作区已接入 `Costing:AuditDelivery:PolicyMaintenance` / `Pricing:AuditDelivery:PolicyMaintenance`，
-各自在独立数据库清理自己的控制证据；诊断为 `costing-policy-cleanup` / `pricing-policy-cleanup`，参数见[共同维护说明](committed-auditing.md)。其余完整资格仍在 #101 中待办，
-目前不能把本节接口实现视为整套治理已经交付。完整进展见[本地开发状态](handoff-2026-10-03.md)。
+各自在独立数据库清理自己的控制证据；诊断为 `costing-policy-cleanup` / `pricing-policy-cleanup`，参数见[共同维护说明](committed-auditing.md)。该容量策略票已通过完整本机检查、双轴评审和 Linux CI，经 PR #102 合并；当时1747项各一次通过。
+中央保留、归档和专门事实恢复仍分别由父票及 #103 验收。完整进展见[本地开发状态](handoff-2026-10-03.md)。
 
 ## 故障恢复
 
@@ -147,8 +147,53 @@ UTF-8 升级边界、最后额度竞争、清理、有限重试及真实 broker 
 Pricing 的最终发布资格以 #78 的完整检查、Linux CI 与独立评审为准。CI 在独立 runner 之间并行，各组独占依赖且组内串行；
 这些不证明多节点容灾或生产容量。
 
-实施中的策略迁移另由 `FactCapacityPolicyBusinessMigrationTests` 验证 Costing / Pricing：
+已交付的策略迁移另由 `FactCapacityPolicyBusinessMigrationTests` 验证 Costing / Pricing：
 升级前后分别启动实际业务宿主进程，公开查询的成本/报价、已接受任务及原业务事实保持，
 三个旧额度和实际占用字节保留；重复迁移后原请求重放同凭据，有治理历史时真实 Down 明确拒绝。
 迁移使用实际模块注册和公开 EF 元数据/`IMigrator`，不为测试暴露内部业务 DbContext。
-这是 #101 的迁移阶段资格，不能替代整票授权、故障、完整检查和 Linux CI 验收。
+这是 #101 的迁移专项资格；该票的整票授权、故障、完整检查和 Linux CI 已随 PR #102 验收。
+
+## 来源审计事实的条件恢复（#103 实施中）
+
+Costing 与 Pricing 各自的 `/api/<context>/audit-deliveries` 提供有界列表、单条状态、
+`/{messageId}/retry`、`/recoveries/{requestId}` 与 `/recovery-capacity`。沿用各业务样板的根操作者限制；
+当前并未实现普通业务用户委派，也不套用平台会话机制。返回最小投递状态，不回显正文与异常原文；Int64 用十进制字符串。
+
+请求只包含稳定 `requestId`、`expectedDeadLetteredAt`、`expectedRetryRevision` 与固定
+`reason=manual-retry/dependency-restored`，目标来自路径，操作者及来源来自可信宿主。
+`expectedRetryRevision` 必须显式提供；省略时返回400，显式字符串 `"0"` 仍是合法初始版本。
+两条件一致才重新开放预算，恢复代次加一；保留期内同请求、操作者及内容重放原裁决，身份复用或过期条件返回409。
+Costing 只管理 `CostSheetCommittedV1` / `CostingFactCapacityPolicyChangedV1`，Pricing 只管理
+`PriceQuoteCommittedV1` / `PricingFactCapacityPolicyChangedV1`。Costing 的普通 `CostCalculatedV1`
+仍走原 `/tasks/{id}/delivery` 与重试契约，审计恢复不改变计算输入、完成结果、任务历史或报价缓存。
+
+凭据与恢复状态在所属数据库原子提交，使用独立连接和有限等待，不提交调用者的业务工作。
+独立控制池默认1000请求、16MiB UTF-8总量、16KiB单条，最早保留七天，不占业务事实或策略控制池。
+`Costing:AuditDelivery:RecoveryMaintenance` / `Pricing:AuditDelivery:RecoveryMaintenance`
+各自维护凭据；默认启用，每分钟清理最多100条，每轮总预算3秒。
+诊断为 `costing-recovery-cleanup` / `pricing-recovery-cleanup`，维护故障退化、下一轮成功恢复健康。
+
+正常增量迁移为 Costing `20261005055212_ConditionalFactRecovery`、Pricing `20261005060012_ConditionalFactRecovery`；
+既有迁移及冻结协议保持。恢复凭据四个字段不能被UPDATE改写，空操作允许；有保留历史或计量时拒绝破坏性Down。
+清理后的凭据不再承诺永久幂等，原业务消息与已恢复投递状态仍保留。
+
+两来源各有普通／策略事实真实HTTP、已完成任务隔离、实际PostgreSQL行锁导致维护失败与修复后的清理、
+非空升级／重复迁移／防改写／安全回退及实际OS进程重启凭据重放验证。
+`PricingCacheTests.FactRecovery_PreservesCompletedQuote_TaskHistoryAndHotRedisValue_WithoutRenewingItsLifetime`
+另通过真实Redis热缓存验证内容与TTL保持、没有失效待办；测试只使用独立命名空间。
+本阶段实际9项（HostIntegration 8、Pricing.Integration 1）各一次通过、无跳过。
+这仍不是整张#103的验收：更多额度／竞争／取消／持久故障及调用者工作隔离、
+真实RabbitMQ／中央Inbox恢复旅程和最终全量门禁仍需完成；工作继续在本机，无换机或发布。
+六来源恢复OpenAPI另由FactDeliveryRecoveryOpenApiTests十项检查：四平台Memory/PostgreSQL，
+Costing/Pricing实际独立OS宿主。实际文档仅暴露四个恢复输入；恢复版本标记必填，Int64输入兼容
+十进制字符串与整数、输出精确字符串；十一字段回执、六字段投递状态和独立容量诊断均有明确结构。
+Costing/Pricing补齐所属依赖／容量拒绝的503响应，Files补齐输入与授权失败的400/401/403。
+文档资格不能代替真实运行时验证；六来源权限、网关和安全观察另由下述实际边界专项覆盖，整票故障与交付范围继续按#103验收。
+恢复授权另由FactDeliveryRecoveryGatewayAccessTests二十四项验证四平台Memory/PG经三套实际网关：
+匿名拒绝、独立四种读取／恢复权限、只读拒绝恢复、只写拒绝读取、撤权拒绝旧凭据重放、用户注销及根账号注销后均拒绝。
+撤权夹具使用Identity所属公开仓储／提交端口并显式失效权限缓存；不是新增HTTP撤权命令或跨宿主撤权协议。
+BusinessFactDeliveryRecoveryGatewayTests三项使用两个实际业务OS宿主及其可用网关配置，沿用可信JWT根操作者夹具，
+不宣称普通业务用户委派、Identity登录／注销或远程授权已接入。
+FactDeliveryRecoveryOperationTests十项另验证六来源普通恢复、重放与拒绝各有独立安全开始／结束观察，
+原恢复凭据保留首次操作关联；查询、请求正文、私有头、伪造Actor和执行信息不会进入观察。
+测试关闭网关限流以专门验证路径与授权，不证明生产网络拓扑或容量。

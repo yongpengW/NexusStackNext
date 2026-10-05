@@ -63,6 +63,7 @@ public static class PricingServices
         services.AddSingleton<PricingRedisCache>();
         services.AddScoped(provider => PricingDatabase.CreateContext(connectionString, provider));
         services.AddScoped<IOutboxStore, EfOutboxStore<PricingDbContext>>();
+        services.AddScoped<IPricingAuditDelivery, EfPricingAuditDelivery>();
         services.AddKeyedScoped<IIntegrationEventProcessor, PricingCostIngestion>(CostCalculatedV1.Name);
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();

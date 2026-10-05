@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -28,6 +29,7 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     private readonly ConcurrentDictionary<(string Scope, string Name), GlobalSetting> _settings = new();
     private readonly Lock _writes = new();
     private Dictionary<Guid, OutboxEntry> _outbox = new();
+    private readonly InMemoryFactDeliveryRecoveryStore _recovery;
     internal InMemoryFactCapacityPolicyStore Policy { get; }
 
     /// <summary>创建独立的开发存储与有限容量账本。</summary>
@@ -35,12 +37,18 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     /// <param name="capacity">本存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <param name="control">创建存储时的独立控制额度，不能在运行期修改。</param>
+    /// <param name="recovery">独立恢复凭据池的开发启动上限。</param>
     public InMemorySettingRepository(IIntegrationEventSerializer serializer, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null,
+        MemoryFactDeliveryRecoveryControlOptions? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(serializer);
         _serializer = serializer;
         _capacity = new(_writes, SettingCommittedV1.Name, capacity, write);
+        _recovery = new(_capacity, () => _outbox,
+            new("platform", SettingCommittedV1.Name, SettingFactCapacityPolicyChangedV1.Name,
+                new(SettingAuditRecoveryErrors.Invalid, SettingAuditRecoveryErrors.Conflict, SettingAuditRecoveryErrors.RequestConflict,
+                    SettingAuditRecoveryErrors.NotFound, SettingAuditRecoveryErrors.Exhausted, SettingAuditRecoveryErrors.Unmanaged, SettingAuditRecoveryErrors.DeliveryNotFound)), recovery);
         Policy = new(_writes, _capacity, () => _outbox, prepared => _outbox = prepared,
             new("platform", SettingFactCapacityPolicyChangedV1.From), _serializer, control);
     }
@@ -165,36 +173,29 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     }
 
     /// <inheritdoc />
-    public Task<IReadOnlyList<SettingAuditDelivery>> ListAsync(string state, int limit, CancellationToken cancellationToken = default)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
-        if (state is not ("Pending" or "Delivered" or "DeadLettered")) { throw new ArgumentException("未知投递状态。", nameof(state)); }
-        cancellationToken.ThrowIfCancellationRequested();
-        using (_capacity.Enter(cancellationToken))
-        {
-            return Task.FromResult<IReadOnlyList<SettingAuditDelivery>>(_outbox.Values.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id)
-                .Select(SettingAuditDelivery.From).Where(entry => entry.State == state).Take(limit).ToArray());
-        }
-    }
+    public Task<Result<FactDeliveryState>> GetAsync(Guid messageId, CancellationToken cancellationToken = default)
+        => _recovery.GetAsync(messageId, cancellationToken);
 
     /// <inheritdoc />
-    public Task<Result<SettingAuditDelivery>> RetryAsync(Guid messageId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!_capacity.TryEnter(out var scope, cancellationToken)) { return Task.FromResult(Result.Failure<SettingAuditDelivery>(CommittedFactCapacityErrors.Busy)); }
-        using (scope)
-        {
-            _outbox.TryGetValue(messageId, out var entry);
-            var retry = SettingAuditDelivery.Retry(entry, expectedDeadLetteredAt);
-            if (retry.IsFailure)
-            {
-                return Task.FromResult(Result.Failure<SettingAuditDelivery>(retry.Error));
-            }
-            _outbox[messageId] = retry.Value;
-            return Task.FromResult(Result.Success(SettingAuditDelivery.From(retry.Value)));
-        }
-    }
+    public Task<IReadOnlyList<FactDeliveryState>> ListAsync(string state, int limit, CancellationToken cancellationToken = default)
+        => _recovery.ListAsync(state, limit, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<int> CleanupRecoveriesAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
+        => _recovery.CleanupRecoveriesAsync(batchSize, now, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<Result<FactDeliveryRecoveryCapacity>> ReadRecoveryCapacityAsync(CancellationToken cancellationToken = default)
+        => _recovery.ReadRecoveryCapacityAsync(cancellationToken);
+
+    /// <inheritdoc />
+    public Task<Result<FactDeliveryRecoveryReceipt>> RecoverAsync(FactDeliveryRecoveryRequest request, string actorId,
+        DateTimeOffset occurredAt, ExecutionOrigin? execution, CancellationToken cancellationToken = default)
+        => _recovery.RecoverAsync(request, actorId, occurredAt, execution, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<Result<FactDeliveryRecoveryReceipt>> GetRecoveryAsync(Guid requestId, CancellationToken cancellationToken = default)
+        => _recovery.GetRecoveryAsync(requestId, cancellationToken);
 }
 
 /// <summary>把 Platform 的端口接到内存适配器上。</summary>
@@ -215,9 +216,11 @@ public static class PlatformInfrastructureServiceCollectionExtensions
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <param name="control">所属 Memory 控制池的启动上限。</param>
+    /// <param name="recovery">所属 Memory 恢复凭据池的启动上限。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
     public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null,
+        MemoryFactDeliveryRecoveryControlOptions? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var policy = capacity ?? new();
@@ -226,7 +229,9 @@ public static class PlatformInfrastructureServiceCollectionExtensions
         budget.Validate();
         var controlLimits = control ?? new();
         controlLimits.Validate();
-        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy, budget, controlLimits));
+        var recoveryLimits = recovery ?? new();
+        recoveryLimits.Validate();
+        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy, budget, controlLimits, recoveryLimits));
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<ICommittedFactCapacityPolicyStore>("platform", (provider, _) => provider.GetRequiredService<InMemorySettingRepository>().Policy);
         services.AddKeyedSingleton<ICommittedFactCapacityPolicyCleanup>("platform", (provider, _) => provider.GetRequiredService<InMemorySettingRepository>().Policy);

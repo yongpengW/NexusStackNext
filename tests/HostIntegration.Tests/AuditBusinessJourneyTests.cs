@@ -106,10 +106,18 @@ public sealed class AuditBusinessJourneyTests
             await PlatformSettingsAccessTests.LoginAsync(recovered.Client, "journey-root", "audit-root-password");
             var message = failed.GetProperty("messageId").GetGuid();
             var retryUri = new Uri($"/api/platform/audit-deliveries/{message}/retry", UriKind.Relative);
-            var retry = new { expectedDeadLetteredAt = failed.GetProperty("deadLetteredAt").GetDateTimeOffset() };
+            var requestId = Guid.NewGuid();
+            var stoppedAt = failed.GetProperty("deadLetteredAt").GetDateTimeOffset();
+            var revision = failed.GetProperty("retryRevision").GetString();
+            var retry = new { requestId, expectedDeadLetteredAt = stoppedAt, expectedRetryRevision = revision, reason = "dependency-restored" };
             using var accepted = await recovered.Client.PostAsJsonAsync(retryUri, retry);
             Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
-            using var stale = await recovered.Client.PostAsJsonAsync(retryUri, retry);
+            var receipt = await accepted.Content.ReadApiDataAsync();
+            using var replay = await recovered.Client.PostAsJsonAsync(retryUri, retry);
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+            Assert.True(JsonElement.DeepEquals(receipt, await replay.Content.ReadApiDataAsync()));
+            using var stale = await recovered.Client.PostAsJsonAsync(retryUri,
+                new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = stoppedAt, expectedRetryRevision = revision, reason = "dependency-restored" });
             Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
             var page = await WaitForCountAsync(recovered.Client, 1);
             Assert.Equal(message, Assert.Single(page.GetProperty("data").EnumerateArray()).GetProperty("fact").GetProperty("messageId").GetGuid());

@@ -37,6 +37,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
+        modelBuilder.ConfigurePricingAuditRecovery();
         var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
         invalidation.ToTable("cache_invalidations");
         invalidation.HasKey(x => new { x.ItemId, x.Version });
