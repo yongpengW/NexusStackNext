@@ -1,6 +1,5 @@
 using System.Data;
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Operations;
@@ -152,8 +151,7 @@ public sealed class PostgresFactCapacityPolicyStore(string connectionString, IIn
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!request.IsValid || string.IsNullOrWhiteSpace(actorId) || actorId.Length > 200 || actorId.Any(char.IsControl)
-            || (execution is not null && !execution.IsValid()) || occurredAt > DateTimeOffset.MaxValue.AddDays(-7))
+        if (!FactCapacityPolicyPreparation.IsValid(request, actorId, occurredAt, execution))
         {
             return Result.Failure<FactCapacityPolicyReceipt>(source.Invalid);
         }
@@ -219,18 +217,13 @@ public sealed class PostgresFactCapacityPolicyStore(string connectionString, IIn
             var next = request.Limits;
             var changed = previous != next;
             if (changed && state.PolicyRevision == long.MaxValue) { return Result.Failure<FactCapacityPolicyReceipt>(source.Conflict); }
-            var revision = changed ? state.PolicyRevision + 1 : state.PolicyRevision;
-            OutboxEntry? fact = null;
-            if (changed)
-            {
-                var trace = execution?.TraceId ?? Guid.NewGuid().ToString("N");
-                fact = OutboxEntry.From(source.CreateFact(new(request.RequestId, revision, previous, next,
-                    request.Reason, actorId, occurredAt, trace, execution?.CorrelationId ?? trace, execution)), serializer);
-            }
-            var receipt = new FactCapacityPolicyReceipt(request.RequestId, revision, changed, previous, next,
-                fact?.Id, occurredAt, occurredAt.AddDays(7));
-            var json = JsonSerializer.Serialize(new { request, actorId, receipt });
-            var size = checked(Encoding.UTF8.GetByteCount(json) + (fact is null ? 0 : Encoding.UTF8.GetByteCount(fact.Payload)));
+            var prepared = FactCapacityPolicyPreparation.Prepare(request, actorId, occurredAt, execution,
+                previous, state.PolicyRevision, source, serializer);
+            var receipt = prepared.Receipt;
+            var fact = prepared.Fact;
+            var revision = receipt.PolicyRevision;
+            var json = prepared.Json;
+            var size = prepared.PayloadBytes;
             if (state.RetainedRecords >= state.MaxRecords || size > state.MaxRecordPayloadBytes || size > state.MaxPayloadBytes - state.RetainedPayloadBytes)
             {
                 return Result.Failure<FactCapacityPolicyReceipt>(source.Exhausted);

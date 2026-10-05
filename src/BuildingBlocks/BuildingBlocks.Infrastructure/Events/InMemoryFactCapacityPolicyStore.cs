@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -96,8 +94,7 @@ public sealed class InMemoryFactCapacityPolicyStore(Lock gate, InMemoryCommitted
     {
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!request.IsValid || string.IsNullOrWhiteSpace(actorId) || actorId.Length > 200 || actorId.Any(char.IsControl)
-            || (execution is not null && !execution.IsValid()) || occurredAt > DateTimeOffset.MaxValue.AddDays(-7))
+        if (!FactCapacityPolicyPreparation.IsValid(request, actorId, occurredAt, execution))
         {
             return Task.FromResult(Result.Failure<FactCapacityPolicyReceipt>(source.Invalid));
         }
@@ -125,18 +122,12 @@ public sealed class InMemoryFactCapacityPolicyStore(Lock gate, InMemoryCommitted
             {
                 return Task.FromResult(Result.Failure<FactCapacityPolicyReceipt>(source.Conflict));
             }
-            var revision = changed ? _revision + 1 : _revision;
-            OutboxEntry? control = null;
-            if (changed)
-            {
-                var trace = execution?.TraceId ?? Guid.NewGuid().ToString("N");
-                control = OutboxEntry.From(source.CreateFact(new(request.RequestId, revision, previous, next,
-                    request.Reason, actorId, occurredAt, trace, execution?.CorrelationId ?? trace, execution)), serializer);
-            }
-            var receipt = new FactCapacityPolicyReceipt(request.RequestId, revision, changed, previous, next,
-                control?.Id, occurredAt, occurredAt.AddDays(7));
-            var size = checked(JsonSerializer.SerializeToUtf8Bytes(new { request, actorId, receipt }).Length
-                + (control is null ? 0 : Encoding.UTF8.GetByteCount(control.Payload)));
+            var prepared = FactCapacityPolicyPreparation.Prepare(request, actorId, occurredAt, execution,
+                previous, _revision, source, serializer);
+            var receipt = prepared.Receipt;
+            var control = prepared.Fact;
+            var revision = receipt.PolicyRevision;
+            var size = prepared.PayloadBytes;
             if (_receipts.Count >= _control.MaxRecords || size > _control.MaxRecordPayloadBytes || size > _control.MaxPayloadBytes - _bytes)
             {
                 return Task.FromResult(Result.Failure<FactCapacityPolicyReceipt>(source.Exhausted));
