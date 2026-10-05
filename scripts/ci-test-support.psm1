@@ -50,18 +50,41 @@ function Get-TestReportResults([string]$ReportPath, [string]$Project) {
 function New-CiTestPlan([object[]]$Inventory) {
     Assert-TestInventory $Inventory
     $weights = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-test-weights.json') -Raw | ConvertFrom-Json -AsHashtable
+    $partitions = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-test-partitions.json') -Raw | ConvertFrom-Json -AsHashtable
     $hostTests = @($Inventory | Where-Object Project -EQ 'HostIntegration.Tests')
-    $classes = @($hostTests | Group-Object { $_.Method.Substring(0, $_.Method.LastIndexOf('.')) } | ForEach-Object {
-        [pscustomobject]@{ Name = $_.Name; Tests = $_.Group; Weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $_.Count * 5.0 }) }
+    if ($partitions -isnot [Collections.IDictionary] -or $partitions.Count -eq 0) { throw 'Empty or invalid partition declaration.' }
+    foreach ($class in $partitions.Keys) {
+        $methods = $partitions[$class]
+        if ($class -cnotmatch '^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+$' -or
+            $methods -isnot [Collections.IDictionary] -or $methods.Count -eq 0 -or
+            @($hostTests | Where-Object { $_.Method.Substring(0, $_.Method.LastIndexOf('.')) -ceq $class }).Count -eq 0) { throw 'Partition class has no inventory.' }
+        foreach ($method in $methods.Keys) {
+            $value = $methods[$method]
+            if ($method -cnotmatch ('^' + [regex]::Escape($class) + '\.[A-Za-z_]\w*$') -or
+                $value -isnot [ValueType] -or $value -is [bool] -or -not [double]::IsFinite([double]$value) -or [double]$value -le 0 -or
+                @($hostTests | Where-Object Method -CEQ $method).Count -eq 0) { throw 'Partition method has invalid weight or no inventory.' }
+        }
+    }
+    $groups = @($hostTests | Group-Object { $_.Method.Substring(0, $_.Method.LastIndexOf('.')) } | ForEach-Object {
+        if ($partitions.Contains($_.Name)) {
+            $methods = $partitions[$_.Name]
+            foreach ($method in ($_.Group | Group-Object Method)) {
+                # Theory parameters stay together; unknown methods retain the conservative per-case estimate.
+                [pscustomobject]@{ Name = $method.Name; Tests = $method.Group; Weight = $(if ($methods.Contains($method.Name)) { [double]$methods[$method.Name] } else { $method.Count * 5.0 }) }
+            }
+        }
+        else {
+            [pscustomobject]@{ Name = $_.Name; Tests = $_.Group; Weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $_.Count * 5.0 }) }
+        }
     } | Sort-Object @{ Expression = 'Weight'; Descending = $true }, Name -Culture en-US -CaseSensitive)
-    if ($classes.Count -lt 3 -or $hostTests.Count -eq $Inventory.Count) { throw 'Expected three host groups and at least one other project.' }
+    if ($groups.Count -lt 3 -or $hostTests.Count -eq $Inventory.Count) { throw 'Expected three host groups and at least one other project.' }
     $loads = @(0.0, 0.0, 0.0)
     $assignments = @{}
-    foreach ($class in $classes) {
+    foreach ($group in $groups) {
         $index = 0
         for ($candidate = 1; $candidate -lt 3; $candidate++) { if ($loads[$candidate] -lt $loads[$index]) { $index = $candidate } }
-        $loads[$index] += $class.Weight
-        foreach ($test in $class.Tests) { $assignments[$test.Id] = $index + 1 }
+        $loads[$index] += $group.Weight
+        foreach ($test in $group.Tests) { $assignments[$test.Id] = $index + 1 }
     }
     foreach ($test in ($Inventory | Sort-Object Id -Culture en-US -CaseSensitive)) {
         [pscustomobject]@{ Project = $test.Project; Method = $test.Method; Id = $test.Id; Shard = $(if ($assignments.ContainsKey($test.Id)) { $assignments[$test.Id] } else { 0 }) }

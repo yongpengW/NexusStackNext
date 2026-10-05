@@ -32,13 +32,20 @@ $inventory = @(
     @{ Project = 'HostIntegration.Tests'; Method = 'Example.GammaTests.First'; Id = ('d' * 64) },
     @{ Project = 'Unit.Tests'; Method = 'Example.UnitTests.First'; Id = ('e' * 64) }
 )
+# These public probes use a complete declared partition inventory as well as the synthetic classes.
+$partitionDeclaration = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-test-partitions.json') -Raw | ConvertFrom-Json -AsHashtable
+foreach ($methods in $partitionDeclaration.Values) {
+    foreach ($method in $methods.Keys) {
+        $inventory += @{ Project = 'HostIntegration.Tests'; Method = $method; Id = [Convert]::ToHexStringLower([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($method))) }
+    }
+}
 Write-Json $inventory $inventoryPath
 Invoke-Probe @('-Action', 'Plan', '-InputPath', $inventoryPath, '-OutputPath', $planPath) $true
 $plan = @(Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json)
-if ($plan.Count -ne 5 -or @($plan | Where-Object { $_.Shard -eq 0 }).Count -ne 1) { throw 'Partition lost or misplaced tests' }
+if ($plan.Count -ne $inventory.Count -or @($plan | Where-Object { $_.Shard -eq 0 }).Count -ne 1) { throw 'Partition lost or misplaced tests' }
 if (@($plan | Where-Object Method -Like 'Example.AlphaTests.*' | Select-Object -ExpandProperty Shard -Unique).Count -ne 1) { throw 'A class was split' }
 if (@($plan | Select-Object -ExpandProperty Shard -Unique).Count -ne 4) { throw 'Empty partition' }
-Write-Output 'PASS: all tests partitioned once, class kept together'
+Write-Output 'PASS: all tests partitioned once, undeclared class kept together'
 $reportsPath = Join-Path $scratch 'reports'
 [void][IO.Directory]::CreateDirectory($reportsPath)
 foreach ($shard in 0..3) {
@@ -140,6 +147,9 @@ if ($safe.Contains('DO_NOT_PUBLISH_ARGUMENT') -or $row.Method -cne 'Example.Alph
 [IO.File]::WriteAllText($trxPath, '<TestRun><Results /></TestRun>')
 Invoke-Probe @('-Action', 'Report', '-InputPath', $trxPath, '-Project', 'Unit.Tests', '-OutputPath', $safePath) $false
 Write-Output 'PASS: report arguments redacted and empty TRX rejected'
+
+& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ci-partitions.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Method partition regression probes failed.' }
 
 # Delete only this probe's freshly created, resolved temporary directory.
 $resolvedScratch = [IO.Path]::GetFullPath($scratch)
