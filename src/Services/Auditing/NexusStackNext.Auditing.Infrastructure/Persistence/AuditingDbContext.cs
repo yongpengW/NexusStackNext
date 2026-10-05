@@ -26,7 +26,28 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.Entity<InboxMessage>().Property<string?>(PayloadHashProperty).HasMaxLength(64);
         var entry = modelBuilder.Entity<AuditEntry>();
-        entry.ToTable("audit_entries");
+        entry.ToTable("audit_entries", table => table.HasCheckConstraint("auditing_fact_policy_change_valid", """
+            ("EventName" <> "Source" || '.fact-capacity-policy-changed.v1' AND "SubjectType" <> 'fact-capacity-policy' AND "PolicyRequestId" IS NULL AND "PolicyRevision" IS NULL AND "PolicyReason" IS NULL
+                AND "PolicyPreviousMaxRecords" IS NULL AND "PolicyPreviousMaxPayloadBytes" IS NULL AND "PolicyPreviousMaxRecordPayloadBytes" IS NULL
+                AND "PolicyCurrentMaxRecords" IS NULL AND "PolicyCurrentMaxPayloadBytes" IS NULL AND "PolicyCurrentMaxRecordPayloadBytes" IS NULL)
+            OR ("PolicyRequestId" IS NOT NULL AND "PolicyRequestId" <> '00000000-0000-0000-0000-000000000000'::uuid
+                AND "PolicyRevision" IS NOT NULL AND "PolicyRevision" > 1 AND "PolicyRevision" = "SubjectVersion"
+                AND "PolicyReason" IS NOT NULL AND "PolicyReason" = 'operator-adjustment'
+                AND "PolicyPreviousMaxRecords" IS NOT NULL AND "PolicyPreviousMaxRecords" > 0
+                AND "PolicyPreviousMaxPayloadBytes" IS NOT NULL AND "PolicyPreviousMaxPayloadBytes" > 0
+                AND "PolicyPreviousMaxRecordPayloadBytes" IS NOT NULL AND "PolicyPreviousMaxRecordPayloadBytes" > 0
+                AND "PolicyPreviousMaxRecordPayloadBytes" <= "PolicyPreviousMaxPayloadBytes"
+                AND "PolicyCurrentMaxRecords" IS NOT NULL AND "PolicyCurrentMaxRecords" > 0
+                AND "PolicyCurrentMaxPayloadBytes" IS NOT NULL AND "PolicyCurrentMaxPayloadBytes" > 0
+                AND "PolicyCurrentMaxRecordPayloadBytes" IS NOT NULL AND "PolicyCurrentMaxRecordPayloadBytes" > 0
+                AND "PolicyCurrentMaxRecordPayloadBytes" <= "PolicyCurrentMaxPayloadBytes"
+                AND ("PolicyPreviousMaxRecords" <> "PolicyCurrentMaxRecords"
+                    OR "PolicyPreviousMaxPayloadBytes" <> "PolicyCurrentMaxPayloadBytes"
+                    OR "PolicyPreviousMaxRecordPayloadBytes" <> "PolicyCurrentMaxRecordPayloadBytes")
+                AND "SubjectType" = 'fact-capacity-policy' AND "SubjectId" = "Source"
+                AND "Action" = "Source" || '.fact-capacity-policy.changed'
+                AND "EventName" = "Source" || '.fact-capacity-policy-changed.v1' AND "ActorId" IS NOT NULL)
+            """));
         entry.HasKey(item => item.Id);
         entry.Property(item => item.Id).HasConversion(id => id.Value, value => new AuditEntryId(value));
         entry.Property(item => item.RecordedAt);
@@ -44,6 +65,26 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
             fact.Property(item => item.OccurredAt).HasColumnName("OccurredAt");
             fact.Property(item => item.TraceId).HasColumnName("TraceId").HasMaxLength(128);
             fact.Property(item => item.CorrelationId).HasColumnName("CorrelationId").HasMaxLength(128);
+            fact.OwnsOne(item => item.CapacityPolicyChange, policy =>
+            {
+                policy.Property(item => item.RequestId).HasColumnName("PolicyRequestId");
+                policy.Property(item => item.PolicyRevision).HasColumnName("PolicyRevision");
+                policy.Property(item => item.Reason).HasColumnName("PolicyReason").HasMaxLength(32);
+                policy.OwnsOne(item => item.Previous, limits =>
+                {
+                    limits.Property(item => item.MaxRecords).HasColumnName("PolicyPreviousMaxRecords");
+                    limits.Property(item => item.MaxPayloadBytes).HasColumnName("PolicyPreviousMaxPayloadBytes");
+                    limits.Property(item => item.MaxRecordPayloadBytes).HasColumnName("PolicyPreviousMaxRecordPayloadBytes");
+                });
+                policy.OwnsOne(item => item.Current, limits =>
+                {
+                    limits.Property(item => item.MaxRecords).HasColumnName("PolicyCurrentMaxRecords");
+                    limits.Property(item => item.MaxPayloadBytes).HasColumnName("PolicyCurrentMaxPayloadBytes");
+                    limits.Property(item => item.MaxRecordPayloadBytes).HasColumnName("PolicyCurrentMaxRecordPayloadBytes");
+                });
+                policy.Navigation(item => item.Previous).IsRequired();
+                policy.Navigation(item => item.Current).IsRequired();
+            });
             fact.OwnsOne(item => item.RelatedSubject, related =>
             {
                 related.Property(item => item.Context).HasColumnName("RelatedContext").HasMaxLength(64);

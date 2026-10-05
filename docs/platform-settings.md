@@ -80,3 +80,35 @@ Platform 默认使用 PostgreSQL，配置 `ConnectionStrings__Platform`（配置
 
 参考：[ASP.NET Core Minimal API 认证与授权](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/security?view=aspnetcore-10.0)。
 框架的 RequireAuthorization 负责要求认证，模块的权限规则仍须显式注册；只要求登录不能代替业务授权。
+
+## 来源事实容量策略（实施中）
+
+[来源策略治理 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 正在当前工作区实现，
+尚未完成六来源验收或合入 dev。本节描述 Platform 已接入的接口和维护边界；完整资格以原生票据为准。
+
+GET `/api/platform/audit-capacity` 保留业务容量字段，增加 `policyRevision` 和独立的 `controlCapacity`。
+PUT 同一路径接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloadBytes`、
+`maxRecordPayloadBytes` 与固定 `reason=operator-adjustment`；长整数沿用十进制字符串契约。
+PUT 使用独立资源权限与当前会话，读权限不能用于写。操作者和执行关联来自服务端。
+
+策略版本只在额度改变时推进；空操作保存有限凭据，不发 changed 事实。
+同请求、同操作者与同内容重放当时的裁决，重放先于版本比较；旧凭据不会伪称当前策略。
+控制凭据与事实共用独立有限池，默认1000个请求、16MiB总载荷、16KiB单请求载荷。
+业务额度与控制额度不互相借用；控制池满时拒绝本次调整，已有业务额度仍可使用。
+PostgreSQL 的初始控制额度由增量迁移持久保存，宿主启动不覆写。
+
+Memory 可在启动时通过 `Platform:AuditDelivery:MemoryPolicyControl` 缩小控制池：
+`MaxRecords` 为1–1000，`MaxPayloadBytes` 为1–16MiB，`MaxRecordPayloadBytes` 为1–16KiB且不超过总量。
+不配置时沿用默认值；无效配置即使关闭维护也会拒绝启动。这些值不可在线修改，
+不影响业务容量PUT，也不覆盖PostgreSQL的持久额度。
+
+控制凭据最早保留七天，实际 changed 事实还须确认交付并保留确认副本至少24小时，
+两个条件满足后才能原子清理凭据和副本、释放控制占用。待投递和死信继续保留；
+`retainUntil` 是最早期限，尚未安全清理的凭据继续用于重放与冲突判断。
+Memory 使用所属共用写锁，PostgreSQL 使用所属独立连接和短预算事务，清理不改业务额度或策略版本。
+
+`Platform:AuditDelivery:PolicyMaintenance` 控制维护调度：`Enabled` 默认 true，`BatchSize` 默认100
+（1–1000），`Interval` 默认一分钟（1秒–1小时），`Timeout` 默认3秒（50毫秒–30秒）。
+固定保留期限不能通过这组配置缩短。`platform-policy-cleanup` 诊断使用 `auditing-diagnostics` 标签，
+报告维护运行、失败、降级与 `releasedRequests`；空操作凭据的释放也计一次。
+失败诊断不输出异常原文，下一轮重新尝试；失败不能发布一半清理结果。

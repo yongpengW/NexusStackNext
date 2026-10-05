@@ -313,6 +313,10 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
             {
                 ["Identity:Storage:Provider"] = "Postgres",
                 ["Platform:Storage:Provider"] = "Postgres",
+                ["Platform:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Identity:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Files:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Scheduling:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
                 ["Files:Storage:Provider"] = "Postgres",
                 ["Auditing:Storage:Provider"] = "Postgres",
                 ["Scheduling:Storage:Provider"] = "Postgres",

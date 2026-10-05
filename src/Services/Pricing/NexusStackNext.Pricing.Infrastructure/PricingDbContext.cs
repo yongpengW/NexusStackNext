@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Infrastructure.Tasks;
 using NexusStackNext.Pricing.Application;
@@ -35,6 +36,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         modelBuilder.HasDefaultSchema("pricing");
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
+        modelBuilder.ConfigureFactCapacityPolicy();
         var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
         invalidation.ToTable("cache_invalidations");
         invalidation.HasKey(x => new { x.ItemId, x.Version });

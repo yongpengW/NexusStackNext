@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Http.Features;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
@@ -63,7 +66,8 @@ public static class FilesModule
                 throw new InvalidOperationException("Files:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
             services.AddFilesInMemoryMetadata(configuration.GetSection("Files:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
-                configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
+                configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
+                configuration.GetSection("Files:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
             services.AddFilesMemoryFactCleanup(configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -75,6 +79,11 @@ public static class FilesModule
             }
             var capacityWrite = configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
             services.AddFilesPostgresMetadata(capacityWrite.ConfigureConnection(connection));
+            services.AddKeyedScoped<PostgresFactCapacityPolicyStore>("files", (provider, _) => new(
+                capacityWrite.ConfigureConnection(connection), provider.GetRequiredService<IIntegrationEventSerializer>(), capacityRead.Timeout,
+                new("files", FilesFactCapacityPolicyChangedV1.From)));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyStore>("files", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("files"));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyCleanup>("files", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("files"));
             services.AddCommittedFactCapacityReader<FilesDbContext>("files", capacityRead);
             services.AddCommittedFactCleanup<FilesDbContext>("files", StoredFileCommittedV1.Name,
                 configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -105,7 +114,8 @@ public static class FilesModule
         // 检查由模块自己登记——宿主不该知道 Files 需要查什么。
         services.AddHealthChecks().AddCheck<FileStorageHealthCheck>("storage");
 
-        return services;
+        return services.AddCommittedFactPolicyMaintenance("files", configuration.GetSection("Files:AuditDelivery:PolicyMaintenance")
+            .Get<FactCapacityPolicyMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -117,13 +127,23 @@ public static class FilesModule
 
         // 会话撤销检查先于归属判断；根管理员也不隐式拥有其他人的私有文件。
         var fileEndpoints = endpoints.MapGroup("/api/files").RequireAuthorization().RequireAuthenticated().ProducesApiErrors(503);
-        fileEndpoints.MapGet("/audit-capacity", async ([FromKeyedServices("files")] ICommittedFactCapacityReader reader,
+        fileEndpoints.MapGet("/audit-capacity", async ([FromKeyedServices("files")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
-            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            var result = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).RequirePermission("/api/files/audit-capacity", "GET")
-            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
+            .Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(401, 403, 503);
+        fileEndpoints.MapPut("/audit-capacity", async (FactCapacityPolicyRequest request,
+            ICurrentUser user, IClock clock, IExecutionContext execution, ApiResponses responses, CancellationToken token,
+            [FromKeyedServices("files")] ICommittedFactCapacityPolicyStore policies) =>
+        {
+            var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/files/audit-capacity", "PUT")
+            .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415, 503)
+            .WithMetadata(new OperationDescription("files.fact-capacity-policy.adjust", "调整所属事实容量策略"));
         fileEndpoints.AddEndpointFilter<NexusStackAuthorizationFilter>();
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
@@ -243,6 +263,8 @@ public static class FilesModule
         {
             "files.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
+            "files.audit_policy.conflict" => StatusCodes.Status409Conflict,
+            "files.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "files.audit_capacity.exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,

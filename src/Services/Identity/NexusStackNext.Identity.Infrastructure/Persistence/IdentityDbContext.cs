@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
@@ -77,6 +78,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         ArgumentNullException.ThrowIfNull(modelBuilder);
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
+        modelBuilder.ConfigureFactCapacityPolicy();
 
         ConfigureUsers(modelBuilder);
         ConfigureRoles(modelBuilder);

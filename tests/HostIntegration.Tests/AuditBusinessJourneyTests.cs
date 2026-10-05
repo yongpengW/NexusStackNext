@@ -6,7 +6,13 @@ using System.Text.Json;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
+using NexusStackNext.Costing.Contracts;
+using NexusStackNext.Files.Contracts;
+using NexusStackNext.Identity.Contracts;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.Platform.Contracts;
+using NexusStackNext.Pricing.Contracts;
+using NexusStackNext.Scheduling.Contracts;
 using Npgsql;
 using RabbitMQ.Client;
 
@@ -342,6 +348,16 @@ public sealed class AuditBusinessJourneyTests
 
     internal static async Task DeleteTopologyAsync(RabbitMqOptions broker, EventTopology topology)
     {
+        string[] policyTopics =
+        [
+            SettingFactCapacityPolicyChangedV1.Name, IdentityFactCapacityPolicyChangedV1.Name,
+            FilesFactCapacityPolicyChangedV1.Name, SchedulingFactCapacityPolicyChangedV1.Name,
+            CostingFactCapacityPolicyChangedV1.Name, PricingFactCapacityPolicyChangedV1.Name
+        ];
+        var policies = topology.Subscriptions.Where(item => item.EventName == SettingCommittedV1.Name)
+            .SelectMany(item => policyTopics.Select(name => new EventSubscription { EventName = name, ConsumerName = item.ConsumerName }))
+            .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));
+        topology = EventTopology.Create(topology.ExchangeName, topology.Subscriptions.Concat(policies));
         var identity = topology.Subscriptions.Where(item => item.EventName == "platform.setting-committed.v1")
             .Select(item => new EventSubscription { EventName = "identity.entity-committed.v1", ConsumerName = item.ConsumerName + "-identity" })
             .Where(item => !topology.Subscriptions.Any(existing => existing.EventName == item.EventName && existing.ConsumerName == item.ConsumerName));

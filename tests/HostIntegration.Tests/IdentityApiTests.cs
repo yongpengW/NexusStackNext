@@ -333,6 +333,10 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
             {
                 ["Identity:Storage:Provider"] = "Memory",
                 ["Platform:Storage:Provider"] = "Memory",
+                ["Platform:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Identity:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Files:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
+                ["Scheduling:AuditDelivery:PolicyMaintenance:Enabled"] = "false",
                 ["Files:Storage:Provider"] = "Memory",
                 ["Auditing:Storage:Provider"] = "Memory",
                 ["OperationJournal:Storage:Provider"] = "Memory",

@@ -34,6 +34,7 @@ internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock)
         // 旧消息继续使用原指纹；已接纳事实不能通过重投补造执行来源。
         object content = fact.Execution is null ? legacyFields : new { Fact = legacyFields, fact.Execution };
         if (fact.RelatedSubject is not null) { content = new { Fact = legacyFields, fact.Execution, fact.RelatedSubject }; }
+        if (fact.CapacityPolicyChange is not null) { content = new { Fact = content, fact.CapacityPolicyChange }; }
         var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(content)));
         return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {

@@ -209,7 +209,7 @@ internal sealed class FilesMemoryState : ICommittedFactCapacityReader
     internal Dictionary<long, StoredFile> Files { get; } = [];
     internal Dictionary<long, ExecutionOrigin?> DeletionOrigins { get; } = [];
     internal HashSet<string> Retired { get; } = new(StringComparer.Ordinal);
-    internal Dictionary<Guid, OutboxEntry> Outbox { get; } = [];
+    internal Dictionary<Guid, OutboxEntry> Outbox { get; set; } = [];
     internal Lock Writes { get; } = new();
 }
 
@@ -220,12 +220,23 @@ public static class FilesMemoryServiceCollectionExtensions
     /// <param name="services">服务容器。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
+    /// <param name="control">所属 Memory 控制池的启动上限。</param>
     /// <returns>原服务容器。</returns>
     public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
     {
         ArgumentNullException.ThrowIfNull(services);
+        var controlLimits = control ?? new();
+        controlLimits.Validate();
         services.AddSingleton(new FilesMemoryState(capacity, write));
+        services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>("files", (provider, _) =>
+        {
+            var state = provider.GetRequiredService<FilesMemoryState>();
+            return new(state.Writes, state.Capacity, () => state.Outbox, prepared => state.Outbox = prepared,
+                new("files", FilesFactCapacityPolicyChangedV1.From), provider.GetRequiredService<IIntegrationEventSerializer>(), controlLimits);
+        });
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyStore>("files", (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>("files"));
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyCleanup>("files", (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>("files"));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>("files", (provider, _) => provider.GetRequiredService<FilesMemoryState>());
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddScoped(provider => new InMemoryStoredFileRepository(provider.GetRequiredService<FilesMemoryState>(),

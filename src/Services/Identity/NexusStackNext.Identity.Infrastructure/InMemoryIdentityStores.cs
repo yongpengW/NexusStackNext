@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Identity.Application;
+using NexusStackNext.Identity.Contracts;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.Identity.Domain.Menus;
@@ -151,12 +152,23 @@ public static class IdentityInfrastructureServiceCollectionExtensions
     /// <param name="services">服务集合。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
+    /// <param name="control">所属 Memory 控制池的启动上限。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
     public static IServiceCollection AddIdentityInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
     {
         ArgumentNullException.ThrowIfNull(services);
+        var controlLimits = control ?? new();
+        controlLimits.Validate();
         services.AddSingleton(new IdentityMemoryState(capacity, write));
+        services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>("identity", (provider, _) =>
+        {
+            var state = provider.GetRequiredService<IdentityMemoryState>();
+            return new(state.Gate, state.Capacity, () => state.Outbox, prepared => state.Outbox = prepared,
+                new("identity", IdentityFactCapacityPolicyChangedV1.From), provider.GetRequiredService<IIntegrationEventSerializer>(), controlLimits);
+        });
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyStore>("identity", (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>("identity"));
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyCleanup>("identity", (provider, _) => provider.GetRequiredKeyedService<InMemoryFactCapacityPolicyStore>("identity"));
         services.AddKeyedSingleton<ICommittedFactCapacityReader>("identity", (provider, _) => provider.GetRequiredService<IdentityMemoryState>());
         services.AddScoped<IdentityMemorySession>();
         services.AddScoped<IdentityMemoryFacts>();

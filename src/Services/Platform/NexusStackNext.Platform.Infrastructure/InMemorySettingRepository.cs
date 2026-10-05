@@ -27,18 +27,22 @@ public sealed class InMemorySettingRepository : ISettingRepository, IOutboxStore
     private readonly InMemoryCommittedFactCapacity _capacity;
     private readonly ConcurrentDictionary<(string Scope, string Name), GlobalSetting> _settings = new();
     private readonly Lock _writes = new();
-    private readonly Dictionary<Guid, OutboxEntry> _outbox = new();
+    private Dictionary<Guid, OutboxEntry> _outbox = new();
+    internal InMemoryFactCapacityPolicyStore Policy { get; }
 
     /// <summary>创建独立的开发存储与有限容量账本。</summary>
     /// <param name="serializer">最小事件序列化器。</param>
     /// <param name="capacity">本存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
+    /// <param name="control">创建存储时的独立控制额度，不能在运行期修改。</param>
     public InMemorySettingRepository(IIntegrationEventSerializer serializer, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
     {
         ArgumentNullException.ThrowIfNull(serializer);
         _serializer = serializer;
         _capacity = new(_writes, SettingCommittedV1.Name, capacity, write);
+        Policy = new(_writes, _capacity, () => _outbox, prepared => _outbox = prepared,
+            new("platform", SettingFactCapacityPolicyChangedV1.From), _serializer, control);
     }
 
     internal ICommittedFactCleanup CreateFactCleanup(CommittedFactCleanupOptions options, IClock clock)
@@ -210,17 +214,22 @@ public static class PlatformInfrastructureServiceCollectionExtensions
     /// <param name="services">服务集合。</param>
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
+    /// <param name="control">所属 Memory 控制池的启动上限。</param>
     /// <returns>同一个集合，便于链式调用。</returns>
     public static IServiceCollection AddPlatformInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var policy = capacity ?? new();
         policy.Validate();
         var budget = write ?? new();
         budget.Validate();
-        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy, budget));
+        var controlLimits = control ?? new();
+        controlLimits.Validate();
+        services.AddSingleton(provider => new InMemorySettingRepository(provider.GetRequiredService<IIntegrationEventSerializer>(), policy, budget, controlLimits));
         services.AddSingleton<ISettingRepository>(provider => provider.GetRequiredService<InMemorySettingRepository>());
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyStore>("platform", (provider, _) => provider.GetRequiredService<InMemorySettingRepository>().Policy);
+        services.AddKeyedSingleton<ICommittedFactCapacityPolicyCleanup>("platform", (provider, _) => provider.GetRequiredService<InMemorySettingRepository>().Policy);
         services.AddKeyedSingleton<IOutboxStore>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddKeyedSingleton<ICommittedFactCapacityReader>(OutboxKey, (provider, _) => provider.GetRequiredService<InMemorySettingRepository>());
         services.AddSingleton<ISettingAuditDelivery>(provider => provider.GetRequiredService<InMemorySettingRepository>());

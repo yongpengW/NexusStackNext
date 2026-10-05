@@ -1,5 +1,7 @@
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -49,7 +51,8 @@ public static class SchedulingModule
                 throw new InvalidOperationException("Scheduling:Storage:Provider=Memory 仅允许 Development / Testing 环境。");
             }
             services.AddSchedulingInMemoryStorage(configuration.GetSection("Scheduling:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
-                configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>());
+                configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
+                configuration.GetSection("Scheduling:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
             services.AddSchedulingMemoryFactCleanup(configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -61,6 +64,11 @@ public static class SchedulingModule
             }
             var capacityWrite = configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
             services.AddSchedulingPostgresStorage(capacityWrite.ConfigureConnection(connection));
+            services.AddKeyedScoped<PostgresFactCapacityPolicyStore>("scheduling", (provider, _) => new(
+                capacityWrite.ConfigureConnection(connection), provider.GetRequiredService<IIntegrationEventSerializer>(), capacityRead.Timeout,
+                new("scheduling", SchedulingFactCapacityPolicyChangedV1.From)));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyStore>("scheduling", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("scheduling"));
+            services.AddKeyedScoped<ICommittedFactCapacityPolicyCleanup>("scheduling", (provider, _) => provider.GetRequiredKeyedService<PostgresFactCapacityPolicyStore>("scheduling"));
             services.AddCommittedFactCapacityReader<SchedulingDbContext>("scheduling", capacityRead);
             services.AddCommittedFactCleanup<SchedulingDbContext>("scheduling", PlanCommittedV1.Name,
                 configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
@@ -70,7 +78,8 @@ public static class SchedulingModule
         // 真实的后台服务，不是空壳。
         if (configuration.GetValue("Scheduling:Worker:Enabled", true)) { services.AddHostedService<SchedulingWorker>(); }
 
-        return services;
+        return services.AddCommittedFactPolicyMaintenance("scheduling", configuration.GetSection("Scheduling:AuditDelivery:PolicyMaintenance")
+            .Get<FactCapacityPolicyMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -92,14 +101,25 @@ public static class SchedulingModule
 
         // 计划管理是后台执行委托：认证之外还须检查操作权限和当前会话。
         var tasks = endpoints.MapGroup("/api/scheduling/tasks").RequireAuthorization().ProducesApiErrors(400, 401, 403, 409, 500, 503);
-        endpoints.MapGet("/api/scheduling/audit-capacity", async ([FromKeyedServices("scheduling")] ICommittedFactCapacityReader reader,
+        endpoints.MapGet("/api/scheduling/audit-capacity", async ([FromKeyedServices("scheduling")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
-            var result = await reader.ReadAsync(token).ConfigureAwait(false);
+            var result = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
             .RequirePermission("/api/scheduling/audit-capacity", "GET")
-            .Produces<ApiResponse<CommittedFactCapacitySnapshot>>().ProducesApiErrors(401, 403, 503);
+            .Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(401, 403, 503);
+        endpoints.MapPut("/api/scheduling/audit-capacity", async (FactCapacityPolicyRequest request,
+            ICurrentUser user, IClock clock, IExecutionContext execution, ApiResponses responses, CancellationToken token,
+            [FromKeyedServices("scheduling")] ICommittedFactCapacityPolicyStore policies) =>
+        {
+            var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().AddEndpointFilter<NexusStackAuthorizationFilter>()
+            .RequirePermission("/api/scheduling/audit-capacity", "PUT")
+            .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415, 503)
+            .WithMetadata(new OperationDescription("scheduling.fact-capacity-policy.adjust", "调整所属事实容量策略"));
         tasks.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         tasks.MapPost("/preview", (PreviewScheduleRequest request, IScheduleCalendar calendar, ApiResponses responses) =>
@@ -244,8 +264,8 @@ public static class SchedulingModule
         statusCode: error.Code switch
         {
             "scheduling.task.not_found" => StatusCodes.Status404NotFound,
-            "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
+            "scheduling.audit_policy.control_exhausted" or "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
+            "scheduling.audit_policy.conflict" or "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         },
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

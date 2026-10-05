@@ -73,6 +73,82 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.ToTable("outbox", "pricing");
                 });
 
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyControl", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxRecordPayloadBytes")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxRecords")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("PolicyRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedRecords")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("fact_policy_control", "pricing", t =>
+                        {
+                            t.HasCheckConstraint("ck_fact_policy_control_bounds", "\"PolicyRevision\" > 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\" AND \"RetainedRecords\" >= 0 AND \"RetainedRecords\" <= \"MaxRecords\" AND \"RetainedPayloadBytes\" >= 0 AND \"RetainedPayloadBytes\" <= \"MaxPayloadBytes\"");
+
+                            t.HasCheckConstraint("ck_fact_policy_control_singleton", "\"Id\" = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            MaxPayloadBytes = 16777216L,
+                            MaxRecordPayloadBytes = 16384,
+                            MaxRecords = 1000L,
+                            PolicyRevision = 1L,
+                            RetainedPayloadBytes = 0L,
+                            RetainedRecords = 0L
+                        });
+                });
+
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyReceiptRecord", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("EventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("PayloadBytes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RecordJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("RetainUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("RequestId");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("RetainUntil", "RequestId");
+
+                    b.ToTable("fact_policy_receipts", "pricing", t =>
+                        {
+                            t.HasCheckConstraint("ck_fact_policy_receipt_bytes", "\"PayloadBytes\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.CommittedFactCapacity", b =>
                 {
                     b.Property<int>("Id")
@@ -291,6 +367,14 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                     b.HasIndex("State", "AvailableAt");
 
                     b.ToTable("tasks", "pricing");
+                });
+
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyReceiptRecord", b =>
+                {
+                    b.HasOne("NexusStackNext.BuildingBlocks.Application.Events.OutboxEntry", null)
+                        .WithMany()
+                        .HasForeignKey("EventId")
+                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Tasks.DurableTaskAttempt", b =>
