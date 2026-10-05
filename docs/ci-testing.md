@@ -5,9 +5,10 @@ CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL�
 每个端口只绑定回环地址。测试类内部的原有并发设置和故障断言保持不变。
 本地原子保护与异常退出恢复见 [测试负载所有权](local-test-ownership.md)；
 仓库检查任务以外部 fake dotnet CLI 验证这层保护，不额外连接共享数据库。
-Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) 复用私有实例，仍串行执行。
-仓库检查任务验证连接选择、拒绝回退与非 Windows 生命周期拒绝；真实 Windows 生命周期另经本机验证，
-不能把 Linux 的便携入口探针当成 Windows 实例验证。
+2026-10-05 起，开发测试使用 `env/test.dev` 中共用的测试 PostgreSQL，保留网络与共享服务器场景。
+旧本地覆盖及免安装工具的 Start/Test 已停用；Status/Stop 只管理既有实例，见
+[开发测试环境与本地工具退役](local-postgres-testing.md)。仓库检查验证共用配置传递、缺配置失败、
+旧入口在负载前拒绝，以及负载失败仍使门禁失败；不会运行本地初始化或数据库测试。
 
 ## 为什么 runner 只有 Linux（2026-10-05 定）
 
@@ -15,8 +16,7 @@ Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) �
 换来的是"开发机上的编译与格式又过一遍 CI"——而那两件事开发者在自己机器上随时能跑
 （macOS 侧的现状与命令见 [提交、PR 与凭据](agents/pr-and-credentials.md)），
 却要在 CI 里多养一台机器、多一份排队时间与平台依赖。所以：**runner 只有 Linux**；
-开发机平台靠各人本机覆盖，Windows 侧还有 `scripts/local-postgres.ps1` 那条本地库路线
-（见 [本地隔离 PostgreSQL 工具](local-postgres-testing.md)）。
+开发机平台靠各人本机覆盖；本机业务集成测试仍连接共用测试服务。
 
 2026-10-05 当天短暂加过一台 `macos-26`（Release 构建 + 两个哨兵工程 + 格式检查，首跑 191 秒全绿），
 按这条决定**当场撤除**。留下这段记录，是为了下次有人问"为什么没有 macOS / Windows runner"时
@@ -54,7 +54,7 @@ Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) �
 3. 空清单、缺组、重复、错组、漏跑、失败、跳过或陈旧报告均失败。
 4. 前置结果和测试完整性均通过后，最后执行格式检查，保留 build → tests → format。
 
-独立的 **仓库与工具检查** 与四组测试并行调度：执行分组与安全护栏、测试所有权、本地隔离库入口、
+独立的 **仓库与工具检查** 与四组测试并行调度：执行分组与安全护栏、测试所有权、共用配置及本地入口退役检查、
 票据读取故障探针，以及凭据、仓库跟踪器、在线票据和重命名模板构建。此任务没有数据库或其他服务，
 不加载仓库的私有开发配置；无服务探针仅使用自己生成的隔离假配置。原检查和退出码断言全部保留。
 只有该任务需要 `issues: read`，最终汇总任务仅需 `contents: read`。
