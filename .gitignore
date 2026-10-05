@@ -44,3 +44,11 @@ env/*.dev
 .dotnet/
 .tools/
 *.received.*
+
+## macOS —— Finder 会在**它访问过的每个目录**写入 .DS_Store（本仓在 macOS 上开发；
+## 模式不带斜杠，因此在任意层级都匹配）。`.gitignore` 对**已跟踪**的文件无效，
+## 所以这条只在文件被 `git add` 之前挡得住它。
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
