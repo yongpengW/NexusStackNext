@@ -14,15 +14,17 @@ function Assert-IsolationRejection([string]$Stage) {
     $output = & pwsh -NoProfile -File $tool -Action Isolation -InputPath $scratch 2>&1
     if ($LASTEXITCODE -eq 0 -or ($output -join "`n") -notmatch "CI_ISOLATION_REJECTED stage=$Stage") { throw "Expected rejection at $Stage, before contacting dependencies" }
 }
-Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', 'success') $true
-Write-Output 'PASS: successful test and repository prerequisites admit the final gate'
+Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', 'success', '-MacOSResult', 'success') $true
+Write-Output 'PASS: successful test, repository and macOS prerequisites admit the final gate'
 foreach ($state in @('failure', 'cancelled', 'skipped', '', 'queued', 'SUCCESS')) {
-    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', $state, '-RepositoryResult', 'success') $false
-    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', $state) $false
+    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', $state, '-RepositoryResult', 'success', '-MacOSResult', 'success') $false
+    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', $state, '-MacOSResult', 'success') $false
+    Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', 'success', '-MacOSResult', $state) $false
 }
 Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success') $false
 Invoke-Probe @('-Action', 'Prerequisites', '-RepositoryResult', 'success') $false
-Write-Output 'PASS: either failed, cancelled, skipped, missing or unknown prerequisite rejects the final gate'
+Invoke-Probe @('-Action', 'Prerequisites', '-ShardResult', 'success', '-RepositoryResult', 'success') $false
+Write-Output 'PASS: any failed, cancelled, skipped, missing or unknown prerequisite rejects the final gate'
 $inventoryPath = Join-Path $scratch 'inventory.json'
 $planPath = Join-Path $scratch 'plan.json'
 $inventory = @(

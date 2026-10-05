@@ -7,6 +7,7 @@ param(
     [string]$Attempt,
     [string]$ShardResult,
     [string]$RepositoryResult,
+    [string]$MacOSResult,
     [string]$Project,
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug'
 )
@@ -15,7 +16,7 @@ Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
 try {
     switch ($Action) {
         'Prerequisites' {
-            if ($ShardResult -cne 'success' -or $RepositoryResult -cne 'success') { throw 'Required CI work did not succeed.' }
+            if ($ShardResult -cne 'success' -or $RepositoryResult -cne 'success' -or $MacOSResult -cne 'success') { throw 'Required CI work did not succeed.' }
             Write-Output 'CI prerequisites accepted.'
         }
         'Plan' {
@@ -47,7 +48,7 @@ catch {
         $stage = [regex]::Match($_.Exception.Message, 'stage=[a-z-]+').Value
         Write-Host "CI_ISOLATION_REJECTED $stage"
     }
-    elseif ($Action -eq 'Prerequisites') { Write-Host 'CI_PREREQUISITES_REJECTED: both test and repository checks must succeed.' }
+    elseif ($Action -eq 'Prerequisites') { Write-Host 'CI_PREREQUISITES_REJECTED: test, repository and macOS checks must all succeed.' }
     else { Write-Host 'CI test plan or report verification failed. Inspect the private input locally.' }
     exit 1
 }

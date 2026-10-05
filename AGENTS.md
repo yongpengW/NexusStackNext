@@ -136,10 +136,12 @@ pwsh -File scripts/run-tests.ps1              # ② 测试（**串行**，见下
 pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --verify-no-changes）
 ```
 
-**两个平台同时在用**：`git` / `gh` 那条链 Windows 与 macOS 上都通，但这三段依赖 `pwsh`
-与 `global.json` 钉的 SDK——macOS 侧当前**两个都没有**（2026-10-05 实测），
-所以"本机三段全绿"这句话今天只在 Windows 上有对象。核实命令与现状见
-[提交、PR 与凭据](docs/agents/pr-and-credentials.md)。
+**两个平台同时在用**：macOS 侧装了 `global.json` 钉的 .NET 10 SDK，**刻意不装 `pwsh`**
+——所以 ① 与 ③ 在 macOS 上用 `dotnet` 原命令即可（`dotnet build NexusStackNext.slnx -c Release`、
+`dotnet format NexusStackNext.slnx --verify-no-changes`，后者正是 `check-format.ps1` 包的那一条），
+② 仍要 `scripts/run-tests.ps1`（串行 + 所有权互斥），且需要一台库。CI 另有一台 **macOS runner**
+跑 ①③ 与两个哨兵工程；跑什么、为什么不跑全量，见 `docs/ci-testing.md`。
+现状与核实命令见 [提交、PR 与凭据](docs/agents/pr-and-credentials.md)。
 
 **第三条不是摆设**：第一次跑它时全仓有 **448 处**格式违规（含两个 CRLF 文件，而 `.editorconfig`
 写的是 LF），而**构建全绿**——"声明了风格"与"检查了风格"是两件事。

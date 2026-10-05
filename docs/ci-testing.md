@@ -34,8 +34,8 @@ Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) �
 
 最终任务仍叫 **构建与测试**，保留现有保护规则所需的检查名。它会核实：
 
-1. 四组测试与独立的仓库检查任务全部成功；失败、取消、跳过、缺失或未知前置状态均拒绝。
-   `always()` 只保证汇总任务仍会启动，不代表前置成功；入口先通过 `Prerequisites` CLI 核对两个结果。
+1. 四组测试、独立的仓库检查任务与 macOS 任务全部成功；失败、取消、跳过、缺失或未知前置状态均拒绝。
+   `always()` 只保证汇总任务仍会启动，不代表前置成功；入口先通过 `Prerequisites` CLI 核对三个结果。
    四份报告必须属于当前提交、运行和尝试。
 2. 四份完整发现清单及确定分组一致；每个发现的用例恰好执行一次并通过。
 3. 空清单、缺组、重复、错组、漏跑、失败、跳过或陈旧报告均失败。
@@ -45,7 +45,20 @@ Windows 可通过 [本地隔离 PostgreSQL 工具](local-postgres-testing.md) �
 票据读取故障探针，以及凭据、仓库跟踪器、在线票据和重命名模板构建。此任务没有数据库或其他服务，
 不加载仓库的私有开发配置；无服务探针仅使用自己生成的隔离假配置。原检查和退出码断言全部保留。
 只有该任务需要 `issues: read`，最终汇总任务仅需 `contents: read`。
-最终任务同时 `needs` 两类前置；仓库检查失败也不能得到绿色的统一必需检查。
+最终任务同时 `needs` 三类前置；仓库检查或 macOS 任务失败也不能得到绿色的统一必需检查。
+
+**macOS 任务**（2026-10-05 加）与上面两类并行，跑三段里**不需要外部服务**的那部分：Release 构建
+（"Darwin 上编得过吗"），`Architecture.Tests` 与 `Gateway.Routing.Tests` 两个哨兵工程
+（两者都读仓库文件——源码程序集、不变量表、`routes.json`——路径分隔符与大小写不敏感正在这条路上现形），
+最后是 `scripts/check-format.ps1`。
+
+**它刻意不跑四个分片**：GitHub 托管的 macOS runner **没有 Docker**
+（`actions/runner-images` 的 `images/macos/macos-26-arm64-Readme.md` 里 `docker` 出现 0 次），
+`services:` 与 `docker run` 都用不了，Postgres / Redis / RabbitMQ 在这台机器上起不来——
+**全套测试唯一的执行地仍是 Linux 分片**。所以这不是"macOS 免测"，而是"能在 macOS 上测的那部分
+必须真的在 macOS 上测"；边界写在这里，免得下一次被读成"macOS 也跑全量"。
+macOS runner 自带 PowerShell 7.6.5，`.ps1` 门禁在这里照跑（pwsh 只是**本机 macOS 不装**）；
+`macos-26` 是标准 arm64 runner，公开仓库免费，`-large` / `-intel` 属于计费的 larger runner。
 
 脱敏报告保存为 Actions artifact，保留七天；最终日志列出最慢的十五个测试类和十五个用例，
 以及各组用例数和累计测试耗时。累计耗时不等于 job 墙钟时间；后者还包括容器启动、构建和发现。

@@ -3,9 +3,13 @@ name: ci
 on:
   push:
     # **main 与 dev 都跑 CI**（2026-09-30 定）。公开仓库的 Actions 不计费，
-    # 而 CI 是**唯一的"平台差异"检查**（Linux / 干净检出）——这一轮它就抓到过
+    # 而 CI 是**唯一的"平台差异"检查**（Linux / macOS / 干净检出）——这一轮它就抓到过
     # "路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文"。
     # 所以 dev 上的直推也过 CI：坏提交**立刻**看到红，而不是攒到 dev → main 的 PR。
+    #
+    # 2026-10-05 起多一台 **macOS**：本仓 Windows 与 macOS 同时在用，而 Linux 抓不到
+    # Darwin 的差异（大小写不敏感的文件系统、路径分隔符、ICU/时区）。它跑什么、为什么不跑
+    # 四个分片，见下面 `macos-checks` 的注释与 `docs/ci-testing.md`。
     branches: [ main, dev ]
   pull_request:
   # 手动触发同一套完整检查。
@@ -184,10 +188,51 @@ jobs:
           dotnet build "$out/CiProbe.slnx" --configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Generated project build failed.' }
 
+  macos-checks:
+    # **为什么另开一台 macOS**：本仓 Windows 与 macOS 同时在用。Linux（大小写敏感、`/` 分隔符、
+    # glibc）抓不到 Darwin 的那一类差异，而它们正好长在"能编译、能读文件"这一层上。
+    #
+    # **为什么不是四个分片**：macOS runner **没有 Docker**（`actions/runner-images` 的
+    # `images/macos/macos-26-arm64-Readme.md` 里 `docker` 出现 0 次），因此 `services:` 与
+    # `docker run` 都用不了——Postgres / Redis / RabbitMQ 在这台机器上起不来。整套测试**仍留在
+    # Linux 分片**上（那是唯一能跑全量的地方）；这里只跑不依赖外部服务的两段，外加两个哨兵工程。
+    #
+    # 两个哨兵工程的共同点：**都去读仓库里的文件**（Architecture.Tests 读源码程序集与不变量表，
+    # Gateway.Routing.Tests 读 `routes.json`）——路径分隔符与大小写不敏感正好在这条路上现形。
+    #
+    # `macos-26` 是**标准 arm64** runner（公开仓库免费）；`-large` / `-intel` 属于计费的 larger runner。
+    # macOS runner 自带 PowerShell 7.6.5，所以 `.ps1` 门禁在这里照跑——pwsh 只是**本机 macOS 不装**。
+    name: macOS 编译、格式与无服务测试
+    runs-on: macos-26
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: 还原
+        run: dotnet restore NexusStackNext.slnx
+
+      - name: 构建
+        # 与 Linux 分片同样的 Release + TreatWarningsAsErrors：这一步就是"Darwin 上编得过吗"。
+        run: dotnet build NexusStackNext.slnx --no-restore --configuration Release
+
+      - name: 无服务测试（哨兵工程）
+        run: |
+          dotnet test tests/Architecture.Tests --no-build --configuration Release
+          dotnet test tests/Gateway.Routing.Tests --no-build --configuration Release
+
+      - name: 断言格式符合 .editorconfig
+        shell: pwsh
+        run: ./scripts/check-format.ps1
+
   build-and-test:
     # Preserve the required check name; always() must never mask an upstream failure.
     name: 构建与测试
-    needs: [test-shards, repository-checks]
+    needs: [test-shards, repository-checks, macos-checks]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -200,7 +245,8 @@ jobs:
         env:
           SHARD_RESULT: ${{ needs.test-shards.result }}
           REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
-        run: ./scripts/ci-test-tools.ps1 -Action Prerequisites -ShardResult $env:SHARD_RESULT -RepositoryResult $env:REPOSITORY_RESULT
+          MACOS_RESULT: ${{ needs.macos-checks.result }}
+        run: ./scripts/ci-test-tools.ps1 -Action Prerequisites -ShardResult $env:SHARD_RESULT -RepositoryResult $env:REPOSITORY_RESULT -MacOSResult $env:MACOS_RESULT
 
       - uses: actions/setup-dotnet@v5
         with:

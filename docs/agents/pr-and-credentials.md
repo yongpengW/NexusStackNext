@@ -65,11 +65,14 @@ Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_R
 
 三条值得说明：
 
-- **两个平台同时在用，但三段检查目前只有 Windows 跑得起来**（2026-10-05 在 macOS 侧实测）：
-  `command -v pwsh` 为空；`global.json` 钉的 SDK **10.0.401** 也没装（`dotnet --list-sdks`
-  只有 `8.0.416`），于是 `dotnet --version` 退出 **145**、`dotnet build NexusStackNext.slnx`
-  停在 SDK 解析那一步。macOS 侧要跑那三段，先补 PowerShell 7 与 .NET 10 SDK；
-  **在那之前，"本机绿"这句话在 macOS 上没有对象**。`git` / `gh` 那条链不受影响
+- **两个平台同时在用，但两侧能跑的东西不一样**（2026-10-05 实测）：macOS 侧装的是 Homebrew 的
+  .NET **10.0.401**——与 `global.json` 同一个版本（`dotnet --version` = 10.0.401），于是
+  ① `dotnet build NexusStackNext.slnx -c Release`（**0 警告 0 错误**）与 ③
+  `dotnet format NexusStackNext.slnx --verify-no-changes`（**退出 0**）在 macOS 上都能跑；
+  **`pwsh` 刻意不装**，所以 ② 测试（`scripts/run-tests.ps1`：串行 + 跨工作区所有权互斥）
+  在 macOS 上跑不了，何况它还需要一台库。CI 侧另有一台 **macOS runner** 跑 ①③ 与两个哨兵工程，
+  边界见 [CI 隔离并行](../ci-testing.md)。旧的 SDK 8.0.416 仍在 `/usr/local/share/dotnet`，
+  被 PATH 更靠前的 `/opt/homebrew/bin/dotnet` 盖住。`git` / `gh` 那条链两侧都通
   ——本仓的提交与推送就是在 macOS 上做的。
 
 - **为什么没把 git 切给 gh（`gh auth setup-git`）**：现在这条路是通的，切换只会多一个失败点。
