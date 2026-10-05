@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # 容量策略调整使用所属上下文的独立有限控制额度
@@ -12,7 +12,8 @@ Memory 与 PostgreSQL 在共享实现内部复用输入校验及变化事实、�
 六来源及四种 Memory 适配器的实施与验收由 [#101](https://github.com/yongpengW/NexusStackNext/issues/101) 跟踪；
 真实迁移、消息交付和公开端口资格已由本票验证，测试入口见
 [容量策略验收定位](../committed-auditing.md#容量策略验收定位)。
-本决定的发布仍待独立双轴评审及当前提交的完整 Linux CI，不能将阶段验证当作已合并声明。
+独立 Standards / Spec 评审已通过；交付仍须最终候选的完整 Linux CI 全绿后合入 dev，
+实际发布资格和合并状态以该票原生记录为准，不能将阶段验证当作已合并声明。
 
 策略有单调版本，只有三个额度发生实际变化时推进。降低到当前保留总量以下不删除历史，
 后续准入继续背压；空操作不推进版本、不发布 changed 事实。
