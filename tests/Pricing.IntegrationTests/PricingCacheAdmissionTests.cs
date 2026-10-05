@@ -53,13 +53,6 @@ public sealed partial class PricingCacheTests
         }
         finally { await database.SetAvailableAsync(true); }
         using var recovered = await restarted.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), change);
-        if (recovered.StatusCode != HttpStatusCode.Accepted)
-        {
-            var response = await recovered.Content.ReadFromJsonAsync<JsonElement>();
-            var code = response.TryGetProperty("errorCode", out var error) ? error.GetString() : null;
-            Assert.Fail($"[DEBUG-105] RecoveryWrite HTTP={(int)recovered.StatusCode}; "
-                + $"CapacityBusy={code == "audit_capacity.busy"}; CapacityUnavailable={code == "audit_capacity.unavailable"}.");
-        }
         Assert.Equal(HttpStatusCode.Accepted, recovered.StatusCode);
         var current = await WaitForCachedQuoteAsync(restarted, item, control.GetDatabase(), key, quote => quote.Cost == 96m);
         Assert.Equal(2, current.Version);

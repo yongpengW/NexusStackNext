@@ -92,10 +92,8 @@ internal sealed class PricingCommands(PricingDbContext database, IExecutionConte
         }
 
         database.ChangeTracker.Clear();
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         // 两个稳定命名空间：先序列化同请求的重试，再序列化同定价对象的输入更新。
-        await database.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-request/" + command.RequestId}, 0))", cancellationToken).ConfigureAwait(false);
+        await using var transaction = await PricingRequestTransaction.BeginAsync(database, command.RequestId, cancellationToken).ConfigureAwait(false);
         var existing = await database.Tasks.Include(x => x.History).SingleOrDefaultAsync(x => x.TaskId == command.RequestId, cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {
