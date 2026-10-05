@@ -9,11 +9,14 @@ param(
     [switch]$NoBuild
 )
 $ErrorActionPreference = 'Stop'
+if ($Action -in @('Start', 'Test')) {
+    Write-Output 'LOCAL_POSTGRES_DISABLED: use scripts/run-tests.ps1 with the shared test configuration.'
+    exit 1
+}
 if (-not $IsWindows) { Write-Output 'LOCAL_POSTGRES_UNSUPPORTED: the portable EDB lifecycle currently requires Windows.'; exit 1 }
 try {
     Import-Module (Join-Path $PSScriptRoot 'local-postgres.psm1') -Force
     $result = Invoke-LocalPostgres -Action $Action -RuntimeDirectory $RuntimeDirectory -StateDirectory $StateDirectory -Configuration $Configuration -Filter $Filter -NoBuild:$NoBuild
-    if ($Action -eq 'Test') { exit [int]$result }
     $result
 }
 catch {

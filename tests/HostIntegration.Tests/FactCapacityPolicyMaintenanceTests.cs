@@ -157,10 +157,12 @@ public sealed class FactCapacityPolicyMaintenanceTests
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await database.MigrateAsync();
         var acceptedAt = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
+        // The held row forces expiry; the recovery round must retain a usable production budget.
+        var maintenanceTimeout = shutdown ? TimeSpan.FromSeconds(30) : new FactCapacityPolicyMaintenanceOptions().Timeout;
         await using var host = CreateModule("Identity", acceptedAt.AddDays(7), database.ConnectionString, new()
         {
             ["Identity:AuditDelivery:CapacityRead:Timeout"] = "00:00:30",
-            ["Identity:AuditDelivery:PolicyMaintenance:Timeout"] = shutdown ? "00:00:30" : "00:00:00.050",
+            ["Identity:AuditDelivery:PolicyMaintenance:Timeout"] = maintenanceTimeout.ToString("c", System.Globalization.CultureInfo.InvariantCulture),
         });
         await using var scope = host.Services.CreateAsyncScope();
         var policies = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityPolicyStore>("identity");
@@ -180,7 +182,6 @@ public sealed class FactCapacityPolicyMaintenanceTests
         try
         {
             var health = host.Services.GetRequiredService<HealthCheckService>();
-            if (shutdown)
             {
                 using var observe = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 await using var waiting = new NpgsqlCommand("""
@@ -195,6 +196,9 @@ public sealed class FactCapacityPolicyMaintenanceTests
                     if ((bool)(await waiting.ExecuteScalarAsync(observe.Token))!) { break; }
                     await Task.Delay(10, observe.Token);
                 }
+            }
+            if (shutdown)
+            {
                 using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(2));
                 await host.StopAsync(stop.Token);
                 Assert.False(stop.IsCancellationRequested);

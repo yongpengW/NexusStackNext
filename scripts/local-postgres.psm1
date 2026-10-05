@@ -2,25 +2,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'test-ownership.psm1') -Force
 
-if (-not ('NexusStackNext.Tools.PostgresHandles' -as [type])) {
-    Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-namespace NexusStackNext.Tools {
-    public static class PostgresHandles {
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern IntPtr GetStdHandle(int kind);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool GetHandleInformation(IntPtr handle, out uint flags);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
-    }
-}
-'@
-}
-
 function Deny-LocalPostgres([string]$Stage) { throw "LOCAL_POSTGRES_REJECTED stage=$Stage" }
 
 function Read-LocalPostgresState($Context) {
@@ -59,35 +40,6 @@ function Get-LocalPostgresArtifactHashes($Context, $Expected = $null) {
 }
 
 function Invoke-LocalPostgresCommand($Context, [string]$Name, [string[]]$Arguments, [bool]$Connect = $false) {
-    if ($Name -eq 'pg_ctl' -and $Arguments -contains 'start') {
-        # Daemons must inherit files, not pipes whose EOF a caller is waiting for.
-        $quoted = @($Arguments | ForEach-Object { '"' + $_ + '"' })
-        $Context.CommandReturned = $false
-        $handles = @()
-        try {
-            # Windows inherits other inheritable handles too, not just the selected child stdio.
-            foreach ($kind in @(-11, -12)) {
-                $handle = [NexusStackNext.Tools.PostgresHandles]::GetStdHandle($kind)
-                $flags = [uint32]0
-                if (-not [NexusStackNext.Tools.PostgresHandles]::GetHandleInformation($handle, [ref]$flags)) { Deny-LocalPostgres 'handle-inheritance' }
-                $handles += @{ Handle = $handle; Flags = $flags -band 1 }
-                if (-not [NexusStackNext.Tools.PostgresHandles]::SetHandleInformation($handle, 1, 0)) { Deny-LocalPostgres 'handle-inheritance' }
-            }
-            $process = Start-Process -FilePath (Join-Path $Context.RuntimeDirectory 'pg_ctl.exe') -ArgumentList $quoted -PassThru -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Context.Root 'pg_ctl-start.private.log') -RedirectStandardError (Join-Path $Context.Root 'pg_ctl-start-error.private.log')
-        }
-        finally {
-            foreach ($saved in $handles) {
-                if (-not [NexusStackNext.Tools.PostgresHandles]::SetHandleInformation($saved.Handle, 1, $saved.Flags)) { Deny-LocalPostgres 'handle-inheritance' }
-            }
-        }
-        try {
-            if (-not $process.WaitForExit(60000)) { $process.Kill(); [void]$process.WaitForExit(5000); Deny-LocalPostgres 'command-timeout' }
-            $Context.CommandReturned = $true
-            if ($process.ExitCode -ne 0) { Deny-LocalPostgres 'command' }
-            return ''
-        }
-        finally { $process.Dispose() }
-    }
     $start = [Diagnostics.ProcessStartInfo]::new((Join-Path $Context.RuntimeDirectory "$Name.exe"))
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
@@ -165,53 +117,9 @@ function Assert-LocalPostgresReady($Context) {
         $fields[7] -cne $Context.State.Role -or $fields[8] -cne 'postgres') { Deny-LocalPostgres 'readiness' }
 }
 
-function Start-LocalPostgres($Context, [string]$RuntimeDirectory) {
-    if (Test-Path -LiteralPath $Context.StateFile) {
-        $Context.State = Read-LocalPostgresState $Context
-        [void](Get-LocalPostgresArtifactHashes $Context $Context.State.ArtifactHashes)
-        if ($RuntimeDirectory -and [IO.Path]::GetFullPath($RuntimeDirectory) -ine $Context.State.RuntimeDirectory) { Deny-LocalPostgres 'runtime-changed' }
-        [void](Get-LocalPostgresRuntime $Context $Context.State.RuntimeDirectory $Context.State)
-        if ($Context.State.State -eq 'running') {
-            $process = Get-LocalPostgresProcess $Context
-            try { Assert-LocalPostgresReady $Context } finally { $process.Dispose() }
-            return
-        }
-        if (Test-Path -LiteralPath (Join-Path $Context.DataDirectory 'postmaster.pid')) { Deny-LocalPostgres 'uncertain-server' }
-    } else {
-        if (@(Get-ChildItem -LiteralPath $Context.Root -Force | Where-Object Name -NE 'operation.lock').Count -ne 0 -or [string]::IsNullOrWhiteSpace($RuntimeDirectory)) { Deny-LocalPostgres 'unowned-directory' }
-        $version = Get-LocalPostgresRuntime $Context $RuntimeDirectory
-        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-        try { $listener.Start(); $port = $listener.LocalEndpoint.Port } finally { $listener.Stop() }
-        $role = 'nsn_test_' + [Guid]::NewGuid().ToString('N').Substring(0, 16)
-        $password = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
-        $Context.State = [pscustomobject]@{ Version = 1; State = 'initializing'; DataDirectory = $Context.DataDirectory; RuntimeDirectory = $Context.RuntimeDirectory; RuntimeVersion = $version; Hashes = $Context.Hashes; ArtifactHashes = $null; Role = $role; Port = $port; Pid = 0; StartedUtcTicks = 0 }
-        Write-LocalPostgresState $Context $Context.State
-        $passwordFile = Join-Path $Context.Root 'password.private'
-        [IO.File]::WriteAllText($passwordFile, $password, [Text.UTF8Encoding]::new($false))
-        [void](Invoke-LocalPostgresCommand $Context 'initdb' @('-D', $Context.DataDirectory, '--username', $role, '--pwfile', $passwordFile, '--auth-host=scram-sha-256', '--auth-local=scram-sha-256', '--encoding=UTF8', '--locale=C'))
-        $configuration = "`nlisten_addresses = '127.0.0.1'`nport = $port`nunix_socket_directories = ''`nfsync = on`nsynchronous_commit = on`nfull_page_writes = on`ntimezone = 'UTC'`npassword_encryption = 'scram-sha-256'`n"
-        [IO.File]::AppendAllText((Join-Path $Context.DataDirectory 'postgresql.conf'), $configuration, [Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText((Join-Path $Context.Root 'pgpass.private'), "127.0.0.1:${port}:postgres:${role}:$password", [Text.UTF8Encoding]::new($false))
-        $connection = [Data.Common.DbConnectionStringBuilder]::new()
-        $connection['Host'] = '127.0.0.1'; $connection['Port'] = $port; $connection['Database'] = 'postgres'; $connection['Username'] = $role; $connection['Password'] = $password
-        [IO.File]::WriteAllText((Join-Path $Context.Root 'connection.private'), $connection.get_ConnectionString(), [Text.UTF8Encoding]::new($false))
-        $Context.State.ArtifactHashes = Get-LocalPostgresArtifactHashes $Context
-    }
-    $Context.State.State = 'starting'
-    Write-LocalPostgresState $Context $Context.State
-    [void](Invoke-LocalPostgresCommand $Context 'pg_ctl' @('-D', $Context.DataDirectory, '-l', (Join-Path $Context.Root 'server.private.log'), '-w', '-t', '30', 'start'))
-    $process = Get-LocalPostgresProcess $Context $false
-    try {
-        Assert-LocalPostgresReady $Context
-        $Context.State.Pid = $process.Id
-        $Context.State.StartedUtcTicks = $process.StartTime.ToUniversalTime().Ticks
-        $Context.State.State = 'running'
-        Write-LocalPostgresState $Context $Context.State
-    }
-    finally { $process.Dispose() }
-}
-
 function Invoke-LocalPostgres([string]$Action, [string]$RuntimeDirectory, [string]$StateDirectory, [string]$Configuration, [string]$Filter, [bool]$NoBuild) {
+    if ($Action -in @('Start', 'Test')) { throw 'LOCAL_POSTGRES_DISABLED: use the shared test configuration.' }
+    if ($Action -notin @('Status', 'Stop')) { Deny-LocalPostgres 'action' }
     $root = [IO.Path]::GetFullPath($StateDirectory)
     $allowed = @([IO.Path]::GetTempPath(), [Environment]::GetFolderPath('LocalApplicationData'))
     if (-not @($allowed | Where-Object { $root.StartsWith([IO.Path]::GetFullPath($_).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) }).Count) { Deny-LocalPostgres 'directory' }
@@ -224,16 +132,7 @@ function Invoke-LocalPostgres([string]$Action, [string]$RuntimeDirectory, [strin
         $parent = [IO.Directory]::GetParent($ancestor)
         $ancestor = if ($null -eq $parent) { $null } else { $parent.FullName }
     }
-    if (-not (Test-Path -LiteralPath $root)) {
-        if ($Action -notin @('Start', 'Test')) { Deny-LocalPostgres 'missing-instance' }
-        [void][IO.Directory]::CreateDirectory($root)
-        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        $security = [Security.AccessControl.DirectorySecurity]::new()
-        $security.SetOwner($sid)
-        $security.SetAccessRuleProtection($true, $false)
-        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
-        Set-Acl -LiteralPath $root -AclObject $security
-    }
+    if (-not (Test-Path -LiteralPath $root)) { Deny-LocalPostgres 'missing-instance' }
     $item = Get-Item -LiteralPath $root -Force
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $acl = Get-Acl -LiteralPath $root
@@ -243,38 +142,24 @@ function Invoke-LocalPostgres([string]$Action, [string]$RuntimeDirectory, [strin
     $guard = [IO.File]::Open((Join-Path $root 'operation.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
     $testOwnership = $null
     try {
-        if ($Action -in @('Start', 'Stop', 'Test')) { $testOwnership = Enter-TestOwnership }
-        if ($Action -in @('Start', 'Test')) { Start-LocalPostgres $context $RuntimeDirectory }
-        else {
-            $context.State = Read-LocalPostgresState $context
-            [void](Get-LocalPostgresArtifactHashes $context $context.State.ArtifactHashes)
-            if ($RuntimeDirectory -and [IO.Path]::GetFullPath($RuntimeDirectory) -ine $context.State.RuntimeDirectory) { Deny-LocalPostgres 'runtime-changed' }
-            [void](Get-LocalPostgresRuntime $context $context.State.RuntimeDirectory $context.State)
-            if ($context.State.State -eq 'running') {
-                $process = Get-LocalPostgresProcess $context
-                try {
-                    Assert-LocalPostgresReady $context
-                    if ($Action -eq 'Stop') {
-                        [void](Invoke-LocalPostgresCommand $context 'pg_ctl' @('-D', $context.DataDirectory, '-m', 'fast', '-w', '-t', '30', 'stop'))
-                        if (-not $process.WaitForExit(5000) -or (Test-Path -LiteralPath (Join-Path $context.DataDirectory 'postmaster.pid'))) { Deny-LocalPostgres 'uncertain-server' }
-                        $context.State.State = 'stopped'
-                        Write-LocalPostgresState $context $context.State
-                    }
+        if ($Action -eq 'Stop') { $testOwnership = Enter-TestOwnership }
+        $context.State = Read-LocalPostgresState $context
+        [void](Get-LocalPostgresArtifactHashes $context $context.State.ArtifactHashes)
+        if ($RuntimeDirectory -and [IO.Path]::GetFullPath($RuntimeDirectory) -ine $context.State.RuntimeDirectory) { Deny-LocalPostgres 'runtime-changed' }
+        [void](Get-LocalPostgresRuntime $context $context.State.RuntimeDirectory $context.State)
+        if ($context.State.State -eq 'running') {
+            $process = Get-LocalPostgresProcess $context
+            try {
+                Assert-LocalPostgresReady $context
+                if ($Action -eq 'Stop') {
+                    [void](Invoke-LocalPostgresCommand $context 'pg_ctl' @('-D', $context.DataDirectory, '-m', 'fast', '-w', '-t', '30', 'stop'))
+                    if (-not $process.WaitForExit(5000) -or (Test-Path -LiteralPath (Join-Path $context.DataDirectory 'postmaster.pid'))) { Deny-LocalPostgres 'uncertain-server' }
+                    $context.State.State = 'stopped'
+                    Write-LocalPostgresState $context $context.State
                 }
-                finally { $process.Dispose() }
-            } elseif (Test-Path -LiteralPath (Join-Path $context.DataDirectory 'postmaster.pid')) { Deny-LocalPostgres 'uncertain-server' }
-        }
-        if ($Action -eq 'Test') {
-            # The instance lease stays held; the real runner takes its existing global workload lease.
-            Exit-TestOwnership $testOwnership $context.CommandReturned
-            $testOwnership = $null
-            $arguments = @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-tests.ps1'), '-Configuration', $Configuration,
-                '-LocalPostgresConnectionFile', (Join-Path $root 'connection.private'))
-            if ($NoBuild) { $arguments += '-NoBuild' }
-            if ($Filter) { $arguments += @('-Filter', $Filter) }
-            & (Get-Command pwsh).Source @arguments | Out-Host
-            return $LASTEXITCODE
-        }
+            }
+            finally { $process.Dispose() }
+        } elseif (Test-Path -LiteralPath (Join-Path $context.DataDirectory 'postmaster.pid')) { Deny-LocalPostgres 'uncertain-server' }
         [pscustomobject]@{ State = $context.State.State; Version = $context.State.RuntimeVersion; Port = $context.State.Port; ConnectionFile = Join-Path $root 'connection.private' } | ConvertTo-Json -Compress
     }
     finally {

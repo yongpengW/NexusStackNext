@@ -480,7 +480,10 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
 
     private async Task ExecuteAdminAsync(string sql)
     {
-        await using var connection = new NpgsqlConnection(_admin);
+        // Administrative commands are infrequent; do not reuse an idle management socket.
+        // Keep ConnectionString unchanged so the actual hosts still exercise business pools.
+        var admin = new NpgsqlConnectionStringBuilder(_admin) { Pooling = false };
+        await using var connection = new NpgsqlConnection(admin.ConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync();
