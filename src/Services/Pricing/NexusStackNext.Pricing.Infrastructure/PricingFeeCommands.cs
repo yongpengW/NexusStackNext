@@ -18,9 +18,7 @@ internal sealed class PricingFeeCommands(PricingDbContext database, IExecutionCo
             return Result.Failure<RecalculationStatus>(new Error("pricing.invalid_input", "标识、版本或费率无效。"));
         }
         database.ChangeTracker.Clear();
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        await database.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-request/" + command.RequestId}, 0))", cancellationToken).ConfigureAwait(false);
+        await using var transaction = await PricingRequestTransaction.BeginAsync(database, command.RequestId, cancellationToken).ConfigureAwait(false);
         var existing = await database.Tasks.Include(x => x.History).SingleOrDefaultAsync(x => x.TaskId == command.RequestId, cancellationToken).ConfigureAwait(false);
         if (existing is not null)
         {

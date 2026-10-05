@@ -120,4 +120,25 @@ public sealed class PricingDatabaseFixture : IAsyncLifetime
         await using var command = new NpgsqlCommand("DROP TRIGGER IF EXISTS reject_test_task ON pricing.tasks", connection);
         await command.ExecuteNonQueryAsync();
     }
+
+    public async Task DisconnectDuringNextTaskInsertAsync(Guid requestId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        // Sequence increments survive rollback. An unsafe whole-command retry would
+        // pass the trigger on its second attempt and turn the HTTP failure into 202.
+        await using var command = new NpgsqlCommand($"""
+            CREATE SEQUENCE pricing.test_disconnect_attempt;
+            CREATE OR REPLACE FUNCTION pricing.disconnect_test_task() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+              IF NEW."TaskId" = '{requestId:D}'::uuid AND nextval('pricing.test_disconnect_attempt') = 1 THEN
+                PERFORM pg_terminate_backend(pg_backend_pid());
+              END IF;
+              RETURN NEW;
+            END $$;
+            CREATE OR REPLACE TRIGGER disconnect_test_task BEFORE INSERT ON pricing.tasks
+            FOR EACH ROW EXECUTE FUNCTION pricing.disconnect_test_task();
+            """, connection);
+        await command.ExecuteNonQueryAsync();
+    }
 }
