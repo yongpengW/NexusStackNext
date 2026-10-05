@@ -14,8 +14,9 @@ gh pr checks --watch
 gh run view --log-failed     # 红了先读原文，别猜
 ```
 
-`gh` 装在 `C:\Program Files\GitHub CLI\gh.exe`；新开的终端直接 `gh` 就能用
-（MSI 改的是机器 PATH，已启动的进程要等重启）。
+`gh` 两个平台都已装并登录：Windows 在 `C:\Program Files\GitHub CLI\gh.exe`（MSI 改的是机器 PATH，
+已启动的进程要等重启），macOS 在 `/opt/homebrew/bin/gh`（Homebrew）。上面那串命令两边通用
+（平台差异由 `gh` 自己处理），但**推送到位的凭据来源不同**——见下面的现状表。
 
 ## CI 与本地是同一套，但**本地绿不是终态**
 
@@ -57,12 +58,19 @@ Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_R
 
 | | |
 |---|---|
-| `gh` | 已装并登录：2.102.0，账号 `yongpengW`，scopes `repo` / `workflow` / `gist` / `read:org` |
+| `gh` | 两个平台都已装并登录，账号 `yongpengW`，scopes `repo` / `workflow` / `gist` / `read:org`；版本按平台：Windows **2.102.0**、macOS **2.97.0**（2026-10-05 实测） |
 | 仓库可见性 | **公开**（`private=false`）——只读的 `gh api` 与 `curl api.github.com` 无需凭据 |
-| git 的推送凭据 | Windows 凭据管理器（`credential.helper=manager`），**没有**切给 gh |
+| git 的推送凭据 | **按平台各一套**，两者都**没有**切给 gh：Windows 凭据管理器（`credential.helper=manager`）、macOS 钥匙串（`credential.helper=osxkeychain`，2026-10-05 实测推 `dev` 就是它放行的） |
 | `main` 保护规则 | **已开启**（2026-09-30）：ruleset `main-pr-role`，Active，目标 = 默认分支，**绕过名单为空**。规则 = 必须走 PR（批准数 **0**）+ 必需检查 **`构建与测试`** + 禁删除 + 禁强推 |
 
-两条值得说明：
+三条值得说明：
+
+- **两个平台同时在用，但三段检查目前只有 Windows 跑得起来**（2026-10-05 在 macOS 侧实测）：
+  `command -v pwsh` 为空；`global.json` 钉的 SDK **10.0.401** 也没装（`dotnet --list-sdks`
+  只有 `8.0.416`），于是 `dotnet --version` 退出 **145**、`dotnet build NexusStackNext.slnx`
+  停在 SDK 解析那一步。macOS 侧要跑那三段，先补 PowerShell 7 与 .NET 10 SDK；
+  **在那之前，"本机绿"这句话在 macOS 上没有对象**。`git` / `gh` 那条链不受影响
+  ——本仓的提交与推送就是在 macOS 上做的。
 
 - **为什么没把 git 切给 gh（`gh auth setup-git`）**：现在这条路是通的，切换只会多一个失败点。
   等哪天真需要 gh 的作用域去推 `.github/workflows/`，再切。

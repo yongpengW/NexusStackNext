@@ -136,6 +136,11 @@ pwsh -File scripts/run-tests.ps1              # ② 测试（**串行**，见下
 pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --verify-no-changes）
 ```
 
+**两个平台同时在用**：`git` / `gh` 那条链 Windows 与 macOS 上都通，但这三段依赖 `pwsh`
+与 `global.json` 钉的 SDK——macOS 侧当前**两个都没有**（2026-10-05 实测），
+所以"本机三段全绿"这句话今天只在 Windows 上有对象。核实命令与现状见
+[提交、PR 与凭据](docs/agents/pr-and-credentials.md)。
+
 **第三条不是摆设**：第一次跑它时全仓有 **448 处**格式违规（含两个 CRLF 文件，而 `.editorconfig`
 写的是 LF），而**构建全绿**——"声明了风格"与"检查了风格"是两件事。
 修格式用 `scripts/check-format.ps1 -Fix`。

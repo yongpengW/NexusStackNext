@@ -45,9 +45,17 @@ env/*.dev
 .tools/
 *.received.*
 
-## macOS —— Finder 会在**它访问过的每个目录**写入 .DS_Store（本仓在 macOS 上开发；
-## 模式不带斜杠，因此在任意层级都匹配）。`.gitignore` 对**已跟踪**的文件无效，
-## 所以这条只在文件被 `git add` 之前挡得住它。
+## 平台垃圾 —— 本仓 **Windows 与 macOS 同时在用**，两边的都要挡
+## （模式不带斜杠 → 任意层级都匹配；`.gitignore` 对**已跟踪**的文件无效，
+##   所以这些规则只在文件被 `git add` 之前挡得住它）
+
+## Windows —— 资源管理器会在它访问过的目录写入 Thumbs.db / desktop.ini
+[Tt]humbs.db
+[Ee]hthumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+## macOS —— Finder 会在它访问过的每个目录写入 .DS_Store
 .DS_Store
 ._*
 .AppleDouble

@@ -1,7 +1,8 @@
 # 行尾的权威在这里。
 #
 # **为什么需要这一条。** `.editorconfig` 里写着 `end_of_line = lf`，但那只对**编辑器**生效——
-# git 自己的 `core.autocrlf`（本机是 `true`）会在 **checkout 时**把 LF 换成 CRLF。
+# git 自己的 `core.autocrlf`（Windows 上是 `true`，macOS 上默认未设置）会在 **checkout 时**
+# 把 LF 换成 CRLF——**两个平台同时在用，所以"哪台机器"不能进这条判断**，靠的只能是下面那一行。
 # 实测过两个后果，都不是理论：
 #
 #   1. `dotnet format --verify-no-changes` 报 **363 处 `ENDOFLINE`**，其中两个测试文件
