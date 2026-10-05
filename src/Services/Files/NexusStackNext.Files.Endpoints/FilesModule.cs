@@ -1,4 +1,6 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
@@ -67,7 +69,8 @@ public static class FilesModule
             }
             services.AddFilesInMemoryMetadata(configuration.GetSection("Files:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
                 configuration.GetSection("Files:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
-                configuration.GetSection("Files:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
+                configuration.GetSection("Files:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>(),
+                configuration.GetSection("Files:AuditDelivery:MemoryRecoveryControl").Get<MemoryFactDeliveryRecoveryControlOptions>());
             services.AddFilesMemoryFactCleanup(configuration.GetSection("Files:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -115,7 +118,9 @@ public static class FilesModule
         services.AddHealthChecks().AddCheck<FileStorageHealthCheck>("storage");
 
         return services.AddCommittedFactPolicyMaintenance("files", configuration.GetSection("Files:AuditDelivery:PolicyMaintenance")
-            .Get<FactCapacityPolicyMaintenanceOptions>());
+            .Get<FactCapacityPolicyMaintenanceOptions>())
+            .AddFactDeliveryRecoveryMaintenance<IFileAuditDelivery>("files", configuration.GetSection("Files:AuditDelivery:RecoveryMaintenance")
+                .Get<FactDeliveryRecoveryMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -144,6 +149,51 @@ public static class FilesModule
         }).RequirePermission("/api/files/audit-capacity", "PUT")
             .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415, 503)
             .WithMetadata(new OperationDescription("files.fact-capacity-policy.adjust", "调整所属事实容量策略"));
+        fileEndpoints.MapGet("/audit-deliveries", async ([FromServices] IFileAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token, string state = "Pending", int limit = 50) =>
+        {
+            if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
+            { return Failure(new Error("files.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。")); }
+            return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
+        }).RequireAuthorization().RequirePermission("/api/files/audit-deliveries", "GET")
+            .Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>().ProducesApiErrors(400, 401, 403);
+
+        fileEndpoints.MapGet("/audit-deliveries/{messageId:guid}", async (Guid messageId,
+            [FromServices] IFileAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().RequirePermission("/api/files/audit-deliveries/{messageId}", "GET")
+            .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(401, 403, 404);
+
+        fileEndpoints.MapGet("/audit-deliveries/recovery-capacity", async (
+            [FromServices] IFileAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var capacity = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
+            return capacity.IsSuccess ? (IResult)responses.Ok(capacity.Value) : Failure(capacity.Error);
+        }).RequireAuthorization().RequirePermission("/api/files/audit-deliveries/recovery-capacity", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>().ProducesApiErrors(401, 403);
+
+        fileEndpoints.MapPost("/audit-deliveries/{messageId:guid}/retry", async (Guid messageId, RetryFileAuditDeliveryRequest request,
+            [FromServices] IFileAuditDelivery delivery, ICurrentUser user, IClock clock, IExecutionContext execution,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var recovered = await delivery.RecoverAsync(new(request.RequestId, messageId, request.ExpectedDeadLetteredAt,
+                request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return recovered.IsSuccess ? (IResult)responses.Ok(recovered.Value) : Failure(recovered.Error);
+        }).RequireAuthorization().RequirePermission("/api/files/audit-deliveries/{messageId}/retry", "POST")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415)
+            .WithMetadata(new OperationDescription("files.fact-delivery.recover", "恢复所属事实投递"));
+
+        fileEndpoints.MapGet("/audit-deliveries/recoveries/{requestId:guid}", async (Guid requestId,
+            [FromServices] IFileAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var receipt = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
+            return receipt.IsSuccess ? (IResult)responses.Ok(receipt.Value) : Failure(receipt.Error);
+        }).RequireAuthorization().RequirePermission("/api/files/audit-deliveries/recoveries/{requestId}", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(401, 403, 404);
+
         fileEndpoints.AddEndpointFilter<NexusStackAuthorizationFilter>();
         // 上传。**请求体就是文件字节**，文件名走查询串。
         // 为什么不用 multipart：那一层是传输细节，而这里要验证的是领域与存储的接线。
@@ -261,10 +311,10 @@ public static class FilesModule
         title: error.Message,
         statusCode: error.Code switch
         {
-            "files.not_found" => StatusCodes.Status404NotFound,
+            "files.not_found" or "files.delivery_not_found" or "files.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
-            "files.audit_policy.conflict" => StatusCodes.Status409Conflict,
-            "files.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
+            "files.audit_policy.conflict" or "files.delivery_conflict" or "files.delivery_recovery.request_conflict" => StatusCodes.Status409Conflict,
+            "files.audit_policy.control_exhausted" or "files.delivery_recovery.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "files.audit_capacity.exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "files.too_large" => StatusCodes.Status413PayloadTooLarge,
             "files.upload_busy" => StatusCodes.Status429TooManyRequests,
@@ -324,3 +374,6 @@ internal sealed record FileUploadedResponse(long FileId, string Name, long Size)
 internal sealed record FileMetadataResponse(long FileId, string Name, string ContentType, long Size, bool Stored, DateTimeOffset UploadedAt, EntityAuditMetadata? Audit);
 internal sealed record FileNameResponse(string FileName);
 internal sealed record FileDeletionResponse(long FileId, bool Completed);
+
+internal sealed record RetryFileAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt,
+    [property: JsonRequired] long ExpectedRetryRevision, string Reason);

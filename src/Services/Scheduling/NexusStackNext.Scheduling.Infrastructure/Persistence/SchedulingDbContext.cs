@@ -40,6 +40,7 @@ public sealed class SchedulingDbContext(DbContextOptions<SchedulingDbContext> op
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
+        modelBuilder.ConfigureSchedulingAuditRecovery();
         var plan = modelBuilder.Entity<ScheduledTask>();
         plan.ToTable("plans");
         plan.HasKey(task => task.Id);

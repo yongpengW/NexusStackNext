@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Mvc;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
@@ -63,7 +65,8 @@ public static class IdentityModule
 
             services.AddIdentityInMemoryStorage(configuration.GetSection("Identity:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
                 configuration.GetSection("Identity:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
-                configuration.GetSection("Identity:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
+                configuration.GetSection("Identity:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>(),
+                configuration.GetSection("Identity:AuditDelivery:MemoryRecoveryControl").Get<MemoryFactDeliveryRecoveryControlOptions>());
             services.AddIdentityMemoryFactCleanup(configuration.GetSection("Identity:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -103,7 +106,9 @@ public static class IdentityModule
         services.AddHostedService<RootAccountSeeder>();
 
         return services.AddCommittedFactPolicyMaintenance("identity", configuration.GetSection("Identity:AuditDelivery:PolicyMaintenance")
-            .Get<FactCapacityPolicyMaintenanceOptions>());
+            .Get<FactCapacityPolicyMaintenanceOptions>())
+            .AddFactDeliveryRecoveryMaintenance<IIdentityAuditDelivery>("identity", configuration.GetSection("Identity:AuditDelivery:RecoveryMaintenance")
+                .Get<FactDeliveryRecoveryMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -137,6 +142,51 @@ public static class IdentityModule
         }).RequireAuthorization().RequirePermission("/api/identity/audit-capacity", "PUT")
             .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(409, 415)
             .WithMetadata(new OperationDescription("identity.fact-capacity-policy.adjust", "调整所属事实容量策略"));
+
+        identity.MapGet("/audit-deliveries", async ([FromServices] IIdentityAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token, string state = "Pending", int limit = 50) =>
+        {
+            if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
+            { return Failure(new Error("identity.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。")); }
+            return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-deliveries", "GET")
+            .Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>();
+
+        identity.MapGet("/audit-deliveries/{messageId:guid}", async (Guid messageId,
+            [FromServices] IIdentityAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-deliveries/{messageId}", "GET")
+            .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(404);
+
+        identity.MapGet("/audit-deliveries/recovery-capacity", async (
+            [FromServices] IIdentityAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var capacity = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
+            return capacity.IsSuccess ? (IResult)responses.Ok(capacity.Value) : Failure(capacity.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-deliveries/recovery-capacity", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>();
+
+        identity.MapPost("/audit-deliveries/{messageId:guid}/retry", async (Guid messageId, RetryIdentityAuditDeliveryRequest request,
+            [FromServices] IIdentityAuditDelivery delivery, ICurrentUser user, IClock clock, IExecutionContext execution,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var recovered = await delivery.RecoverAsync(new(request.RequestId, messageId, request.ExpectedDeadLetteredAt,
+                request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return recovered.IsSuccess ? (IResult)responses.Ok(recovered.Value) : Failure(recovered.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-deliveries/{messageId}/retry", "POST")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(409, 415)
+            .WithMetadata(new OperationDescription("identity.fact-delivery.recover", "恢复所属事实投递"));
+
+        identity.MapGet("/audit-deliveries/recoveries/{requestId:guid}", async (Guid requestId,
+            [FromServices] IIdentityAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var receipt = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
+            return receipt.IsSuccess ? (IResult)responses.Ok(receipt.Value) : Failure(receipt.Error);
+        }).RequireAuthorization().RequirePermission("/api/identity/audit-deliveries/recoveries/{requestId}", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(404);
 
         // 自述端点：说明这个服务是什么。**不返回任何假数据。**
         identity.MapGet("/", (ApiResponses responses, IClock clock) => responses.Ok(new
@@ -363,7 +413,9 @@ public static class IdentityModule
         statusCode: error.Code switch
         {
             "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "identity.user.not_found" or "identity.role.not_found" => StatusCodes.Status404NotFound,
+            "identity.user.not_found" or "identity.role.not_found" or "identity.delivery_recovery.not_found" or "identity.delivery_not_found" => StatusCodes.Status404NotFound,
+            "identity.delivery_conflict" or "identity.delivery_recovery.request_conflict" => StatusCodes.Status409Conflict,
+            "identity.delivery_recovery.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
@@ -388,6 +440,9 @@ internal sealed record RefreshRequest(string RefreshToken);
 /// <param name="UserName">用户名。</param>
 /// <param name="Password">明文口令——<b>只在这一次调用里存在</b>，进领域前已被换成哈希。</param>
 internal sealed record CreateUserRequest(string UserName, string Password);
+
+internal sealed record RetryIdentityAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt,
+    [property: JsonRequired] long ExpectedRetryRevision, string Reason);
 
 /// <summary>创建角色。</summary>
 /// <param name="Code">角色编码。</param>

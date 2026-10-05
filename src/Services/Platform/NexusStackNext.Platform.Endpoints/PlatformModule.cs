@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
@@ -47,7 +48,8 @@ public static class PlatformModule
             }
             services.AddPlatformInMemoryStorage(configuration.GetSection("Platform:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
                 configuration.GetSection("Platform:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
-                configuration.GetSection("Platform:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
+                configuration.GetSection("Platform:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>(),
+                configuration.GetSection("Platform:AuditDelivery:MemoryRecoveryControl").Get<MemoryFactDeliveryRecoveryControlOptions>());
             services.AddPlatformMemoryFactCleanup(configuration.GetSection("Platform:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -73,7 +75,9 @@ public static class PlatformModule
             throw new InvalidOperationException("Platform:Storage:Provider 仅支持 Postgres / Memory。");
         }
         return services.AddCommittedFactPolicyMaintenance("platform", configuration.GetSection("Platform:AuditDelivery:PolicyMaintenance")
-            .Get<FactCapacityPolicyMaintenanceOptions>());
+            .Get<FactCapacityPolicyMaintenanceOptions>())
+            .AddFactDeliveryRecoveryMaintenance<ISettingAuditDelivery>("platform", configuration.GetSection("Platform:AuditDelivery:RecoveryMaintenance")
+                .Get<FactDeliveryRecoveryMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -184,14 +188,38 @@ public static class PlatformModule
                 return Failure(new Error("platform.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。"));
             }
             return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
-        }).RequirePermission("/api/platform/audit-deliveries", "GET").Produces<ApiResponse<IReadOnlyList<SettingAuditDelivery>>>();
-        deliveries.MapPost("/{messageId:guid}/retry", async (Guid messageId, RetryAuditDeliveryRequest request,
-            ISettingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        }).RequirePermission("/api/platform/audit-deliveries", "GET").Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>();
+        deliveries.MapGet("/{messageId:guid}", async (Guid messageId, ISettingAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token) =>
         {
-            var result = await delivery.RetryAsync(messageId, request.ExpectedDeadLetteredAt, token).ConfigureAwait(false);
+            var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/platform/audit-deliveries/{messageId}", "GET")
+            .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(404);
+        deliveries.MapGet("/recovery-capacity", async (ISettingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/platform/audit-deliveries/recovery-capacity", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>();
+        deliveries.MapGet("/recoveries/{requestId:guid}", async (Guid requestId, ISettingAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/platform/audit-deliveries/recoveries/{requestId}", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(404);
+        deliveries.MapPost("/{messageId:guid}/retry", async (Guid messageId, RetryAuditDeliveryRequest request,
+            ISettingAuditDelivery delivery, ICurrentUser user, IClock clock, IExecutionContext execution,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.RecoverAsync(new(request.RequestId, messageId, request.ExpectedDeadLetteredAt,
+                request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).RequirePermission("/api/platform/audit-deliveries/{messageId}/retry", "POST")
-            .Produces<ApiResponse<SettingAuditDelivery>>().ProducesApiErrors(415);
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("platform.fact-delivery.recover", "恢复所属事实投递"));
         return endpoints;
     }
 
@@ -203,10 +231,14 @@ public static class PlatformModule
     /// </summary>
     private static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
-        statusCode: error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code
-            || error.Code == CommittedFactCapacityErrors.Busy.Code || error.Code == SettingFactCapacityPolicyErrors.Exhausted.Code ? StatusCodes.Status503ServiceUnavailable
-            : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditDelivery.Conflict.Code
-                || error.Code == SettingFactCapacityPolicyErrors.Conflict.Code ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
+        statusCode: error.Code == SettingAuditRecoveryErrors.NotFound.Code || error.Code == SettingAuditRecoveryErrors.DeliveryNotFound.Code
+            ? StatusCodes.Status404NotFound
+            : error.Code == SettingStore.AuditCapacityExhausted.Code || error.Code == CommittedFactCapacityErrors.Unavailable.Code
+            || error.Code == CommittedFactCapacityErrors.Busy.Code || error.Code == SettingFactCapacityPolicyErrors.Exhausted.Code
+            || error.Code == SettingAuditRecoveryErrors.Exhausted.Code ? StatusCodes.Status503ServiceUnavailable
+            : error.Code == SettingStore.Conflict.Code || error.Code == SettingAuditRecoveryErrors.Conflict.Code
+                || error.Code == SettingFactCapacityPolicyErrors.Conflict.Code || error.Code == SettingAuditRecoveryErrors.RequestConflict.Code
+                ? StatusCodes.Status409Conflict : StatusCodes.Status400BadRequest,
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
@@ -218,4 +250,5 @@ internal sealed record WriteSettingRequest(string? Value, string? Description, l
 
 internal sealed record SettingResponse(string Key, string Scope, string? Value, DateTimeOffset At, long Version, string? Description, EntityAuditMetadata? Audit);
 internal sealed record SettingItem(string Key, string Name, string? Value, string? Description, long Version, EntityAuditMetadata? Audit);
-internal sealed record RetryAuditDeliveryRequest(DateTimeOffset ExpectedDeadLetteredAt);
+internal sealed record RetryAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt,
+    [property: JsonRequired] long ExpectedRetryRevision, string Reason);

@@ -47,6 +47,7 @@ public static class CostingServices
         services.AddScoped<CostingCommittedFactInterceptor>();
         services.AddScoped(provider => CostingDatabase.CreateContext(connectionString, provider));
         services.AddScoped<IOutboxStore, EfOutboxStore<CostingDbContext>>();
+        services.AddScoped<ICostingAuditDelivery, EfCostingAuditDelivery>();
         services.AddScoped<IQueryHandler<GetCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();
         services.AddScoped<ICommandHandler<RetryCostDelivery, CostDeliveryStatus>, CostDeliveryCommands>();
         services.AddScoped<ICommandHandler<UpdateCostInputs, CostCalculationStatus>, CostingCommands>();

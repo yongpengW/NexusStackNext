@@ -108,6 +108,7 @@ public static class FilesPersistenceServiceCollectionExtensions
             .UseNexusStackPostgres(connectionString, FilesDbContext.SchemaName)
             .UseNexusStackInterceptors(provider));
         services.AddScoped<IStoredFileRepository, EfStoredFileRepository>();
+        services.AddScoped<IFileAuditDelivery, EfFileAuditDelivery>();
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddKeyedScoped<IOutboxStore, EfOutboxStore<FilesDbContext>>(OutboxKey);
         services.AddHostedService<FilesDatabaseStartupCheck>();

@@ -32,6 +32,7 @@ public sealed class MemoryManualRetryBudgetTests
         Assert.True(await outbox.MarkDeadLetteredAsync(original.Id, "stopped", now, original.RetryRevision));
         var stopped = Assert.Single(await delivery.ListAsync("DeadLettered", 10));
         Assert.Equal(2, stopped.Attempts);
+        var request = new FactDeliveryRecoveryRequest(Guid.NewGuid(), original.Id, stopped.DeadLetteredAt!.Value, 0, "manual-retry");
         var beforeCapacity = (await capacity.ReadAsync()).Value;
         await using var cancellation = new TimedCallerCancellation();
         var holder = new PausedFactCleanup(clock, cleanup);
@@ -44,7 +45,7 @@ public sealed class MemoryManualRetryBudgetTests
             {
                 if (cancel) { cancellation.CancelAfter(TimeSpan.FromMilliseconds(50)); }
                 started.SetResult();
-                return await delivery.RetryAsync(original.Id, stopped.DeadLetteredAt!.Value, cancellation.Token);
+                return await delivery.RecoverAsync(request, "budget-operator", now, null, cancellation.Token);
             });
             attempt = retrying;
             await started.Task;
@@ -67,13 +68,15 @@ public sealed class MemoryManualRetryBudgetTests
         Assert.Empty(await outbox.ReadPendingAsync(10, now.AddDays(1)));
         Assert.Equal(beforeCapacity, (await capacity.ReadAsync()).Value);
         Assert.Equal(1, (await settings.GetAsync(key))!.Version);
-        Assert.Equal("platform.delivery_conflict", (await delivery.RetryAsync(original.Id, now.AddSeconds(1))).Error.Code);
+        Assert.Equal("platform.delivery_conflict", (await delivery.RecoverAsync(
+            request with { RequestId = Guid.NewGuid(), ExpectedDeadLetteredAt = now.AddSeconds(1) }, "budget-operator", now, null)).Error.Code);
         Assert.Equal(stopped, Assert.Single(await delivery.ListAsync("DeadLettered", 10)));
-        var recovered = await delivery.RetryAsync(original.Id, stopped.DeadLetteredAt!.Value);
+        var recovered = await delivery.RecoverAsync(request, "budget-operator", now, null);
         Assert.True(recovered.IsSuccess);
         Assert.Equal(original.Id, recovered.Value.MessageId);
-        Assert.Equal("Pending", recovered.Value.State);
-        Assert.Equal(0, recovered.Value.Attempts);
+        var pendingState = Assert.Single(await delivery.ListAsync("Pending", 10));
+        Assert.Equal("Pending", pendingState.State);
+        Assert.Equal(0, pendingState.Attempts);
         var pending = Assert.Single(await outbox.ReadPendingAsync(10, now));
         Assert.Equal(original.Id, pending.Id);
         Assert.Equal(original.Payload, pending.Payload);
@@ -82,7 +85,8 @@ public sealed class MemoryManualRetryBudgetTests
         Assert.False(await outbox.MarkFailedAsync(original.Id, "stale-failure", now, original.RetryRevision));
         Assert.False(await outbox.MarkDeadLetteredAsync(original.Id, "stale-dead-letter", now, original.RetryRevision));
         Assert.Equal(pending, Assert.Single(await outbox.ReadPendingAsync(10, now)));
-        Assert.Equal("platform.delivery_conflict", (await delivery.RetryAsync(original.Id, stopped.DeadLetteredAt.Value)).Error.Code);
+        Assert.Equal("platform.delivery_conflict", (await delivery.RecoverAsync(
+            request with { RequestId = Guid.NewGuid() }, "budget-operator", now, null)).Error.Code);
         await outbox.MarkDeliveredAsync(original.Id, now);
         Assert.Equal("Delivered", Assert.Single(await delivery.ListAsync("Delivered", 10)).State);
         Assert.Equal(beforeCapacity, (await capacity.ReadAsync()).Value);

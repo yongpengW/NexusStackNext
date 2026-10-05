@@ -4,6 +4,13 @@ $tool = Join-Path $PSScriptRoot 'ci-test-tools.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('nsn-ci-partition-probes-' + [Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($scratch)
 $methods = @(
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Costing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Files_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Identity_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Pricing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
+    'NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Scheduling_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts'
     'NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.AcceptedDeletion_ResumesAfterStorageRecoveryAndProcessRestart'
     'NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ConcurrentDeletes_BothObserveDurableDeletion'
     'NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor'
@@ -31,12 +38,12 @@ $outputPath = Join-Path $scratch 'plan.json'
 & pwsh -NoProfile -File $tool -Action Plan -InputPath $inputPath -OutputPath $outputPath
 if ($LASTEXITCODE -ne 0) { throw 'Partition probe planning failed.' }
 $plan = @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json)
-foreach ($class in @('FilesPersistenceJourneyTests', 'ScheduledCostBusinessJourneyTests')) {
+foreach ($class in @('FactRecoveryBrokerJourneyTests', 'FilesPersistenceJourneyTests', 'ScheduledCostBusinessJourneyTests')) {
     if (@($plan | Where-Object Method -Like "*.$class.*" | Select-Object -ExpandProperty Shard -Unique).Count -lt 2) {
         throw "Large journey class still blocks one shard: $class"
     }
 }
-Write-Output 'PASS: both large journey classes split across host shards.'
+Write-Output 'PASS: declared large journey classes split across host shards.'
 
 function Invoke-Plan([string]$ToolPath, [bool]$Success) {
     $output = & pwsh -NoProfile -File $ToolPath -Action Plan -InputPath $inputPath -OutputPath $outputPath 2>&1
@@ -50,7 +57,7 @@ $originalPlan = ConvertTo-Json -InputObject $plan -Depth 10 -Compress
 Write-Inventory @($inventory | Sort-Object Id -Descending)
 Invoke-Plan $tool $true
 if ((ConvertTo-Json -InputObject @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json) -Depth 10 -Compress) -cne $originalPlan) { throw 'Partition depends on input order.' }
-if ($plan.Count -ne 21 -or @($plan.Id | Select-Object -Unique).Count -ne 21 -or @($plan | Where-Object Shard -EQ 0).Count -ne 1 -or
+if ($plan.Count -ne 28 -or @($plan.Id | Select-Object -Unique).Count -ne 28 -or @($plan | Where-Object Shard -EQ 0).Count -ne 1 -or
     @($plan | Where-Object Method -Like 'Example.AlphaTests.*' | Select-Object -ExpandProperty Shard -Unique).Count -ne 1) { throw 'Method partition lost a case or split an undeclared class.' }
 
 # The same method represents three Theory cases, including future parameters.
@@ -63,7 +70,7 @@ $expanded = $inventory + @(
 Write-Inventory $expanded
 Invoke-Plan $tool $true
 $expandedPlan = @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json)
-if ($expandedPlan.Count -ne 24 -or @($expandedPlan | Where-Object Method -CEQ $theoryMethod).Count -ne 3 -or
+if ($expandedPlan.Count -ne 31 -or @($expandedPlan | Where-Object Method -CEQ $theoryMethod).Count -ne 3 -or
     @($expandedPlan | Where-Object Method -CEQ $theoryMethod | Select-Object -ExpandProperty Shard -Unique).Count -ne 1 -or
     @($expandedPlan | Where-Object Id -CEQ ('3' * 64) | Where-Object Shard -In 1, 2, 3).Count -ne 1) { throw 'Theory parameters split or a new method disappeared.' }
 Write-Output 'PASS: deterministic complete plan, undeclared classes intact, Theory cases together, future method included.'

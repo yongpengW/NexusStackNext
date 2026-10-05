@@ -221,14 +221,20 @@ public static class FilesMemoryServiceCollectionExtensions
     /// <param name="capacity">显式开发存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <param name="control">所属 Memory 控制池的启动上限。</param>
+    /// <param name="recovery">独立恢复凭据池的启动上限。</param>
     /// <returns>原服务容器。</returns>
     public static IServiceCollection AddFilesInMemoryMetadata(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null,
+        MemoryFactDeliveryRecoveryControlOptions? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var controlLimits = control ?? new();
         controlLimits.Validate();
+        var recoveryLimits = recovery ?? new();
+        recoveryLimits.Validate();
         services.AddSingleton(new FilesMemoryState(capacity, write));
+        services.AddSingleton<IFileAuditDelivery>(provider => new InMemoryFileAuditDelivery(
+            provider.GetRequiredService<FilesMemoryState>(), recoveryLimits));
         services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>("files", (provider, _) =>
         {
             var state = provider.GetRequiredService<FilesMemoryState>();
