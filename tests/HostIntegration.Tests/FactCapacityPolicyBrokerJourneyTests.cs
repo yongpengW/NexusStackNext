@@ -254,7 +254,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
         finally { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
     }
 
-    private static EventTopology CentralTopology(RabbitMqOptions broker, string consumer, IEnumerable<EventSubscription> additional)
+    internal static EventTopology CentralTopology(RabbitMqOptions broker, string consumer, IEnumerable<EventSubscription> additional)
     {
         EventSubscription[] ordinary =
         [
@@ -425,7 +425,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
         await context.Database.MigrateAsync();
     }
 
-    private static async Task<(FactCapacityPolicyRequest Request, Guid EventId)> AdjustAsync(HttpClient client, string source)
+    internal static async Task<(FactCapacityPolicyRequest Request, Guid EventId)> AdjustAsync(HttpClient client, string source)
     {
         var path = new Uri($"/api/{source}/audit-capacity", UriKind.Relative);
         using var initialResponse = await client.GetAsync(path);
@@ -439,7 +439,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
         return (request, (await adjusted.Content.ReadApiDataAsync()).GetProperty("eventId").GetGuid());
     }
 
-    private static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, EventSubscription subscription, bool deadLetter = false, Guid? expectedMessageId = null)
+    internal static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, EventSubscription subscription, bool deadLetter = false, Guid? expectedMessageId = null)
     {
         await using var connection = await Factory(broker).CreateConnectionAsync();
         await using var channel = await connection.CreateChannelAsync();
@@ -463,7 +463,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
         }
     }
 
-    private static async Task<JsonElement> WaitForPolicyCountAsync(HttpClient client, string source, int count)
+    internal static async Task<JsonElement> WaitForPolicyCountAsync(HttpClient client, string source, int count)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         long observed = -1;
@@ -482,7 +482,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
         catch (OperationCanceledException) { throw new TimeoutException($"Policy investigation for {source}: expected {count}, observed {observed}."); }
     }
 
-    private static void AssertEvidence(JsonElement fact, string source, EventEnvelope original, FactCapacityPolicyRequest request)
+    internal static void AssertEvidence(JsonElement fact, string source, EventEnvelope original, FactCapacityPolicyRequest request)
     {
         using var payload = JsonDocument.Parse(original.Payload);
         var message = payload.RootElement;

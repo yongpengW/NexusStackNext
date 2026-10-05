@@ -50,7 +50,8 @@ $reportsPath = Join-Path $scratch 'reports'
 [void][IO.Directory]::CreateDirectory($reportsPath)
 foreach ($shard in 0..3) {
     $report = @{ Shard = $shard; Revision = ('1' * 40); RunId = '10'; Attempt = '1'; Plan = $plan; Results = @($plan | Where-Object Shard -EQ $shard | ForEach-Object {
-        @{ Project = $_.Project; Method = $_.Method; Id = $_.Id; Outcome = 'Passed'; Seconds = 0.1 }
+        @{ Project = $_.Project; Method = $_.Method; Id = $_.Id; Outcome = 'Passed';
+            Seconds = $(if ($_.Method -ceq 'Example.AlphaTests.First') { 12.5 } else { 0.1 }) }
     }) }
     Write-Json $report (Join-Path $reportsPath "shard-$shard.json")
 }

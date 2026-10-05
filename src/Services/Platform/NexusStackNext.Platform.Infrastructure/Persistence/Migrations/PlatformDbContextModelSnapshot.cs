@@ -73,6 +73,82 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("outbox", "platform");
                 });
 
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyControl", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("MaxRecordPayloadBytes")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("MaxRecords")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("PolicyRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedPayloadBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("RetainedRecords")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("fact_policy_control", "platform", t =>
+                        {
+                            t.HasCheckConstraint("ck_fact_policy_control_bounds", "\"PolicyRevision\" > 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\" AND \"RetainedRecords\" >= 0 AND \"RetainedRecords\" <= \"MaxRecords\" AND \"RetainedPayloadBytes\" >= 0 AND \"RetainedPayloadBytes\" <= \"MaxPayloadBytes\"");
+
+                            t.HasCheckConstraint("ck_fact_policy_control_singleton", "\"Id\" = 1");
+                        });
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            MaxPayloadBytes = 16777216L,
+                            MaxRecordPayloadBytes = 16384,
+                            MaxRecords = 1000L,
+                            PolicyRevision = 1L,
+                            RetainedPayloadBytes = 0L,
+                            RetainedRecords = 0L
+                        });
+                });
+
+            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyReceiptRecord", b =>
+                {
+                    b.Property<Guid>("RequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("EventId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("PayloadBytes")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("RecordJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("RetainUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("RequestId");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("RetainUntil", "RequestId");
+
+                    b.ToTable("fact_policy_receipts", "platform", t =>
+                        {
+                            t.HasCheckConstraint("ck_fact_policy_receipt_bytes", "\"PayloadBytes\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Persistence.CommittedFactCapacity", b =>
                 {
                     b.Property<int>("Id")
@@ -176,7 +252,7 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("global_settings", "platform");
                 });
 
-            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyControl", b =>
+            modelBuilder.Entity("NexusStackNext.Platform.Infrastructure.Persistence.SettingAuditRecoveryControl", b =>
                 {
                     b.Property<int>("Id")
                         .HasColumnType("integer");
@@ -190,9 +266,6 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                     b.Property<long>("MaxRecords")
                         .HasColumnType("bigint");
 
-                    b.Property<long>("PolicyRevision")
-                        .HasColumnType("bigint");
-
                     b.Property<long>("RetainedPayloadBytes")
                         .HasColumnType("bigint");
 
@@ -201,11 +274,11 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("fact_policy_control", "platform", t =>
+                    b.ToTable("fact_recovery_control", "platform", t =>
                         {
-                            t.HasCheckConstraint("ck_fact_policy_control_bounds", "\"PolicyRevision\" > 0 AND \"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\" AND \"RetainedRecords\" >= 0 AND \"RetainedRecords\" <= \"MaxRecords\" AND \"RetainedPayloadBytes\" >= 0 AND \"RetainedPayloadBytes\" <= \"MaxPayloadBytes\"");
+                            t.HasCheckConstraint("ck_fact_recovery_control_bounds", "\"MaxRecords\" > 0 AND \"MaxPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" > 0 AND \"MaxRecordPayloadBytes\" <= \"MaxPayloadBytes\" AND \"RetainedRecords\" >= 0 AND \"RetainedRecords\" <= \"MaxRecords\" AND \"RetainedPayloadBytes\" >= 0 AND \"RetainedPayloadBytes\" <= \"MaxPayloadBytes\"");
 
-                            t.HasCheckConstraint("ck_fact_policy_control_singleton", "\"Id\" = 1");
+                            t.HasCheckConstraint("ck_fact_recovery_control_singleton", "\"Id\" = 1");
                         });
 
                     b.HasData(
@@ -215,18 +288,14 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
                             MaxPayloadBytes = 16777216L,
                             MaxRecordPayloadBytes = 16384,
                             MaxRecords = 1000L,
-                            PolicyRevision = 1L,
                             RetainedPayloadBytes = 0L,
                             RetainedRecords = 0L
                         });
                 });
 
-            modelBuilder.Entity("NexusStackNext.BuildingBlocks.Infrastructure.Events.FactPolicyReceiptRecord", b =>
+            modelBuilder.Entity("NexusStackNext.Platform.Infrastructure.Persistence.SettingAuditRecoveryRecord", b =>
                 {
                     b.Property<Guid>("RequestId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("EventId")
                         .HasColumnType("uuid");
 
                     b.Property<int>("PayloadBytes")
@@ -241,14 +310,11 @@ namespace NexusStackNext.Platform.Infrastructure.Persistence.Migrations
 
                     b.HasKey("RequestId");
 
-                    b.HasIndex("EventId")
-                        .IsUnique();
-
                     b.HasIndex("RetainUntil", "RequestId");
 
-                    b.ToTable("fact_policy_receipts", "platform", t =>
+                    b.ToTable("fact_recovery_receipts", "platform", t =>
                         {
-                            t.HasCheckConstraint("ck_fact_policy_receipt_bytes", "\"PayloadBytes\" > 0");
+                            t.HasCheckConstraint("ck_fact_recovery_receipt_bytes", "\"PayloadBytes\" > 0");
                         });
                 });
 

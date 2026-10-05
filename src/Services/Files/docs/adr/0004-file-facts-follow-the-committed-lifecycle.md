@@ -32,4 +32,6 @@ PostgreSQL 容量使用[系统 ADR-0025](../../../../../docs/adr/0025-context-ow
 删除申请容量不足时不改变文件可见性；删除已受理但清除完成事实未能保存时返回待恢复，保留最初删除来源，
 不把可能已经完成的字节操作认作元数据已确认。已确认事实的保留期清理才释放占用。
 Memory 容量已通过[四个平台 Memory 事实容量与整批原子恢复](https://github.com/yongpengW/NexusStackNext/issues/80)验收。
-共用写锁预算、专门的消息恢复治理与完整故障矩阵仍需分别验收；局部验证不代表这些义务已经完成。
+四个平台的 Memory 共用写锁预算已通过[所属等待预算 #96](https://github.com/yongpengW/NexusStackNext/issues/96)验收。
+事实消息的专用条件恢复由[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103)实施；
+Files 已接入所属双存储协议，但完整故障矩阵及六来源最终资格仍需验收，不改变本文的字节恢复边界。

@@ -1,4 +1,13 @@
 {
+  "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests": {
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Costing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 23.268,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Files_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 29.516,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart": 44.274,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Identity_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 31.261,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 24.884,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Pricing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.561,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Scheduling_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 25.174
+  },
   "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests": {
     "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.AcceptedDeletion_ResumesAfterStorageRecoveryAndProcessRestart": 7.492,
     "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ConcurrentDeletes_BothObserveDurableDeletion": 4.291,

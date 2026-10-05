@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Platform.Application;
 using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Platform.Infrastructure.Persistence;
@@ -8,37 +11,30 @@ namespace NexusStackNext.Platform.Infrastructure;
 
 internal sealed class EfSettingAuditDelivery(PlatformDbContext context) : ISettingAuditDelivery
 {
-    public async Task<IReadOnlyList<SettingAuditDelivery>> ListAsync(string state, int limit, CancellationToken cancellationToken = default)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(limit, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, 100);
-        var query = context.Outbox.AsNoTracking().Where(entry => entry.EventName == SettingCommittedV1.Name);
-        query = state switch
-        {
-            "Pending" => query.Where(entry => entry.DeliveredAt == null && entry.DeadLetteredAt == null),
-            "Delivered" => query.Where(entry => entry.DeliveredAt != null),
-            "DeadLettered" => query.Where(entry => entry.DeliveredAt == null && entry.DeadLetteredAt != null),
-            _ => throw new ArgumentException("未知投递状态。", nameof(state)),
-        };
-        var entries = await query.OrderBy(entry => entry.OccurredAt).ThenBy(entry => entry.Id).Take(limit).ToArrayAsync(cancellationToken).ConfigureAwait(false);
-        return entries.Select(SettingAuditDelivery.From).ToArray();
-    }
+    public Task<int> CleanupRecoveriesAsync(int batchSize, DateTimeOffset now, CancellationToken cancellationToken = default)
+        => _recovery.CleanupRecoveriesAsync(batchSize, now, cancellationToken);
 
-    public Task<Result<SettingAuditDelivery>> RetryAsync(Guid messageId, DateTimeOffset expectedDeadLetteredAt, CancellationToken cancellationToken = default) =>
-        context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-        {
-            context.ChangeTracker.Clear();
-            await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-            var entry = (await context.Outbox.FromSqlInterpolated($"SELECT * FROM platform.outbox WHERE \"Id\" = {messageId} FOR UPDATE")
-                .ToListAsync(cancellationToken).ConfigureAwait(false)).SingleOrDefault();
-            var retry = SettingAuditDelivery.Retry(entry, expectedDeadLetteredAt);
-            if (retry.IsFailure)
-            {
-                return Result.Failure<SettingAuditDelivery>(retry.Error);
-            }
-            context.Entry(entry!).CurrentValues.SetValues(retry.Value);
-            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            return Result.Success(SettingAuditDelivery.From(retry.Value));
-        });
+    private readonly PostgresFactDeliveryRecoveryStore _recovery = new(
+        context.Database.GetConnectionString() ?? throw new InvalidOperationException("所属连接未配置。"),
+        new(PlatformDbContext.SchemaName, SettingCommittedV1.Name, SettingFactCapacityPolicyChangedV1.Name,
+            new(SettingAuditRecoveryErrors.Invalid, SettingAuditRecoveryErrors.Conflict, SettingAuditRecoveryErrors.RequestConflict,
+                SettingAuditRecoveryErrors.NotFound, SettingAuditRecoveryErrors.Exhausted, SettingAuditRecoveryErrors.Unmanaged, SettingAuditRecoveryErrors.DeliveryNotFound)));
+
+    public Task<Result<FactDeliveryRecoveryCapacity>> ReadRecoveryCapacityAsync(CancellationToken cancellationToken = default)
+        => _recovery.ReadRecoveryCapacityAsync(cancellationToken);
+
+    public Task<Result<FactDeliveryRecoveryReceipt>> GetRecoveryAsync(Guid requestId, CancellationToken cancellationToken = default)
+        => _recovery.GetRecoveryAsync(requestId, cancellationToken);
+
+    public Task<Result<FactDeliveryRecoveryReceipt>> RecoverAsync(FactDeliveryRecoveryRequest request, string actorId,
+        DateTimeOffset occurredAt, ExecutionOrigin? execution, CancellationToken cancellationToken = default)
+        => _recovery.RecoverAsync(request, actorId, occurredAt, execution, cancellationToken);
+
+    public Task<Result<FactDeliveryState>> GetAsync(Guid messageId, CancellationToken cancellationToken = default)
+        => _recovery.GetAsync(messageId, cancellationToken);
+
+    public Task<IReadOnlyList<FactDeliveryState>> ListAsync(string state, int limit, CancellationToken cancellationToken = default)
+        => _recovery.ListAsync(context.Outbox, state, limit, cancellationToken);
+
+
 }

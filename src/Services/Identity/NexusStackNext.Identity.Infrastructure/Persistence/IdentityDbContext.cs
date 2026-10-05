@@ -79,6 +79,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
+        modelBuilder.ConfigureIdentityAuditRecovery();
 
         ConfigureUsers(modelBuilder);
         ConfigureRoles(modelBuilder);

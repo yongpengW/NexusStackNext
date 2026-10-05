@@ -27,4 +27,7 @@ Pricing:Messaging:Enabled 控制成本消费与事实发布，Pricing:Delivery �
 PricingCommittedFactTests、PricingFactCompletionTests、PricingMessageOperationTests 验证来源原子性、
 取消、租约失权、身份及重投；TaskOperationJourneyTests 通过真实 HTTP、PostgreSQL、RabbitMQ 和进程重启
 验证两次 HTTP、Costing 计算、Pricing 消费、Pricing 计算的五个操作及中央事实关联。
-来源容量、专门的审计死信恢复与保留治理仍由票据 #64 完成。
+来源容量治理由 #101 / PR #102 完成交付。专门事实恢复在 #103 接入报价变化事实与容量策略事实，
+沿用根操作者限制，恢复不重新接纳成本消息、不重算报价，也不登记报价缓存失效意图。
+所属恢复状态与不可变凭据原子提交，凭据使用独立有限额度和固定最早保留期限；
+本次恢复使用正常增量迁移，有恢复历史时拒绝破坏性回退。中央保留治理及整套六来源恢复验收仍由 #64 / #103 承载。

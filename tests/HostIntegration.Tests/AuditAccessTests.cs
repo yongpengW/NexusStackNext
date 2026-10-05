@@ -28,6 +28,8 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         using var anonymousOperations = await client.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymousOperations.StatusCode);
+        using var anonymousIdentity = await client.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousIdentity.StatusCode);
         await PlatformSettingsAccessTests.LoginAsync(direct, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         client.DefaultRequestHeaders.Authorization = direct.DefaultRequestHeaders.Authorization;
         using var allowed = await client.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
@@ -36,8 +38,15 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.OK, operations.StatusCode);
         using var deliveries = await client.GetAsync(new Uri("/api/platform/audit-deliveries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, deliveries.StatusCode);
+        using var identities = await client.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, identities.StatusCode);
+        var identityData = await identities.Content.ReadApiDataAsync();
+        Assert.NotEmpty(identityData.EnumerateArray());
+        var identityMessage = identityData.EnumerateArray().First().GetProperty("messageId").GetGuid();
+        using var identitySingle = await client.GetAsync(new Uri($"/api/identity/audit-deliveries/{identityMessage}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, identitySingle.StatusCode);
         using var retry = await client.PostAsJsonAsync(new Uri($"/api/platform/audit-deliveries/{Guid.NewGuid()}/retry", UriKind.Relative),
-            new { expectedDeadLetteredAt = DateTimeOffset.UtcNow });
+            new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = DateTimeOffset.UtcNow, expectedRetryRevision = "0", reason = "manual-retry" });
         Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
         using var rejected = await client.PostAsJsonAsync(new Uri("/api/auditing/entries", UriKind.Relative), new { actorId = "forged" });
         Assert.Contains(rejected.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed });
@@ -57,30 +66,45 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.Forbidden, forbiddenOperations.StatusCode);
         var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Audit investigation", sortOrder = 1 });
         var menuId = menu.GetProperty("menuId").ReadHttpInt64();
-        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries" })
+        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries", "/api/identity/audit-deliveries" })
         {
             _ = await CreateAsync(root, "/api/identity/api-resources", new { path, method = "GET", menuId });
         }
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/audit-deliveries/{messageId}", method = "GET", menuId });
         var role = await CreateAsync(root, "/api/identity/roles", new { code = "audit-reader", name = "Audit reader" });
         var roleId = role.GetProperty("roleId").ReadHttpInt64();
         using var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode);
         using var assign = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode);
-        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries" })
+        foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations", "/api/platform/audit-deliveries", "/api/identity/audit-deliveries" })
         {
             using var read = await user.GetAsync(new Uri(path, UriKind.Relative));
             Assert.Equal(HttpStatusCode.OK, read.StatusCode);
         }
         using var retry = await user.PostAsJsonAsync(new Uri($"/api/platform/audit-deliveries/{Guid.NewGuid()}/retry", UriKind.Relative),
-            new { expectedDeadLetteredAt = DateTimeOffset.UtcNow });
+            new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = DateTimeOffset.UtcNow, expectedRetryRevision = "0", reason = "manual-retry" });
         Assert.Equal(HttpStatusCode.Forbidden, retry.StatusCode);
+        using var identityList = await user.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
+        var identityData = await identityList.Content.ReadApiDataAsync();
+        Assert.NotEmpty(identityData.EnumerateArray());
+        var identityMessage = identityData.EnumerateArray().First().GetProperty("messageId").GetGuid();
+        var identityPath = new Uri($"/api/identity/audit-deliveries/{identityMessage}", UriKind.Relative);
+        using var identityRead = await user.GetAsync(identityPath);
+        Assert.Equal(HttpStatusCode.OK, identityRead.StatusCode);
+        using var identityRetry = await user.PostAsJsonAsync(new Uri($"/api/identity/audit-deliveries/{identityMessage}/retry", UriKind.Relative),
+            new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = DateTimeOffset.UtcNow, expectedRetryRevision = "0", reason = "manual-retry" });
+        Assert.Equal(HttpStatusCode.Forbidden, identityRetry.StatusCode);
         using var logout = await user.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         using var revoked = await user.GetAsync(new Uri("/api/auditing/entries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
         using var revokedOperations = await user.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, revokedOperations.StatusCode);
+        using var revokedIdentityList = await user.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedIdentityList.StatusCode);
+        using var revokedIdentitySingle = await user.GetAsync(identityPath);
+        Assert.Equal(HttpStatusCode.Unauthorized, revokedIdentitySingle.StatusCode);
     }
 
     private static async Task<System.Text.Json.JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)

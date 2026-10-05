@@ -22,6 +22,7 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
         modelBuilder.ConfigureCommittedFactCleanup();
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
+        modelBuilder.ConfigureCostingAuditRecovery();
         var sheet = modelBuilder.Entity<CostSheet>();
         sheet.ToTable("sheets");
         sheet.HasKey(x => x.Id);

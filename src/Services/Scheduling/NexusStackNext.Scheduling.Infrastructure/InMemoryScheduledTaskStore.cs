@@ -285,14 +285,19 @@ public static class SchedulingInfrastructureServiceCollectionExtensions
     /// <param name="capacity">本存储的事实保留上限。</param>
     /// <param name="write">每次共用写锁获取的等待预算。</param>
     /// <param name="control">所属 Memory 控制池的启动上限。</param>
+    /// <param name="recovery">所属 Memory 恢复凭据池的启动上限。</param>
     /// <returns>原容器。</returns>
     public static IServiceCollection AddSchedulingInMemoryStorage(this IServiceCollection services, MemoryCommittedFactCapacityOptions? capacity = null,
-        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null)
+        CommittedFactCapacityWriteOptions? write = null, MemoryFactCapacityPolicyControlOptions? control = null, MemoryFactDeliveryRecoveryControlOptions? recovery = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         var controlLimits = control ?? new();
         controlLimits.Validate();
+        var recoveryLimits = recovery ?? new();
+        recoveryLimits.Validate();
         services.AddSingleton(new SchedulingMemoryState(capacity, write));
+        services.AddSingleton<ISchedulingAuditDelivery>(provider => new InMemorySchedulingAuditDelivery(
+            provider.GetRequiredService<SchedulingMemoryState>(), recoveryLimits));
         services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>(OutboxKey, (provider, _) =>
         {
             var state = provider.GetRequiredService<SchedulingMemoryState>();

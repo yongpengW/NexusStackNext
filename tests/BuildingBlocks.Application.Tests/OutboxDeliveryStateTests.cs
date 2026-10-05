@@ -14,6 +14,23 @@ public sealed class OutboxDeliveryStateTests
         OccurredAt = Now,
     };
 
+    [Fact]
+    public void RetryAtMaximumRevision_RefusesOverflow_AndKeepsTheOriginalEnvelopeAndConfirmationPriority()
+    {
+        var pending = Pending() with { RetryRevision = long.MaxValue };
+        var stopped = pending.MarkDeadLettered("controlled-maximum-stop", Now);
+        Assert.Null(stopped.RetryDelivery(Now));
+        Assert.Equal(long.MaxValue, stopped.RetryRevision);
+        Assert.Equal(pending.ToEnvelope(), stopped.ToEnvelope());
+        var delivered = stopped.MarkDelivered(Now.AddSeconds(1));
+        Assert.True(delivered.IsDelivered);
+        Assert.False(delivered.IsDeadLettered);
+        Assert.Equal(long.MaxValue, delivered.RetryRevision);
+        Assert.Equal(pending.ToEnvelope(), delivered.ToEnvelope());
+        Assert.Equal(delivered, delivered.MarkDeadLettered("late-maximum-stop", Now));
+        Assert.Null(delivered.RetryDelivery(Now));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

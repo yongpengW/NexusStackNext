@@ -176,6 +176,7 @@ public static class SchedulingPersistenceServiceCollectionExtensions
         services.AddDbContext<SchedulingDbContext>((provider, options) => options
             .UseNexusStackPostgres(connectionString, SchedulingDbContext.SchemaName).UseNexusStackInterceptors(provider));
         services.AddScoped<IScheduledTaskStore, EfScheduledTaskStore>();
+        services.AddScoped<ISchedulingAuditDelivery, EfSchedulingAuditDelivery>();
         services.AddScoped<ScheduledPlanCommittedFacts>();
         services.AddKeyedScoped<IOutboxStore, EfOutboxStore<SchedulingDbContext>>(SchedulingInfrastructureServiceCollectionExtensions.OutboxKey);
         services.AddScoped<TaskRegistry>();

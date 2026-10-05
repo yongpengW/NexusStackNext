@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Mvc;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Auditing;
 using NexusStackNext.BuildingBlocks.Application.Events;
@@ -52,7 +54,8 @@ public static class SchedulingModule
             }
             services.AddSchedulingInMemoryStorage(configuration.GetSection("Scheduling:AuditDelivery:MemoryCapacity").Get<MemoryCommittedFactCapacityOptions>(),
                 configuration.GetSection("Scheduling:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>(),
-                configuration.GetSection("Scheduling:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>());
+                configuration.GetSection("Scheduling:AuditDelivery:MemoryPolicyControl").Get<MemoryFactCapacityPolicyControlOptions>(),
+                configuration.GetSection("Scheduling:AuditDelivery:MemoryRecoveryControl").Get<MemoryFactDeliveryRecoveryControlOptions>());
             services.AddSchedulingMemoryFactCleanup(configuration.GetSection("Scheduling:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
         }
         else if (string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
@@ -79,7 +82,9 @@ public static class SchedulingModule
         if (configuration.GetValue("Scheduling:Worker:Enabled", true)) { services.AddHostedService<SchedulingWorker>(); }
 
         return services.AddCommittedFactPolicyMaintenance("scheduling", configuration.GetSection("Scheduling:AuditDelivery:PolicyMaintenance")
-            .Get<FactCapacityPolicyMaintenanceOptions>());
+            .Get<FactCapacityPolicyMaintenanceOptions>())
+            .AddFactDeliveryRecoveryMaintenance<ISchedulingAuditDelivery>("scheduling",
+                configuration.GetSection("Scheduling:AuditDelivery:RecoveryMaintenance").Get<FactDeliveryRecoveryMaintenanceOptions>());
     }
 
     /// <summary>映射本模块的端点。</summary>
@@ -120,6 +125,53 @@ public static class SchedulingModule
             .RequirePermission("/api/scheduling/audit-capacity", "PUT")
             .Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 401, 403, 409, 415, 503)
             .WithMetadata(new OperationDescription("scheduling.fact-capacity-policy.adjust", "调整所属事实容量策略"));
+        var factDeliveries = endpoints.MapGroup("/api/scheduling").RequireAuthorization().ProducesApiErrors(400, 401, 403, 500, 503);
+        factDeliveries.AddEndpointFilter<NexusStackAuthorizationFilter>();
+        factDeliveries.MapGet("/audit-deliveries", async ([FromServices] ISchedulingAuditDelivery delivery,
+            ApiResponses responses, CancellationToken token, string state = "Pending", int limit = 50) =>
+        {
+            if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
+            { return Failure(new Error("scheduling.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。")); }
+            return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
+        }).RequireAuthorization().RequirePermission("/api/scheduling/audit-deliveries", "GET")
+            .Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>();
+
+        factDeliveries.MapGet("/audit-deliveries/{messageId:guid}", async (Guid messageId,
+            [FromServices] ISchedulingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthorization().RequirePermission("/api/scheduling/audit-deliveries/{messageId}", "GET")
+            .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(404);
+
+        factDeliveries.MapGet("/audit-deliveries/recovery-capacity", async (
+            [FromServices] ISchedulingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var capacity = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
+            return capacity.IsSuccess ? (IResult)responses.Ok(capacity.Value) : Failure(capacity.Error);
+        }).RequireAuthorization().RequirePermission("/api/scheduling/audit-deliveries/recovery-capacity", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>();
+
+        factDeliveries.MapPost("/audit-deliveries/{messageId:guid}/retry", async (Guid messageId, RetrySchedulingAuditDeliveryRequest request,
+            [FromServices] ISchedulingAuditDelivery delivery, ICurrentUser user, IClock clock, IExecutionContext execution,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var recovered = await delivery.RecoverAsync(new(request.RequestId, messageId, request.ExpectedDeadLetteredAt,
+                request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
+                execution.Capture(), token).ConfigureAwait(false);
+            return recovered.IsSuccess ? (IResult)responses.Ok(recovered.Value) : Failure(recovered.Error);
+        }).RequireAuthorization().RequirePermission("/api/scheduling/audit-deliveries/{messageId}/retry", "POST")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(409, 415)
+            .WithMetadata(new OperationDescription("scheduling.fact-delivery.recover", "恢复所属事实投递"));
+
+        factDeliveries.MapGet("/audit-deliveries/recoveries/{requestId:guid}", async (Guid requestId,
+            [FromServices] ISchedulingAuditDelivery delivery, ApiResponses responses, CancellationToken token) =>
+        {
+            var receipt = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
+            return receipt.IsSuccess ? (IResult)responses.Ok(receipt.Value) : Failure(receipt.Error);
+        }).RequireAuthorization().RequirePermission("/api/scheduling/audit-deliveries/recoveries/{requestId}", "GET")
+            .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(404);
+
         tasks.AddEndpointFilter<NexusStackAuthorizationFilter>();
 
         tasks.MapPost("/preview", (PreviewScheduleRequest request, IScheduleCalendar calendar, ApiResponses responses) =>
@@ -263,9 +315,9 @@ public static class SchedulingModule
         title: error.Message,
         statusCode: error.Code switch
         {
-            "scheduling.task.not_found" => StatusCodes.Status404NotFound,
-            "scheduling.audit_policy.control_exhausted" or "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "scheduling.audit_policy.conflict" or "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
+            "scheduling.task.not_found" or "scheduling.delivery_not_found" or "scheduling.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
+            "scheduling.delivery_recovery.exhausted" or "scheduling.audit_policy.control_exhausted" or "scheduling.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
+            "scheduling.delivery_recovery.request_conflict" or "scheduling.audit_policy.conflict" or "scheduling.version_conflict" or "scheduling.task_code.taken" or "scheduling.delivery_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         },
         extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
@@ -300,3 +352,6 @@ internal sealed record RetryOccurrenceRequest(DateTimeOffset ExpectedDeadLettere
 internal sealed record TaskItem(long TaskId, string Code, double? IntervalSeconds, bool IsEnabled, DateTimeOffset? LastRunAt,
     DateTimeOffset? NextRunAt, string TargetKind, Guid TargetId, string CreatedBy, long Version, ScheduleRule Rule, long ScheduleRevision,
     DateTimeOffset? RetryAt, string? LastSchedulingErrorCode, int SchedulingFailureCount, EntityAuditMetadata? Audit);
+
+internal sealed record RetrySchedulingAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt,
+    [property: JsonRequired] long ExpectedRetryRevision, string Reason);

@@ -19,7 +19,11 @@ CommittedFactInterceptor<TContext>：只负责完整批次暂存和保存失败/
 
 中央 Auditing 只消费已知版本契约，使用固定 source / action / subjectType，验证标识与执行关联，
 在自己的事务中登记去重身份和不可变事实。来源重启后继续从本地 Outbox 交付，中央暂不可用不撤销来源已提交状态。
-CostDelivery 的查询和重试仍仅管理 CostCalculatedV1；审计容量、死信恢复和保留治理由票据 #64 继续补齐。
+CostDelivery 的查询和重试仍仅管理 CostCalculatedV1。来源容量治理由 #101 / PR #102 完成交付；
+专门事实恢复在 #103 接入成本对象事实与容量策略事实，沿用根操作者限制，不能借用 CostDelivery 或计算任务重试。
+所属恢复状态与不可变凭据原子提交，凭据使用独立有限额度和固定最早保留期限；
+使用正常增量迁移，有恢复历史时拒绝破坏性回退。恢复与到期维护不改变成本输入、结果、任务历史或两种事实额度。
+中央保留治理及整套六来源恢复验收仍由 #64 / #103 继续承载。
 
 验收边界是 ISender / IOutboxStore、真实 PostgreSQL、HTTP、生产者重启及真实 RabbitMQ，
 对应 CostingCommittedFactTests、CostingFactCompletionTests、CostingCommittedAuditTests 与 CostingFactIngestionTests。
