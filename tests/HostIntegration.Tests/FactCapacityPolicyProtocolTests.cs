@@ -13,7 +13,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyProtocolTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyProtocolTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public Task PlatformMemory_ConditionalPolicyProtocol_PreservesDecisionsAndSafelyReusesExpiredIdentity()
@@ -35,8 +36,7 @@ public sealed class FactCapacityPolicyProtocolTests
     [PostgresFact]
     public async Task IdentityPostgres_ConditionalPolicyProtocol_PreservesDecisionsAndSafelyReusesExpiredIdentity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -75,21 +75,18 @@ public sealed class FactCapacityPolicyProtocolTests
         await VerifyAsync(scope.ServiceProvider, context);
     }
 
-    private static async Task VerifyPlatformPostgresAsync(string context)
+    private async Task VerifyPlatformPostgresAsync(string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
         await VerifyAsync(scope.ServiceProvider, context);
     }
 
-    private static async Task VerifyBusinessPostgresAsync(string configurationContext, string context)
+    private async Task VerifyBusinessPostgresAsync(string configurationContext, string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (context == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(context);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
         {

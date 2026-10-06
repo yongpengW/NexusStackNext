@@ -5,13 +5,13 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyTransactionTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyTransactionTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PolicyAdjustment_CommitsItsOwnTransaction_WhenCallerAmbientTransactionRollsBack()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();

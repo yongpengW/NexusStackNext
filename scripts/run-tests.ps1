@@ -29,6 +29,8 @@ param(
 
     [switch] $NoBuild,
 
+    [switch] $StopOnFailure,
+
     [ValidateRange(-1, 3)]
     [int] $CiShard = -1,
 
@@ -49,6 +51,7 @@ $solution = Join-Path $repoRoot 'NexusStackNext.slnx'
 
 # Fail before reading env/test.dev, building, discovering, or starting any test process.
 if ($CiShard -ge 0) {
+    if ($StopOnFailure) { throw 'CI shards do not allow StopOnFailure; complete reports are required.' }
     Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
     Assert-CiIsolation $repoRoot
     if ($Init -or $Filter -or $ProjectName -or -not $NoBuild -or [string]::IsNullOrWhiteSpace($ReportDirectory)) { throw 'CI shards require a preceding build and an unfiltered report directory.' }
@@ -231,36 +234,40 @@ foreach ($project in $testProjects) {
         $methods = @($selected | Where-Object Project -EQ $name | Select-Object -ExpandProperty Method -Unique)
         $dotnetArgs += @('--filter', (($methods | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'))
     }
+    if ($StopOnFailure) { $dotnetArgs += @('--', 'xUnit.StopOnFail=true') }
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    $workloadReturned = $false
     $completedCases = 0
     $lastProgressSeconds = 0.0
-    $output = & dotnet @dotnetArgs 2>&1 | ForEach-Object {
-        # Forward only safe case metadata while retaining the authoritative exit code and TRX.
-        # Raw console lines and theory arguments remain withheld, including during long journeys.
-        $case = [regex]::Match([string]$_, '^\s*(Passed|Failed|Skipped|已通过|通过|失败|已跳过|跳过)\s+(?<method>NexusStackNext\.[A-Za-z0-9_.]+)(?:[\s(]|$)')
-        if ($case.Success) {
-            $completedCases++
-            $outcome = switch ($case.Groups[1].Value) {
-                { $_ -in @('Passed', '已通过', '通过') } { 'Passed' }
-                { $_ -in @('Failed', '失败') } { 'Failed' }
-                default { 'Skipped' }
-            }
-            if ($completedCases -eq 1 -or $completedCases % 25 -eq 0 -or $outcome -ne 'Passed' -or
-                $watch.Elapsed.TotalSeconds - $lastProgressSeconds -ge 30) {
-                Write-Host "  TEST_PROGRESS project=$name completed=$completedCases outcome=$outcome method=$($case.Groups['method'].Value) elapsed=$([math]::Round($watch.Elapsed.TotalSeconds, 1))s"
-                $lastProgressSeconds = $watch.Elapsed.TotalSeconds
+    # Private diagnostics stream locally before completion; CI uploads only sanitized shard JSON.
+    $privateConsole = [IO.StreamWriter]::new((Join-Path $testReportDirectory "$name.console.log"), $false, [Text.UTF8Encoding]::new($false))
+    try {
+        $workloadReturned = $false
+        & dotnet @dotnetArgs 2>&1 | ForEach-Object {
+            $privateConsole.WriteLine([string]$_)
+            $privateConsole.Flush()
+            # Forward only safe case metadata while retaining the authoritative exit code and TRX.
+            # Raw console lines and theory arguments remain withheld, including during long journeys.
+            $case = [regex]::Match([string]$_, '^\s*(Passed|Failed|Skipped|已通过|通过|失败|已跳过|跳过)\s+(?<method>NexusStackNext\.[A-Za-z0-9_.]+)(?:[\s(]|$)')
+            if ($case.Success) {
+                $completedCases++
+                $outcome = switch ($case.Groups[1].Value) {
+                    { $_ -in @('Passed', '已通过', '通过') } { 'Passed' }
+                    { $_ -in @('Failed', '失败') } { 'Failed' }
+                    default { 'Skipped' }
+                }
+                if ($completedCases -eq 1 -or $completedCases % 25 -eq 0 -or $outcome -ne 'Passed' -or
+                    $watch.Elapsed.TotalSeconds - $lastProgressSeconds -ge 30) {
+                    Write-Host "  TEST_PROGRESS project=$name completed=$completedCases outcome=$outcome method=$($case.Groups['method'].Value) elapsed=$([math]::Round($watch.Elapsed.TotalSeconds, 1))s"
+                    $lastProgressSeconds = $watch.Elapsed.TotalSeconds
+                }
             }
         }
-        $_
+        $testExitCode = $LASTEXITCODE
+        $workloadReturned = $true
     }
-    $workloadReturned = $true
-    $testExitCode = $LASTEXITCODE
+    finally { $privateConsole.Dispose() }
     $watch.Stop()
-    # Console diagnostics may contain private data. Keep them in the local report directory;
-    # CI uploads only the separate, sanitized shard JSON, never these raw files.
-    [IO.File]::WriteAllLines((Join-Path $testReportDirectory "$name.console.log"), [string[]]$output, [Text.UTF8Encoding]::new($false))
     if ($CiShard -ge 0) { $ciResults += @(Get-TestReportResults $reportPath $name) }
 
     if (Test-Path -LiteralPath $reportPath) {
@@ -300,6 +307,10 @@ foreach ($project in $testProjects) {
         Project  = $name
         ExitCode = $testExitCode
         Seconds  = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    }
+    if ($StopOnFailure -and $testExitCode -ne 0) {
+        Write-Host 'STOP_ON_FAILURE: remaining local work was not started; this is not a complete passing run.'
+        break
     }
 }
 

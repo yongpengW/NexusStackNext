@@ -10,7 +10,8 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class AuditInvestigationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class AuditInvestigationTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("entries")]
@@ -69,8 +70,7 @@ public sealed class AuditInvestigationTests
     [PostgresFact]
     public async Task PersistedOperations_FilterFinalEvidenceAndTaskRelationships()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "audit-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "audit-root-password");
@@ -179,8 +179,7 @@ public sealed class AuditInvestigationTests
     [PostgresFact]
     public async Task PersistedFacts_CanBeInvestigatedByExactSafeFields()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "audit-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "audit-root-password");

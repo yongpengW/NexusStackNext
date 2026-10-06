@@ -12,13 +12,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingFactCapacityPolicyHistoryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingFactCapacityPolicyHistoryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task SchedulingPostgres_PolicyFailuresAndBoundedCleanup_PreserveExistingDecisionAndDeadLetterHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var serializer = new RejectingEventSerializer(new SystemTextJsonIntegrationEventSerializer());
         await using var app = new PersistentHistoryApp(database.ConnectionString, serializer);
         using var client = app.CreateClient();

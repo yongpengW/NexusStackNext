@@ -15,7 +15,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesFactCapacityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesFactCapacityTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task ConcurrentRepositories_RespectLastSlot_NoOps_AndSameScopeRetryAfterConfirmedCleanup()
@@ -74,8 +75,7 @@ public sealed class FilesFactCapacityTests
     [PostgresFact]
     public async Task AcceptedDeletion_WhenCompletionFactCannotFit_RemainsRecoverableUntilCapacityReturns()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-capacity-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-capacity-password");
@@ -119,8 +119,7 @@ public sealed class FilesFactCapacityTests
     [PostgresFact]
     public async Task UploadBatch_WhenOnlyOneFactFits_IsRejectedWithoutPartialMetadataOrFacts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-capacity-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-capacity-password");

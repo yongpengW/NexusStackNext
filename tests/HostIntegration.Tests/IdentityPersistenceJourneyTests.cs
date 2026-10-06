@@ -384,7 +384,7 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
 
     public async Task MigrateAsync()
     {
-        // 普通旅程复用测试进程中的 EF 模型；每次仍对独立空库执行真实迁移。
+        // 未复用结构的旅程复用测试进程中的 EF 模型；每次仍对独立空库执行真实迁移。
         // CLI 契约测试显式使用 MigrateThroughCliAsync，避免反复启动六个进程。
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         await MigrateContextAsync(new IdentityDbContext(new DbContextOptionsBuilder<IdentityDbContext>()

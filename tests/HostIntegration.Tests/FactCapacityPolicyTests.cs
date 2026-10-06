@@ -17,8 +17,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class FactCapacityPolicyTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task PlatformPolicyRequest_OpenApi_OnlyPublishesAcceptedInputs()

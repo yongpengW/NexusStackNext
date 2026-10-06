@@ -11,13 +11,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingFactDeliveryRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingFactDeliveryRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresHttp_PolicyFactRecoveryAndExpiryPreserveThePlan_HistoryAndBothFactPools()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "scheduling-policy-recovery-root", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "scheduling-policy-recovery-root");
@@ -98,8 +98,7 @@ public sealed class SchedulingFactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PostgresHttp_RecoversOnlyTheStoppedPlanFact_AndPreservesNonemptyTriggerHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "scheduling-recovery-root", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "scheduling-recovery-root");

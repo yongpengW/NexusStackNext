@@ -10,7 +10,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityDeliveryInvestigationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityDeliveryInvestigationTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task MemoryHttp_PolicyFactCanBeInvestigated_WithoutChangingItsDeliveryOrCapacity()
@@ -25,8 +26,7 @@ public sealed class IdentityDeliveryInvestigationTests
     [PostgresFact]
     public async Task PostgresHttp_PolicyFactCanBeInvestigated_WithoutChangingItsDeliveryOrCapacity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "policy-investigation-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "policy-investigation-root-password");
@@ -82,8 +82,7 @@ public sealed class IdentityDeliveryInvestigationTests
     [PostgresFact]
     public async Task PostgresHttp_SingleMessageCanBeInvestigatedBeyondTheBoundedList_WithoutExposingItsContents()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "investigation-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "investigation-root-password");

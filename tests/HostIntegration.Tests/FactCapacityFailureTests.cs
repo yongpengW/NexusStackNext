@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -14,13 +15,20 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityFailureTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityFailureTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
-    public async Task SourceDatabaseOutage_ReturnsHttp503_WhenTheIdentityAuthorityRemainsAvailable()
+    public Task SourceDatabaseOutage_ReturnsHttp503_WhenTheIdentityAuthorityRemainsAvailable()
+        => VerifySourceOutageAndRecoveryAsync(delayRecoveredRead: false);
+
+    [PostgresFact]
+    public Task RecoveredSource_DefaultReadBudgetAcceptsHealthyDelayedRead()
+        => VerifySourceOutageAndRecoveryAsync(delayRecoveredRead: true);
+
+    private async Task VerifySourceOutageAndRecoveryAsync(bool delayRecoveredRead)
     {
-        await using var identity = await IdentityJourneyDatabase.CreateAsync();
-        await identity.MigrateAsync();
+        await using var identity = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
         await using (var schema = new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(source.ConnectionString, PlatformDbContext.SchemaName).Options))
@@ -41,6 +49,14 @@ public sealed class FactCapacityFailureTests
             Assert.Equal(HttpStatusCode.OK, authority.StatusCode);
         }
         finally { await source.SetAvailableAsync(true); }
+        if (delayRecoveredRead)
+        {
+            // A controlled delay in this owned database reproduces a healthy read above the old 250 ms fixture budget.
+            await using var setup = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(source.ConnectionString) { Pooling = false }.ConnectionString);
+            await setup.OpenAsync();
+            await using var delay = new NpgsqlCommand("ALTER TABLE platform.fact_capacity RENAME TO capacity_delay_base; CREATE VIEW platform.fact_capacity AS SELECT fact.* FROM platform.capacity_delay_base fact CROSS JOIN (SELECT pg_sleep(0.4)) latency", setup);
+            await delay.ExecuteNonQueryAsync();
+        }
         using var recovered = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
         Assert.Equal(snapshot.GetRawText(), (await recovered.Content.ReadApiDataAsync()).GetRawText());
@@ -49,9 +65,8 @@ public sealed class FactCapacityFailureTests
     [PostgresFact]
     public async Task CallerCancellationAndDatabaseOutage_PreserveFailureSemantics_AndRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
-        await using var app = new BudgetApp(database.ConnectionString);
+        await using var database = await databases.CreateAsync();
+        await using var app = new BudgetApp(database.ConnectionString, readTimeout: TimeSpan.FromMilliseconds(250));
         await using var scope = app.Services.CreateAsyncScope();
         var reader = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityReader>("platform");
         var initial = await reader.ReadAsync();
@@ -86,11 +101,10 @@ public sealed class FactCapacityFailureTests
     [PostgresFact]
     public async Task LockedLedger_UsesShortBudget_AndDoesNotLeaveAServerQueryWaiting()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var readerName = "capacity-budget-" + Guid.NewGuid().ToString("N");
         var options = new NpgsqlConnectionStringBuilder(database.ConnectionString) { ApplicationName = readerName };
-        await using var app = new BudgetApp(options.ConnectionString);
+        await using var app = new BudgetApp(options.ConnectionString, readTimeout: TimeSpan.FromMilliseconds(250));
         using var client = app.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(5);
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-failure-password");
@@ -131,8 +145,7 @@ public sealed class FactCapacityFailureTests
     [PostgresFact]
     public async Task MissingLedger_ReturnsSafe503_AndRestoredLedgerRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new BudgetApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-failure-password");
@@ -176,18 +189,21 @@ public sealed class FactCapacityFailureTests
         Assert.False(error.TryGetProperty("retainedRecords", out _));
     }
 
-    private sealed class BudgetApp(string connectionString, string? platformConnectionString = null) : PersistentIdentityApp(connectionString,
+    private sealed class BudgetApp(string connectionString, string? platformConnectionString = null, TimeSpan? readTimeout = null) : PersistentIdentityApp(connectionString,
         "capacity-failure-password", platformConnectionString: platformConnectionString, schedulingWorkerEnabled: false)
     {
         protected override IHost CreateHost(IHostBuilder builder)
         {
-            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(
-                new[] { "Platform", "Identity", "Files", "Scheduling" }
-                    .SelectMany(owner => new Dictionary<string, string?>
-                    {
-                        [$"{owner}:AuditDelivery:CapacityRead:Timeout"] = "00:00:00.250",
-                        [$"{owner}:AuditDelivery:Cleanup:Enabled"] = "false",
-                    })));
+            var values = new Dictionary<string, string?>();
+            foreach (var owner in new[] { "Platform", "Identity", "Files", "Scheduling" })
+            {
+                values[$"{owner}:AuditDelivery:Cleanup:Enabled"] = "false";
+                if (readTimeout is { } timeout)
+                {
+                    values[$"{owner}:AuditDelivery:CapacityRead:Timeout"] = timeout.ToString("c", CultureInfo.InvariantCulture);
+                }
+            }
+            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(values));
             return base.CreateHost(builder);
         }
     }

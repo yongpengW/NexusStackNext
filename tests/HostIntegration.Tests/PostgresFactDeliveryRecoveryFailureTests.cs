@@ -17,8 +17,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class PostgresFactDeliveryRecoveryFailureTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PostgresFactDeliveryRecoveryFailureTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task ReceiptAndLedgerWriteFailures_PreserveTheirRealMeaning_AndLeaveNoPartialRecovery()

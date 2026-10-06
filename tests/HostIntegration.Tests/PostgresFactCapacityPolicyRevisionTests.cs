@@ -22,7 +22,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PostgresFactCapacityPolicyRevisionTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PostgresFactCapacityPolicyRevisionTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_MaximumRevision_RejectsChangesAndRetainsNoOpDecision()
@@ -48,12 +49,9 @@ public sealed class PostgresFactCapacityPolicyRevisionTests
     public Task PricingPostgres_MaximumRevision_RejectsChangesAndRetainsNoOpDecision()
         => VerifyAsync("Pricing", "pricing");
 
-    private static async Task VerifyAsync(string configurationContext, string context)
+    private async Task VerifyAsync(string configurationContext, string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (context == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else if (context == "pricing") { await PricingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await database.MigrateAsync(); }
+        await using var database = await databases.CreateAsync(context);
         if (context is not ("platform" or "identity" or "files" or "scheduling" or "costing" or "pricing"))
         { throw new ArgumentException("Unknown owned test schema.", nameof(context)); }
         await using (var connection = new NpgsqlConnection(database.ConnectionString))

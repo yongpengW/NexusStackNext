@@ -11,13 +11,13 @@ using NexusStackNext.Scheduling.Application;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingFactCapacityPolicyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingFactCapacityPolicyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task SchedulingPostgres_PolicyAndReceiptSurviveHostRecreation_WithoutChangingPlanOrDeliveryHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var path = new Uri("/api/scheduling/audit-capacity", UriKind.Relative);
         var expansion = new FactCapacityPolicyRequest(Guid.NewGuid(), 2, 2, 268435456, 16384, "operator-adjustment");
         string receipt;

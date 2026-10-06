@@ -20,8 +20,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class FactCapacityDiagnosticsTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityDiagnosticsTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgreSqlReader_ExcludesUncommittedChanges_EvenInTheWritersScope()

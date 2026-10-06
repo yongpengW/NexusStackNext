@@ -18,13 +18,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesRecoveryMaintenanceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesRecoveryMaintenanceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresModule_FailedBackgroundExpiryPreservesReceiptsAndPrivateContent_ThenRecoversInFiniteBatches()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var acceptedAt = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(acceptedAt);
         var storageRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "nsn-files-pg-recovery-maintenance-" + Guid.NewGuid().ToString("N")));

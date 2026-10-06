@@ -13,8 +13,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class IdentityCommittedAuditTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityCommittedAuditTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task PermissionAndTokenFacts_SurviveRestart_AndRetainTheRejectedReplayCommit()

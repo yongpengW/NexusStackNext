@@ -18,7 +18,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityFactCapacityPolicyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityFactCapacityPolicyTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData(false)]
@@ -69,8 +70,7 @@ public sealed class IdentityFactCapacityPolicyTests
     [PostgresFact]
     public async Task IdentityPostgres_UnrelatedReceiptLockError_RollsBackPolicyAndNeverFlushesPendingBusinessWork()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -137,8 +137,7 @@ public sealed class IdentityFactCapacityPolicyTests
     [PostgresFact]
     public async Task IdentityPostgres_ControlCleanupRequiresReceiptAndDeliveryDeadlines_AndKeepsDeadLetters()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -194,8 +193,7 @@ public sealed class IdentityFactCapacityPolicyTests
     [PostgresFact]
     public async Task IdentityPostgres_PolicyAndReceiptSurviveHostRecreation_WithoutCommittingBusinessState()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var requestId = Guid.NewGuid();
         var request = new
         {

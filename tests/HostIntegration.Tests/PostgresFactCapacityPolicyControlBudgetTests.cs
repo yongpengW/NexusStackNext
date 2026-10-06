@@ -24,7 +24,8 @@ using NpgsqlTypes;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PostgresFactCapacityPolicyControlBudgetTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PostgresFactCapacityPolicyControlBudgetTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_UnicodeControlFact_UsesUtf8SingleLimitAndRejectsWithoutPartialState()
@@ -45,10 +46,9 @@ public sealed class PostgresFactCapacityPolicyControlBudgetTests
     public Task PricingPostgres_UnicodeControlFact_UsesUtf8SingleLimitAndRejectsWithoutPartialState()
         => AssertUtf8SingleLimitAsync("pricing", "Pricing");
 
-    private static async Task AssertUtf8SingleLimitAsync(string context, string configurationContext)
+    private async Task AssertUtf8SingleLimitAsync(string context, string configurationContext)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await MigrateAsync(database, configurationContext);
+        await using var database = await databases.CreateAsync(configurationContext);
         await ArrangeControlLimitsAsync(database.ConnectionString, context, 16 * 1024 * 1024, 2800);
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         var serializer = new SystemTextJsonIntegrationEventSerializer(new JsonSerializerOptions(JsonSerializerDefaults.Web)
@@ -124,10 +124,9 @@ public sealed class PostgresFactCapacityPolicyControlBudgetTests
     public Task PricingPostgres_PersistedRecordLimit_RejectsAtomicallyAndReleasesForRetry()
         => AssertTotalByteLimitAsync("pricing", "Pricing", recordsLimited: true);
 
-    private static async Task AssertTotalByteLimitAsync(string context, string configurationContext, bool recordsLimited = false)
+    private async Task AssertTotalByteLimitAsync(string context, string configurationContext, bool recordsLimited = false)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await MigrateAsync(database, configurationContext);
+        await using var database = await databases.CreateAsync(configurationContext);
         await ArrangeControlLimitsAsync(database.ConnectionString, context, recordsLimited ? 16 * 1024 * 1024 : 1024,
             recordsLimited ? 16 * 1024 : 1024, recordsLimited ? 1 : null);
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
@@ -241,10 +240,4 @@ public sealed class PostgresFactCapacityPolicyControlBudgetTests
         return builder.Build();
     }
 
-    private static Task MigrateAsync(IdentityJourneyDatabase database, string context) => context switch
-    {
-        "Costing" => CostingDatabase.MigrateAsync(database.ConnectionString),
-        "Pricing" => PricingDatabase.MigrateAsync(database.ConnectionString),
-        _ => database.MigrateAsync(),
-    };
 }

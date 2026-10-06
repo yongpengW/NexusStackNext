@@ -14,7 +14,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PlatformFactCapacityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PlatformFactCapacityTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task FailedInsert_RollsBackItsQuota_AndCommittedEnvelopeCannotBeRewritten()
@@ -114,8 +115,7 @@ public sealed class PlatformFactCapacityTests
     [PostgresFact]
     public async Task ConcurrentWrites_RespectRemainingFactCapacity_AndCleanupAllowsBusinessToResume()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "capacity-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-root-password");

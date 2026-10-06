@@ -12,13 +12,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FileRecoveryOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FileRecoveryOperationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task RecoveryCommitFailure_RecordsFailedAttempt_WithoutInventingACompletedFact()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var provider = FilesCommittedAuditTests.BuildStorage(database.ConnectionString);
         await using var persistence = provider.CreateAsyncScope();
         await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };

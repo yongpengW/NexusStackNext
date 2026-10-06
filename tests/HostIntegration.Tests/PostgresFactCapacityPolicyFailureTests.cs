@@ -21,7 +21,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PostgresFactCapacityPolicyFailureTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PostgresFactCapacityPolicyFailureTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_ReceiptWriteFailure_RollsBackAllPolicyEvidenceAndAllowsOriginalRetry()
@@ -83,10 +84,9 @@ public sealed class PostgresFactCapacityPolicyFailureTests
     public Task PricingPostgres_CallerCancelsBeforeReceiptCommit_RollsBackPreparedFactAndAllowsOriginalRetry()
         => VerifyWaitingCancellationAsync("pricing", "Pricing", beforeReceipt: true);
 
-    private static async Task VerifyWaitingCancellationAsync(string context, string configurationContext, bool beforeReceipt = false)
+    private async Task VerifyWaitingCancellationAsync(string context, string configurationContext, bool beforeReceipt = false)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await MigrateAsync(database, configurationContext);
+        await using var database = await databases.CreateAsync(configurationContext);
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         const string applicationName = "nsn-policy-waiting-caller";
         var moduleConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString) { ApplicationName = applicationName }.ConnectionString;
@@ -187,10 +187,9 @@ public sealed class PostgresFactCapacityPolicyFailureTests
         finally { await host.StopAsync(); }
     }
 
-    private static async Task VerifyReceiptFailureAsync(string context, string configurationContext)
+    private async Task VerifyReceiptFailureAsync(string context, string configurationContext)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await MigrateAsync(database, configurationContext);
+        await using var database = await databases.CreateAsync(configurationContext);
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         await using var host = CreateModule(configurationContext, database.ConnectionString, now);
         await host.StartAsync();
@@ -280,10 +279,4 @@ public sealed class PostgresFactCapacityPolicyFailureTests
         return builder.Build();
     }
 
-    private static Task MigrateAsync(IdentityJourneyDatabase database, string context) => context switch
-    {
-        "Costing" => CostingDatabase.MigrateAsync(database.ConnectionString),
-        "Pricing" => PricingDatabase.MigrateAsync(database.ConnectionString),
-        _ => database.MigrateAsync(),
-    };
 }
