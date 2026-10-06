@@ -16,7 +16,7 @@ $temporary = Join-Path $scratch 'temporary'
 foreach ($directory in @((Join-Path $fixture 'scripts'), (Join-Path $fixture 'env'), (Join-Path $fixture 'tests/Probe.Tests'), $adapter, $temporary)) {
     [void][IO.Directory]::CreateDirectory($directory)
 }
-foreach ($name in @('run-tests.ps1', 'test-ownership.psm1')) {
+foreach ($name in @('run-tests.ps1', 'test-ownership.psm1', 'test-console.psm1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture "scripts/$name")
 }
 foreach ($name in @('local-postgres.ps1', 'local-postgres.psm1')) {

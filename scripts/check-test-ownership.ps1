@@ -9,6 +9,7 @@ foreach ($directory in @((Join-Path $fixture 'scripts'), (Join-Path $fixture 'te
     [void][IO.Directory]::CreateDirectory($directory)
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'run-tests.ps1') -Destination (Join-Path $fixture 'scripts/run-tests.ps1')
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'test-console.psm1') -Destination (Join-Path $fixture 'scripts/test-console.psm1')
 $module = Join-Path $PSScriptRoot 'test-ownership.psm1'
 if (Test-Path -LiteralPath $module) { Copy-Item -LiteralPath $module -Destination (Join-Path $fixture 'scripts/test-ownership.psm1') }
 [IO.File]::WriteAllText((Join-Path $fixture 'tests/Probe.Tests/Probe.Tests.csproj'), '<Project />')

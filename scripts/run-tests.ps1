@@ -31,6 +31,9 @@ param(
 
     [switch] $StopOnFailure,
 
+    [ValidateSet(1, 2, 4)]
+    [int] $Concurrency = 1,
+
     [ValidateRange(-1, 3)]
     [int] $CiShard = -1,
 
@@ -51,6 +54,7 @@ $solution = Join-Path $repoRoot 'NexusStackNext.slnx'
 
 # Fail before reading env/test.dev, building, discovering, or starting any test process.
 if ($CiShard -ge 0) {
+    if ($Concurrency -ne 1) { throw 'CI shards do not allow local Concurrency; isolated shard execution is unchanged.' }
     if ($StopOnFailure) { throw 'CI shards do not allow StopOnFailure; complete reports are required.' }
     Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
     Assert-CiIsolation $repoRoot
@@ -137,11 +141,12 @@ if ($env:NEXUSSTACK_TEST_POSTGRES -match 'Host=([^;]+)') { $target = $Matches[1]
 Write-Host ''
 Write-Host "目标数据库：$target" -ForegroundColor Yellow
 Write-Host '  注意：这台库可能同时被配置中心等别的服务使用。' -ForegroundColor Yellow
-Write-Host '  测试会逐个项目**串行**跑；如果你还要跑第二份，先等这一份结束。' -ForegroundColor Yellow
+Write-Host "  工程逐个执行；本地已声明的宿主普通旅程最多 $Concurrency 路。跨工作区仍只允许一份负载。" -ForegroundColor Yellow
 
 # ---------- 全局互斥：同时只允许一份全量在跑 ----------
 Import-Module (Join-Path $PSScriptRoot 'test-ownership.psm1') -Force
 $ownership = Enter-TestOwnership
+Import-Module (Join-Path $PSScriptRoot 'test-console.psm1') -Force
 $workloadReturned = $true
 try {
 
@@ -216,7 +221,8 @@ if ($CiShard -ge 0) {
 }
 
 $results = @()
-$testReportDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N'))
+$testReportDirectory = if ($CiShard -lt 0 -and $ReportDirectory) { [IO.Path]::GetFullPath($ReportDirectory) } else { Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N')) }
+if (Test-Path -LiteralPath $testReportDirectory) { throw 'Local private report directory must be new; existing evidence is never overwritten.' }
 [void][IO.Directory]::CreateDirectory($testReportDirectory)
 foreach ($project in $testProjects) {
     $name = $project.BaseName
@@ -243,28 +249,30 @@ foreach ($project in $testProjects) {
     $privateConsole = [IO.StreamWriter]::new((Join-Path $testReportDirectory "$name.console.log"), $false, [Text.UTF8Encoding]::new($false))
     try {
         $workloadReturned = $false
+        if ($CiShard -lt 0 -and $Concurrency -gt 1 -and $name -ceq 'HostIntegration.Tests') {
+            Import-Module (Join-Path $PSScriptRoot 'local-test-concurrency.psm1') -Force
+            $testExitCode = Invoke-LocalHostTests $project.FullName $Configuration $Concurrency $Filter ([bool]$StopOnFailure) $testReportDirectory ([ref]$workloadReturned)
+        }
+        else {
         & dotnet @dotnetArgs 2>&1 | ForEach-Object {
             $privateConsole.WriteLine([string]$_)
             $privateConsole.Flush()
             # Forward only safe case metadata while retaining the authoritative exit code and TRX.
             # Raw console lines and theory arguments remain withheld, including during long journeys.
-            $case = [regex]::Match([string]$_, '^\s*(Passed|Failed|Skipped|已通过|通过|失败|已跳过|跳过)\s+(?<method>NexusStackNext\.[A-Za-z0-9_.]+)(?:[\s(]|$)')
-            if ($case.Success) {
+            $case = Get-TestConsoleCase ([string]$_)
+            if ($null -ne $case) {
                 $completedCases++
-                $outcome = switch ($case.Groups[1].Value) {
-                    { $_ -in @('Passed', '已通过', '通过') } { 'Passed' }
-                    { $_ -in @('Failed', '失败') } { 'Failed' }
-                    default { 'Skipped' }
-                }
+                $outcome = $case.Outcome
                 if ($completedCases -eq 1 -or $completedCases % 25 -eq 0 -or $outcome -ne 'Passed' -or
                     $watch.Elapsed.TotalSeconds - $lastProgressSeconds -ge 30) {
-                    Write-Host "  TEST_PROGRESS project=$name completed=$completedCases outcome=$outcome method=$($case.Groups['method'].Value) elapsed=$([math]::Round($watch.Elapsed.TotalSeconds, 1))s"
+                    Write-Host "  TEST_PROGRESS project=$name completed=$completedCases outcome=$outcome method=$($case.Method) elapsed=$([math]::Round($watch.Elapsed.TotalSeconds, 1))s"
                     $lastProgressSeconds = $watch.Elapsed.TotalSeconds
                 }
             }
         }
         $testExitCode = $LASTEXITCODE
         $workloadReturned = $true
+        }
     }
     finally { $privateConsole.Dispose() }
     $watch.Stop()
@@ -307,6 +315,11 @@ foreach ($project in $testProjects) {
         Project  = $name
         ExitCode = $testExitCode
         Seconds  = [math]::Round($watch.Elapsed.TotalSeconds, 1)
+    }
+    if ($CiShard -lt 0 -and (Test-Path -LiteralPath (Join-Path $testReportDirectory 'load-stop'))) {
+        $results[-1].ExitCode = 1
+        Write-Host 'LOCAL_RESOURCE_STOP: remaining projects were not started; this is not a complete passing run.'
+        break
     }
     if ($StopOnFailure -and $testExitCode -ne 0) {
         Write-Host 'STOP_ON_FAILURE: remaining local work was not started; this is not a complete passing run.'

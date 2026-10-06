@@ -32,7 +32,7 @@ $project=Join-Path $lab 'tests/Probe.Tests'
 $laterProject=Join-Path $lab 'tests/ZZLater.Tests'
 $temporary=Join-Path $lab 'private-temp'
 foreach($path in @($scripts,$project,$laterProject,$temporary,(Join-Path $lab 'env'))){[IO.Directory]::CreateDirectory($path)|Out-Null}
-foreach($name in @('run-tests.ps1','test-ownership.psm1')){Copy-Item -LiteralPath (Join-Path $SourceRoot "scripts/$name") -Destination (Join-Path $scripts $name)}
+foreach($name in @('run-tests.ps1','test-ownership.psm1','test-console.psm1')){Copy-Item -LiteralPath (Join-Path $SourceRoot "scripts/$name") -Destination (Join-Path $scripts $name)}
 Copy-Item -LiteralPath (Join-Path $SourceRoot 'global.json') -Destination (Join-Path $lab 'global.json')
 [IO.File]::WriteAllText((Join-Path $lab 'env/test.dev'),'NEXUSSTACK_TEST_POSTGRES=Host=probe.invalid;Database=probe',[Text.UTF8Encoding]::new($false))
 [IO.File]::WriteAllText((Join-Path $lab 'NexusStackNext.slnx'),'<Solution><Project Path="tests/Probe.Tests/Probe.Tests.csproj" /><Project Path="tests/ZZLater.Tests/ZZLater.Tests.csproj" /></Solution>')
