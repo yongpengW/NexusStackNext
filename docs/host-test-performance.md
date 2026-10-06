@@ -2,7 +2,8 @@
 
 首轮已通过 [宿主测试提速：脱敏实时进度与共享库初始化复用](https://github.com/yongpengW/NexusStackNext/issues/112) 交付。
 扩大复用与校准 CI 权重见 [扩大宿主旅程空结构复用并校准 CI 实测权重](https://github.com/yongpengW/NexusStackNext/issues/114)。
-开发仍使用 `env/test.dev` 的共用 PostgreSQL，保留串行执行与跨工作区原子所有权；
+开发仍使用 `env/test.dev` 的共用 PostgreSQL，保留跨工作区原子所有权；显式普通旅程并发见
+[共用测试库受控并发](local-test-concurrency.md)。下方#112/#114测量均为当轮串行模式；
 CI 仍由四台独占依赖的 runner 执行，统一门禁核对完整发现清单与每项结果。
 
 ## 能看见的进度

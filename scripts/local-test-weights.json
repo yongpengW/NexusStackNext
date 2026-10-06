@@ -1,0 +1,21 @@
+{
+  "NexusStackNext.HostIntegration.Tests.AuditInvestigationTests": 14.538,
+  "NexusStackNext.HostIntegration.Tests.BusinessJourneyIsolationTests": 3.951,
+  "NexusStackNext.HostIntegration.Tests.FactCapacityDiagnosticsTests": 21.722,
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyBusinessIsolationTests": 37.208,
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyDeadlineTests": 12.217,
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyProtocolTests": 21.492,
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyTransactionTests": 2.381,
+  "NexusStackNext.HostIntegration.Tests.FactDeliveryInvestigationTests": 17.818,
+  "NexusStackNext.HostIntegration.Tests.FactDeliveryRecoveryGatewayAccessTests": 411.442,
+  "NexusStackNext.HostIntegration.Tests.FilesFactDeliveryRecoveryTests": 19.532,
+  "NexusStackNext.HostIntegration.Tests.IdentityDeliveryInvestigationTests": 13.485,
+  "NexusStackNext.HostIntegration.Tests.IdentityFactCapacityTests": 4.69,
+  "NexusStackNext.HostIntegration.Tests.PlatformJourneyIsolationTests": 10.634,
+  "NexusStackNext.HostIntegration.Tests.PlatformSettingsAccessTests": 70.711,
+  "NexusStackNext.HostIntegration.Tests.PostgresFactCapacityPolicyAccessTests": 166.484,
+  "NexusStackNext.HostIntegration.Tests.PostgresFactCapacityPolicyRevisionTests": 13.543,
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactCapacityPolicyHistoryTests": 3.937,
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactCapacityPolicyTests": 8.716,
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactDeliveryRecoveryTests": 20.639
+}

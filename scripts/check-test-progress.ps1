@@ -7,7 +7,7 @@ $temporary = Join-Path $scratch 'temporary'
 foreach ($directory in @((Join-Path $fixture 'scripts'), (Join-Path $fixture 'tests/Probe.Tests'), $adapter, $temporary)) {
     [void][IO.Directory]::CreateDirectory($directory)
 }
-foreach ($name in @('run-tests.ps1', 'test-ownership.psm1')) {
+foreach ($name in @('run-tests.ps1', 'test-ownership.psm1', 'test-console.psm1')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture "scripts/$name")
 }
 [IO.File]::WriteAllText((Join-Path $fixture 'tests/Probe.Tests/Probe.Tests.csproj'), '<Project />')
@@ -141,3 +141,4 @@ finally { $process.Dispose() }
 
 # Real xUnit verifies early failure stops later work and still disposes the owned fixture.
 & (Join-Path $PSScriptRoot 'check-test-stop.ps1')
+& (Join-Path $PSScriptRoot 'check-local-test-concurrency.ps1')

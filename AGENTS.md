@@ -123,7 +123,7 @@ Costing / Pricing 业务样板各自独立成服务、独立库，业务边界�
 
 ```powershell
 dotnet build NexusStackNext.slnx     # 全量构建
-dotnet test NexusStackNext.slnx      # 全部测试（含架构不变量测试）
+pwsh -File scripts/run-tests.ps1    # 全部测试（含架构不变量测试与负载所有权）
 ```
 
 ### 三段自动化检查，顺序固定
@@ -132,14 +132,14 @@ dotnet test NexusStackNext.slnx      # 全部测试（含架构不变量测试�
 
 ```powershell
 dotnet build NexusStackNext.slnx              # ① 类型与警告（TreatWarningsAsErrors）
-pwsh -File scripts/run-tests.ps1              # ② 测试（**串行**，见下）
+pwsh -File scripts/run-tests.ps1              # ② 测试（默认1路；受控并发见下）
 pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --verify-no-changes）
 ```
 
 **两个平台同时在用**：macOS 侧装了 `global.json` 钉的 .NET 10 SDK，**刻意不装 `pwsh`**。于是
 ① 与 ③ 在 macOS 上用 `dotnet` 原命令即可（`dotnet build NexusStackNext.slnx -c Release`；
 `dotnet format NexusStackNext.slnx --verify-no-changes` 正是 `check-format.ps1` 包的那一条），
-**② 目前只有 pwsh 入口**（`scripts/run-tests.ps1`：串行 + 所有权互斥，且需要一台库）。
+**② 目前只有 pwsh 入口**（`scripts/run-tests.ps1`：受控负载 + 所有权互斥，且需要一台库）。
 CI **只在 Linux 上跑**：部署目标是 Linux 容器，Windows / macOS 只是开发机。现状与核实命令见
 [提交、PR 与凭据](docs/agents/pr-and-credentials.md)。
 
@@ -152,7 +152,13 @@ CI **只在 Linux 上跑**：部署目标是 Linux 容器，Windows / macOS 只�
 ```powershell
 ./scripts/run-tests.ps1                                      # 全量
 ./scripts/run-tests.ps1 -Filter 'FullyQualifiedName~SomeTest' # 过滤
+./scripts/run-tests.ps1 -Concurrency 4 -StopOnFailure         # 已审核普通旅程最多4路
 ```
+
+**受控并发、筛选、压力停止或恢复负载时**，先读
+[共用测试库受控并发](docs/local-test-concurrency.md)。用户于2026-10-07授权先4路、不稳降2路；
+只有声明的普通旅程在一个所有者下并行，重操作单许可、特殊旅程独占，CI保持原隔离模式。
+下方事故说明的是无约束工程并发，不能用它绕过当前调度与所有权保护。
 
 `dotnet test <解决方案>` 会**并行**跑十几个测试工程，而它们**全部连同一台 PostgreSQL**。
 
@@ -162,7 +168,7 @@ CI **只在 Linux 上跑**：部署目标是 Linux 容器，Windows / macOS 只�
 
 **注意 `-m:1` 不管用**——它限制的是构建并行度，不是测试宿主的启动并行度。
 实测加上它之后仍然同时起 13 个进程。想真正串行只能自己循环，脚本就是这么做的
-（实测并发峰值 = 1）。
+（当时实测并发峰值 = 1；当前显式受控模式见上方）。
 
 脚本还打印目标数据库主机、逐工程耗时，并持有原子互斥句柄，跨工作区只允许一份负载。
 所有本机真实测试使用同一系统临时目录与更新后的脚本。异常退出、取消或保护拒绝时，
@@ -202,7 +208,7 @@ Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/ident
 Platform 也默认 PostgreSQL；配置、迁移、并发写入或重启验证时先读 `docs/platform-settings.md`。
 文件迁移与访问读 `docs/private-files.md`；审计迁移与消息摄入读 `docs/committed-auditing.md`；计划迁移、后台触发或交付恢复读 `docs/durable-scheduling.md`。
 普通宿主启动不迁移，未迁移或数据库不可用会退出；无库演示须显式选择开发/测试 Memory 模式。
-Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，仍按脚本串行运行。
+Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，并行范围按上方受控模式声明。
 
 **注意 Files 的两种存储故障走的是不同路径**：启动时路径不可创建 → **进程直接崩**（快速失败，就绪检查根本来不及报）；
 运行期存储掉线 → **就绪检查报 503**。两者互补，不是重复。

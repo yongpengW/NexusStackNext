@@ -50,7 +50,7 @@ Message Chains · Middle Man · Refused Bequest
 
 ```powershell
 dotnet build NexusStackNext.slnx        # 警告即错误：这一步同时是"没有坏味道"的检查
-pwsh -File scripts/run-tests.ps1        # 全部测试，**串行**：十几个工程共用一台库，并行会压垮它
+pwsh -File scripts/run-tests.ps1        # 默认串行；授权的本地受控4/2路见 docs/local-test-concurrency.md
 pwsh -File scripts/check-format.ps1     # 格式：`dotnet format --verify-no-changes`
 pwsh -File scripts/check-tracker.ps1    # 跟踪器与规范的一致性
 pwsh -File scripts/assert-no-credentials.ps1

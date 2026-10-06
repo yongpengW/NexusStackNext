@@ -384,6 +384,7 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
 
     public async Task MigrateAsync()
     {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         // 未复用结构的旅程复用测试进程中的 EF 模型；每次仍对独立空库执行真实迁移。
         // CLI 契约测试显式使用 MigrateThroughCliAsync，避免反复启动六个进程。
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
@@ -489,6 +490,7 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
 
     private async Task ExecuteAdminAsync(string sql)
     {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: sql.StartsWith("CREATE DATABASE", StringComparison.Ordinal));
         // Administrative commands are infrequent; do not reuse an idle management socket.
         // Keep ConnectionString unchanged so the actual hosts still exercise business pools.
         var admin = new NpgsqlConnectionStringBuilder(_admin) { Pooling = false };

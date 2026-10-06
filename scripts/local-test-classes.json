@@ -1,0 +1,21 @@
+[
+  "NexusStackNext.HostIntegration.Tests.AuditInvestigationTests",
+  "NexusStackNext.HostIntegration.Tests.BusinessJourneyIsolationTests",
+  "NexusStackNext.HostIntegration.Tests.FactCapacityDiagnosticsTests",
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyBusinessIsolationTests",
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyDeadlineTests",
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyProtocolTests",
+  "NexusStackNext.HostIntegration.Tests.FactCapacityPolicyTransactionTests",
+  "NexusStackNext.HostIntegration.Tests.FactDeliveryInvestigationTests",
+  "NexusStackNext.HostIntegration.Tests.FactDeliveryRecoveryGatewayAccessTests",
+  "NexusStackNext.HostIntegration.Tests.FilesFactDeliveryRecoveryTests",
+  "NexusStackNext.HostIntegration.Tests.IdentityDeliveryInvestigationTests",
+  "NexusStackNext.HostIntegration.Tests.IdentityFactCapacityTests",
+  "NexusStackNext.HostIntegration.Tests.PlatformJourneyIsolationTests",
+  "NexusStackNext.HostIntegration.Tests.PlatformSettingsAccessTests",
+  "NexusStackNext.HostIntegration.Tests.PostgresFactCapacityPolicyAccessTests",
+  "NexusStackNext.HostIntegration.Tests.PostgresFactCapacityPolicyRevisionTests",
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactCapacityPolicyHistoryTests",
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactCapacityPolicyTests",
+  "NexusStackNext.HostIntegration.Tests.SchedulingFactDeliveryRecoveryTests"
+]

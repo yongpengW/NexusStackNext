@@ -14,10 +14,17 @@ public sealed class JourneyDatabaseDefinition : ICollectionFixture<JourneyDataba
 public sealed class JourneyDatabaseTemplates : IAsyncLifetime
 {
     private readonly Lazy<Task<IdentityJourneyDatabase>> _platform = new(() => CreateTemplateAsync(database => database.MigrateAsync()));
-    private readonly Lazy<Task<IdentityJourneyDatabase>> _costing = new(() => CreateTemplateAsync(database => CostingDatabase.MigrateAsync(database.ConnectionString)));
-    private readonly Lazy<Task<IdentityJourneyDatabase>> _pricing = new(() => CreateTemplateAsync(database => PricingDatabase.MigrateAsync(database.ConnectionString)));
+    private readonly Lazy<Task<IdentityJourneyDatabase>> _costing = new(() => CreateTemplateAsync(database => MigrateBusinessAsync(database, "costing")));
+    private readonly Lazy<Task<IdentityJourneyDatabase>> _pricing = new(() => CreateTemplateAsync(database => MigrateBusinessAsync(database, "pricing")));
 
     public Task InitializeAsync() => Task.CompletedTask;
+
+    private static async Task MigrateBusinessAsync(IdentityJourneyDatabase database, string context)
+    {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
+        if (context == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
+        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+    }
 
     internal Task<IdentityJourneyDatabase> CreateAsync() => CreateAsync("platform");
 
