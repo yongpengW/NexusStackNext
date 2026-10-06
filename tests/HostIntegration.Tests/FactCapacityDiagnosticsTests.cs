@@ -20,13 +20,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityDiagnosticsTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class FactCapacityDiagnosticsTests(PlatformJourneyTemplate databases)
 {
     [PostgresFact]
     public async Task PostgreSqlReader_ExcludesUncommittedChanges_EvenInTheWritersScope()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new DiagnosticPersistentApp(database.ConnectionString);
         await using var scope = app.Services.CreateAsyncScope();
         var context = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
@@ -51,8 +51,7 @@ public sealed class FactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task SchedulingPostgres_ReadsOnlyItsCommittedLedger()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new DiagnosticPersistentApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "diagnostics-root-password");
@@ -116,8 +115,7 @@ public sealed class FactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task FilesPostgres_ReadsCommittedUpload_WithoutCountingOtherContexts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new DiagnosticPersistentApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "diagnostics-root-password");
@@ -171,8 +169,7 @@ public sealed class FactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task IdentityPostgres_ReadsItsCommittedFacts_WithoutTouchingPlatformQuota()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new DiagnosticPersistentApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "diagnostics-root-password");
@@ -203,8 +200,7 @@ public sealed class FactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task PlatformPostgres_ReadsOwnedLedger_ExcludesOrdinaryMessages_AndKeepsInt64Exact()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "diagnostics-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "diagnostics-root-password");

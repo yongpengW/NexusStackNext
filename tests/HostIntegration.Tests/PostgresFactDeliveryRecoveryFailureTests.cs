@@ -17,13 +17,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PostgresFactDeliveryRecoveryFailureTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class PostgresFactDeliveryRecoveryFailureTests(PlatformJourneyTemplate databases)
 {
     [PostgresFact]
     public async Task ReceiptAndLedgerWriteFailures_PreserveTheirRealMeaning_AndLeaveNoPartialRecovery()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         await using var host = CreateModule(database.ConnectionString, now);
         await host.StartAsync();
@@ -81,8 +81,7 @@ public sealed class PostgresFactDeliveryRecoveryFailureTests
     [PostgresFact]
     public async Task CleanupLedgerWriteFailure_RollsBackRemovedReceiptsAndCapacity_WithoutChangingOriginalFacts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         await using var host = CreateModule(database.ConnectionString, now);
         await host.StartAsync();
@@ -144,8 +143,7 @@ public sealed class PostgresFactDeliveryRecoveryFailureTests
     [PostgresFact]
     public async Task CallerCancelsBeforeReceiptCommit_RollsBackPreparedRecovery_AndOriginalRequestCanRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         const string applicationName = "nsn-recovery-waiting-caller";
         var moduleConnection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
@@ -239,8 +237,7 @@ public sealed class PostgresFactDeliveryRecoveryFailureTests
     [PostgresFact]
     public async Task OwnedRecoveryLedgerContention_ReturnsBusyWithoutChangingTheStoppedFact_AndAllowsOriginalRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         await using var host = CreateModule(database.ConnectionString, now);
         await host.StartAsync();

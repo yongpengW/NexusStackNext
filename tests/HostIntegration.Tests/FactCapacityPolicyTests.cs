@@ -17,7 +17,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class FactCapacityPolicyTests(PlatformJourneyTemplate databases)
 {
     [Fact]
     public async Task PlatformPolicyRequest_OpenApi_OnlyPublishesAcceptedInputs()
@@ -43,8 +44,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPostgres_ConcurrentPolicyChanges_ReplayOriginalReceiptAndRejectAbaOrIdentityReuse()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "policy-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -102,8 +102,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPolicyMaintenance_ExposesRollbackFailureThenReleasesBatchesAfterRecovery()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
         await using (var fault = connection.CreateCommand())
@@ -197,8 +196,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPostgres_AcceptedPolicyEvidence_IsImmutableWhileDeliveryMetadataCanChange()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "policy-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -253,8 +251,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPostgres_PolicyCleanup_RequiresBothRetentionsAndPreservesStoppedEvidence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "policy-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -370,8 +367,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPostgres_AnUnrelatedOutboxLockError_IsNotTranslatedIntoCapacityBusy()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
         await using (var command = connection.CreateCommand())
@@ -409,8 +405,7 @@ public sealed class FactCapacityPolicyTests
     [PostgresFact]
     public async Task PlatformPostgres_PolicyReceipt_ReplaysOriginalAfterHostRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var request = new
         {
             requestId = Guid.NewGuid(),

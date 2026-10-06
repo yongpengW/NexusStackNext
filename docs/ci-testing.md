@@ -1,5 +1,9 @@
 # CI 隔离并行
 
+宿主测试的实时脱敏进度、精确工程过滤与普通旅程的空结构复用见
+[宿主测试耗时与初始化复用](host-test-performance.md)。这不放开共享数据库并发，
+也不缩小 CI 的发现清单或统一合并门禁。
+
 共享开发 PostgreSQL 同时承担配置中心负载，本机测试继续由 `scripts/run-tests.ps1` 串行执行。
 CI 将并行放在独立 GitHub 托管 runner 之间；每组独占 PostgreSQL、Redis、RabbitMQ，
 每个端口只绑定回环地址。测试类内部的原有并发设置和故障断言保持不变。
@@ -67,9 +71,11 @@ PR、dev/main push 和手动触发均保留，当前没有路径过滤，也没�
 
 ## 初始化复用与构建边界
 
-普通宿主旅程通过 `IdentityJourneyDatabase.MigrateAsync` 在测试进程内执行真实 EF 迁移，
+未接入空结构复用的普通宿主旅程通过 `IdentityJourneyDatabase.MigrateAsync` 在测试进程内执行真实 EF 迁移，
 复用运行时和 EF 模型缓存，省去每条旅程六次进程启动。每条旅程依然独立建库、迁移、释放连接池和删库，
 不共享数据、DbContext 或运行中的宿主，也不以 `EnsureCreated` 替代迁移。
+首批七类由 collection 所有的空模板执行一次相同真实迁移，再逐例复制独立库，见
+[宿主测试耗时与初始化复用](host-test-performance.md)。它们也不共享业务数据或宿主。
 真实提交与重启测试需要这种数据隔离；参考 [EF 数据库测试指南](https://learn.microsoft.com/en-us/ef/core/testing/testing-with-the-database)。
 
 验证独立迁移、重复迁移与重启的旅程显式使用 `MigrateThroughCliAsync`，仍从空库启动六个真实迁移命令。

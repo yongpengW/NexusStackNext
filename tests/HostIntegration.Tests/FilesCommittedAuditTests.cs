@@ -19,13 +19,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesCommittedAuditTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class FilesCommittedAuditTests(PlatformJourneyTemplate databases)
 {
     [PostgresFact]
     public async Task DeletionOrigin_RollsBackWithItsFact_AndOnlyTheSuccessfulFirstDeleteOwnsIt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var provider = BuildStorage(database.ConnectionString);
         await using var scope = provider.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -87,8 +87,7 @@ public sealed class FilesCommittedAuditTests
     [AuditBrokerFact]
     public async Task DeferredDeletion_RestartsAsSystemRecovery_AndRetainsTheFirstDeletionOrigin()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var root = Path.Combine(Path.GetTempPath(), "nsn-file-origin-" + Guid.NewGuid().ToString("N"));
         var unavailable = root + "-offline";
         var prefix = RabbitMqTestBroker.UniquePrefix();
@@ -180,8 +179,7 @@ public sealed class FilesCommittedAuditTests
     [PostgresFact]
     public async Task StaleFileUpdate_DoesNotOverwriteDeletion_OrPublishAnUncommittedFact()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var provider = BuildStorage(database.ConnectionString);
         var id = new StoredFileId(76200);
         await using (var create = provider.CreateAsyncScope())
@@ -219,8 +217,7 @@ public sealed class FilesCommittedAuditTests
     [AuditBrokerFact]
     public async Task FileFacts_SurviveSourceRestart_AndReachCentralInvestigationThroughRabbitMq()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-files", ClientName = prefix };
         var topology = EventTopology.Create(broker.ExchangeName,
@@ -277,8 +274,7 @@ public sealed class FilesCommittedAuditTests
     [PostgresFact]
     public async Task SourceFactFailure_RollsBackMetadataAndTheWholeFactBatch_AndTheSameScopeCanRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var provider = BuildStorage(database.ConnectionString);
         await using var scope = provider.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -325,8 +321,7 @@ public sealed class FilesCommittedAuditTests
     [PostgresFact]
     public async Task CleanupDeferral_IsACommittedFact_AndRepeatedStateDoesNotAddFacts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var provider = BuildStorage(database.ConnectionString);
         await using var scope = provider.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -370,8 +365,7 @@ public sealed class FilesCommittedAuditTests
     [PostgresFact]
     public async Task UploadAndDelete_RecordSeparateCommittedLifecycleFacts_WithoutFileContent()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-root-password");

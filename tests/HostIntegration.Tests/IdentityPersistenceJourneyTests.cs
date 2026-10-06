@@ -373,6 +373,15 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
         return database;
     }
 
+    internal async Task<IdentityJourneyDatabase> CopyAsync()
+    {
+        var database = new IdentityJourneyDatabase();
+        // Small immutable templates use WAL_LOG; FILE_COPY would force shared-server checkpoints.
+        // Generated names belong to this fixture; no caller can select another database as a template.
+        await database.ExecuteAdminAsync($"CREATE DATABASE \"{database._name}\" TEMPLATE \"{_name}\" STRATEGY WAL_LOG ALLOW_CONNECTIONS true");
+        return database;
+    }
+
     public async Task MigrateAsync()
     {
         // 普通旅程复用测试进程中的 EF 模型；每次仍对独立空库执行真实迁移。
