@@ -21,6 +21,9 @@ param(
 
     [string] $Filter,
 
+    [Alias('Project')]
+    [string] $ProjectName,
+
     [ValidateSet('Debug', 'Release')]
     [string] $Configuration = 'Debug',
 
@@ -48,7 +51,7 @@ $solution = Join-Path $repoRoot 'NexusStackNext.slnx'
 if ($CiShard -ge 0) {
     Import-Module (Join-Path $PSScriptRoot 'ci-test-support.psm1') -Force
     Assert-CiIsolation $repoRoot
-    if ($Init -or $Filter -or -not $NoBuild -or [string]::IsNullOrWhiteSpace($ReportDirectory)) { throw 'CI shards require a preceding build and an unfiltered report directory.' }
+    if ($Init -or $Filter -or $ProjectName -or -not $NoBuild -or [string]::IsNullOrWhiteSpace($ReportDirectory)) { throw 'CI shards require a preceding build and an unfiltered report directory.' }
 }
 
 # ---------- -Init：生成骨架 ----------
@@ -193,6 +196,11 @@ if ($testProjects.Count -eq 0) {
     exit 1
 }
 
+if ($ProjectName) {
+    $testProjects = @($testProjects | Where-Object BaseName -CEQ $ProjectName)
+    if ($testProjects.Count -ne 1) { throw 'TEST_PROJECT_NOT_FOUND: specify one exact test project name.' }
+}
+
 $ciResults = @()
 if ($CiShard -ge 0) {
     $workloadReturned = $false
@@ -206,6 +214,7 @@ if ($CiShard -ge 0) {
 
 $results = @()
 $testReportDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($testReportDirectory)
 foreach ($project in $testProjects) {
     $name = $project.BaseName
     Write-Host ''
@@ -213,7 +222,7 @@ foreach ($project in $testProjects) {
 
     $reportPath = Join-Path $testReportDirectory ($name + '.trx')
     $dotnetArgs = @('test', $project.FullName, '--configuration', $Configuration, '--nologo', '--no-build', '-nodeReuse:false',
-        '--logger', "trx;LogFileName=$name.trx", '--results-directory', $testReportDirectory)
+        '--logger', "trx;LogFileName=$name.trx", '--logger', 'console;verbosity=normal', '--results-directory', $testReportDirectory)
     if ($Filter) {
         $dotnetArgs += @('--filter', $Filter)
     }
@@ -225,14 +234,44 @@ foreach ($project in $testProjects) {
 
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $workloadReturned = $false
-    $output = & dotnet @dotnetArgs 2>&1
+    $completedCases = 0
+    $lastProgressSeconds = 0.0
+    $output = & dotnet @dotnetArgs 2>&1 | ForEach-Object {
+        # Forward only safe case metadata while retaining the authoritative exit code and TRX.
+        # Raw console lines and theory arguments remain withheld, including during long journeys.
+        $case = [regex]::Match([string]$_, '^\s*(Passed|Failed|Skipped|已通过|通过|失败|已跳过|跳过)\s+(?<method>NexusStackNext\.[A-Za-z0-9_.]+)(?:[\s(]|$)')
+        if ($case.Success) {
+            $completedCases++
+            $outcome = switch ($case.Groups[1].Value) {
+                { $_ -in @('Passed', '已通过', '通过') } { 'Passed' }
+                { $_ -in @('Failed', '失败') } { 'Failed' }
+                default { 'Skipped' }
+            }
+            if ($completedCases -eq 1 -or $completedCases % 25 -eq 0 -or $outcome -ne 'Passed' -or
+                $watch.Elapsed.TotalSeconds - $lastProgressSeconds -ge 30) {
+                Write-Host "  TEST_PROGRESS project=$name completed=$completedCases outcome=$outcome method=$($case.Groups['method'].Value) elapsed=$([math]::Round($watch.Elapsed.TotalSeconds, 1))s"
+                $lastProgressSeconds = $watch.Elapsed.TotalSeconds
+            }
+        }
+        $_
+    }
     $workloadReturned = $true
     $testExitCode = $LASTEXITCODE
     $watch.Stop()
+    # Console diagnostics may contain private data. Keep them in the local report directory;
+    # CI uploads only the separate, sanitized shard JSON, never these raw files.
+    [IO.File]::WriteAllLines((Join-Path $testReportDirectory "$name.console.log"), [string[]]$output, [Text.UTF8Encoding]::new($false))
     if ($CiShard -ge 0) { $ciResults += @(Get-TestReportResults $reportPath $name) }
 
-    $output | Where-Object { $_ -match '已通过!|失败!|通过!|Passed!|Failed!' } | ForEach-Object {
-        Write-Host "  $_"
+    if (Test-Path -LiteralPath $reportPath) {
+        try {
+            [xml] $summary = Get-Content -LiteralPath $reportPath -Raw
+            $counters = $summary.SelectSingleNode('//*[local-name()="Counters"]')
+            if ($null -ne $counters) {
+                Write-Host "  TEST_RESULT project=$name passed=$([int]$counters.passed) failed=$([int]$counters.failed) total=$([int]$counters.total)"
+            }
+        }
+        catch { Write-Host '  结果报告不可解析；不回显原始控制台输出。' }
     }
 
     if ($testExitCode -ne 0) {

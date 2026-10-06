@@ -21,13 +21,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityAdmissionTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class FactCapacityAdmissionTests(PlatformJourneyTemplate databases)
 {
     [PostgresFact]
     public async Task PlatformLedgerContention_RejectsWithinItsBudget_WithoutCommitting_AndRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString);
         using var client = app.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(3);
@@ -71,8 +71,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task IdentityLedgerContention_RollsBackTheCommand_AndInvalidatesPermissionsOnlyAfterRecovery()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var permissions = new RecordingPermissionCache();
         await using var app = new AdmissionApp(database.ConnectionString, permissions);
         using var client = app.CreateClient();
@@ -111,8 +110,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task FilesLedgerContention_RejectsUploadAndDeletion_WithoutPartialFactsOrLostDownload()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString);
         using var client = app.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(3);
@@ -154,8 +152,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task SchedulingLedgerContention_RejectsDefinitionAndDecision_WithoutPublishingAnOccurrence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString);
         using var client = app.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(3);
@@ -208,8 +205,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task CallerCancellation_RemainsCancellation_AndSameScopeCanWriteAfterRollback()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString, waitTimeout: "00:00:05");
         await using var scope = app.Services.CreateAsyncScope();
         var settings = scope.ServiceProvider.GetRequiredService<SettingStore>();
@@ -246,8 +242,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task FilesAlreadyAcceptedDeletion_WhenCapacityLockIsBusy_RemainsRecoverable()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "admission-root-password");
@@ -283,8 +278,7 @@ public sealed class FactCapacityAdmissionTests
     [PostgresFact]
     public async Task UnrelatedDatabaseFailure_IsNotReportedAsOwnedCapacityContention()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new AdmissionApp(database.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "admission-root-password");

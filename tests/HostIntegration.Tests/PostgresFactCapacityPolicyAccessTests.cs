@@ -11,7 +11,8 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PostgresFactCapacityPolicyAccessTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class PostgresFactCapacityPolicyAccessTests(PlatformJourneyTemplate databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_DefaultRoutes_RequireCurrentSeparateWritePermissionAndTrustedActor()
@@ -61,10 +62,9 @@ public sealed class PostgresFactCapacityPolicyAccessTests
     public Task SchedulingPostgres_BusinessRoutes_RequireCurrentSeparateWritePermissionAndTrustedActor()
         => VerifyAsync("routes.business.json", "scheduling");
 
-    private static async Task VerifyAsync(string configurationFile, string context)
+    private async Task VerifyAsync(string configurationFile, string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var platform = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
         using var root = platform.CreateClient();

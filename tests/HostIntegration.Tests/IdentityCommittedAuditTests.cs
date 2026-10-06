@@ -13,13 +13,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityCommittedAuditTests
+[Collection(PlatformJourneyDefinition.Name)]
+public sealed class IdentityCommittedAuditTests(PlatformJourneyTemplate databases)
 {
     [AuditBrokerFact]
     public async Task PermissionAndTokenFacts_SurviveRestart_AndRetainTheRejectedReplayCommit()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-security", ClientName = prefix };
         var topology = EventTopology.Create(broker.ExchangeName,
@@ -149,8 +149,7 @@ public sealed class IdentityCommittedAuditTests
     [PostgresFact]
     public async Task SourceFactWriteFailure_RollsBackRegistration_AndRetryCreatesOneUserAndFact()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var connection = new NpgsqlConnection(database.ConnectionString);
@@ -180,8 +179,7 @@ public sealed class IdentityCommittedAuditTests
     [AuditBrokerFact]
     public async Task RegisteredUserFact_SurvivesSourceRestart_AndReachesAuthorizedInvestigation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-identity", ClientName = prefix };
         var topology = EventTopology.Create(broker.ExchangeName,
@@ -233,8 +231,7 @@ public sealed class IdentityCommittedAuditTests
     [PostgresFact]
     public async Task RejectedPasswords_CommitFailureAndLockoutFacts_ButLockedLoginDoesNot()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         var request = new { userName = "audit-lockout-user", password = "private-correct-password" };
@@ -267,8 +264,7 @@ public sealed class IdentityCommittedAuditTests
     [PostgresFact]
     public async Task Registration_CommitsOneMinimalFact_AndDuplicateDoesNotInventAnother()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         client.DefaultRequestHeaders.Add("X-Correlation-ID", "identity-registration-audit");

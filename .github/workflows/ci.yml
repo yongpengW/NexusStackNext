@@ -140,6 +140,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-test-ownership.ps1
 
+      - name: 验证脱敏实时测试进度
+        shell: pwsh
+        run: ./scripts/check-test-progress.ps1
+
       - name: 验证本地隔离数据库入口
         shell: pwsh
         run: ./scripts/check-local-postgres.ps1
