@@ -12,7 +12,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingFactAtomicityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingFactAtomicityTests(JourneyDatabaseTemplates databases)
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
 
@@ -34,8 +35,7 @@ public sealed class SchedulingFactAtomicityTests
     [PostgresFact]
     public async Task PostgresFactFailure_RollsBackCreationMaintenanceAndDecision_AndSameScopeCanRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
         await using var scope = app.Services.CreateAsyncScope();
         await using var connection = new NpgsqlConnection(database.ConnectionString);

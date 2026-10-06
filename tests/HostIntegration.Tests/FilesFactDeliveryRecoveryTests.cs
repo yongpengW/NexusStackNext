@@ -10,13 +10,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesFactDeliveryRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesFactDeliveryRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresHttp_PolicyFactCanBeRecovered_WithoutChangingTheFileOrEitherFactPool()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-policy-recovery-root", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-policy-recovery-root");
@@ -90,8 +90,7 @@ public sealed class FilesFactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PostgresHttp_RecoversOnlyTheStoppedFact_ReplaysTheDecisionAndPreservesTheFile()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-recovery-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-recovery-root-password");

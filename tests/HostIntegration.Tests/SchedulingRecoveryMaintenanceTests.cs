@@ -20,13 +20,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingRecoveryMaintenanceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingRecoveryMaintenanceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresModule_FailedBackgroundExpiryPreservesReceiptsAndPlanHistory_ThenRecoversInFiniteBatches()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var acceptedAt = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(acceptedAt);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });

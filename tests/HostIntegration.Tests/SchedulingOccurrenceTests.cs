@@ -13,13 +13,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingOccurrenceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingOccurrenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task CompetingScanners_RecordOneOccurrence_AndAdvanceThePlanOnce()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "schedule-root-password");
@@ -90,8 +90,7 @@ public sealed class SchedulingOccurrenceTests
     [PostgresFact]
     public async Task OneOccurrenceCannotCommit_LeavesNoPartialState_AndLaterPlansStillTrigger()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var clock = new MutableClock(new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero));
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password",
             schedulingWorkerEnabled: false, schedulingClock: clock);
@@ -167,8 +166,7 @@ public sealed class SchedulingOccurrenceTests
     [PostgresFact]
     public async Task DuePlan_RecordsPendingOccurrence_AndDoesNotFireAgainBeforeNextTime()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "schedule-root-password");

@@ -13,7 +13,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryGatewayAccessTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("platform", "routes.pricing.json")]
@@ -90,10 +91,9 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests
         await VerifyAsync(root, platform.Services, source, configurationFile, PlatformAppWithRootAccount.RootUserName);
     }
 
-    private static async Task VerifyPostgresAsync(string source, string configurationFile)
+    private async Task VerifyPostgresAsync(string source, string configurationFile)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var platform = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
         using var root = platform.CreateClient();

@@ -11,13 +11,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryInvestigationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryInvestigationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresSources_UnmanagedMessagesAreExplicitlyRejected_WithoutOpeningTheirBudget()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "unmanaged-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "unmanaged-root-password");
@@ -88,8 +88,7 @@ public sealed class FactDeliveryInvestigationTests
     [PostgresFact]
     public async Task PlatformPostgres_SingleMessageCanBeInvestigatedBeyondTheBoundedList_WithoutExposingItsContents()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "investigation-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "investigation-root-password");

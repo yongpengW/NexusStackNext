@@ -10,7 +10,8 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PlatformSettingsAccessTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PlatformSettingsAccessTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("routes.json")]
@@ -41,8 +42,7 @@ public sealed class PlatformSettingsAccessTests
     [PostgresFact]
     public async Task SessionAuthorityUnavailable_DoesNotAllowSettingsAccess_AndRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await LoginAsync(client, "journey-root", "settings-root-password");

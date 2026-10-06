@@ -18,13 +18,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryMaintenanceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryMaintenanceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresModule_BackgroundCleanupRollsBackFailure_ReportsSafeDegradation_AndRecoversNextRound()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var acceptedAt = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(acceptedAt);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });

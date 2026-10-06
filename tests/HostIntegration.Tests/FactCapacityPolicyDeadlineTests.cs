@@ -13,13 +13,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyDeadlineTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyDeadlineTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task FilesPolicyDeliveryConfirmation_PreservesTheFull24HourMinimum_WhenAckHasSubMicrosecondPrecision()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         await using var scope = app.Services.CreateAsyncScope();
         var policies = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityPolicyStore>("files");
@@ -51,8 +51,7 @@ public sealed class FactCapacityPolicyDeadlineTests
     [PostgresFact]
     public async Task AllPostgresSourceConfirmations_KeepTheFirstAckAndPreserve24Hours_InTheirOwnedAdapters()
     {
-        await using var platformDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await platformDatabase.MigrateAsync();
+        await using var platformDatabase = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(platformDatabase.ConnectionString, schedulingWorkerEnabled: false);
         await using (var scope = app.Services.CreateAsyncScope())
         {
@@ -63,8 +62,7 @@ public sealed class FactCapacityPolicyDeadlineTests
                     scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(source));
             }
         }
-        await using var costingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costingDatabase.ConnectionString);
+        await using var costingDatabase = await databases.CreateAsync("costing");
         await using var costing = CreateBusinessModule(costingDatabase.ConnectionString, "Costing");
         await using (var scope = costing.Services.CreateAsyncScope())
         {
@@ -72,8 +70,7 @@ public sealed class FactCapacityPolicyDeadlineTests
                 scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityPolicyCleanup>("costing"),
                 scope.ServiceProvider.GetRequiredService<IOutboxStore>());
         }
-        await using var pricingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(pricingDatabase.ConnectionString);
+        await using var pricingDatabase = await databases.CreateAsync("pricing");
         await using var pricing = CreateBusinessModule(pricingDatabase.ConnectionString, "Pricing");
         await using (var scope = pricing.Services.CreateAsyncScope())
         {
@@ -127,8 +124,7 @@ public sealed class FactCapacityPolicyDeadlineTests
     [PostgresFact]
     public async Task FilesPolicyReceipt_NeverCleansBeforeItsAdvertisedDeadline_WhenAcceptedTimeHasSubMicrosecondPrecision()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();

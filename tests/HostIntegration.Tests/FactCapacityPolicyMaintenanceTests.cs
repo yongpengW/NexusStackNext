@@ -23,7 +23,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyMaintenanceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyMaintenanceTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("Identity")]
@@ -152,10 +153,9 @@ public sealed class FactCapacityPolicyMaintenanceTests
     [PostgresFact]
     public Task HostShutdown_CancelsWaitingCleanupWithoutDeletingReceiptOrReportingFailure() => VerifyWaitingCleanupAsync(true);
 
-    private static async Task VerifyWaitingCleanupAsync(bool shutdown)
+    private async Task VerifyWaitingCleanupAsync(bool shutdown)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var acceptedAt = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         // The held row forces expiry; the recovery round must retain a usable production budget.
         var maintenanceTimeout = shutdown ? TimeSpan.FromSeconds(30) : new FactCapacityPolicyMaintenanceOptions().Timeout;
@@ -242,11 +242,10 @@ public sealed class FactCapacityPolicyMaintenanceTests
         }
         finally { await host.StopAsync(); }
     }
-    private static async Task VerifyPostgresMaintenanceAsync(string context)
+    private async Task VerifyPostgresMaintenanceAsync(string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await using var database = await databases.CreateAsync(context);
         var contextKey = context.ToLowerInvariant();
-        await MigrateAsync(database, context);
         await using var connection = new NpgsqlConnection(database.ConnectionString);
         await connection.OpenAsync();
         await using (var fault = connection.CreateCommand())
@@ -372,12 +371,6 @@ public sealed class FactCapacityPolicyMaintenanceTests
         }
         return builder.Build();
     }
-    private static Task MigrateAsync(IdentityJourneyDatabase database, string context) => context switch
-    {
-        "Costing" => CostingDatabase.MigrateAsync(database.ConnectionString),
-        "Pricing" => PricingDatabase.MigrateAsync(database.ConnectionString),
-        _ => database.MigrateAsync(),
-    };
     private static async Task<HealthReportEntry> WaitForReleasedAsync(HealthCheckService health, string context, long released)
     {
         using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(8));

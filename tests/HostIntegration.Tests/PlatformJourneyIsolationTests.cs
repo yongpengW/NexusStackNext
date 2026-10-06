@@ -4,8 +4,8 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class PlatformJourneyIsolationTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PlatformJourneyIsolationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task IndependentJourneys_DoNotShareUsersOrDatabaseFailures()

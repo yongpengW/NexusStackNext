@@ -19,8 +19,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class FilesCommittedAuditTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesCommittedAuditTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task DeletionOrigin_RollsBackWithItsFact_AndOnlyTheSuccessfulFirstDeleteOwnsIt()

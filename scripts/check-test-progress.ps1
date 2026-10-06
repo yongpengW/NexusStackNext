@@ -63,6 +63,7 @@ foreach ($mode in @('pass', 'pass-zh', 'fail', 'fail-zh')) {
     $start.Environment['NSN_PROGRESS_MODE'] = $mode
     $start.Environment['NSN_PROGRESS_RELEASE'] = $release
     $start.Environment['GITHUB_ACTIONS'] = 'false'
+    $previousReports = @(Get-ChildItem -LiteralPath $temporary -Directory -Filter 'nsn-test-results-*' | Select-Object -ExpandProperty FullName)
     $process = [Diagnostics.Process]::Start($start)
     $errors = $process.StandardError.ReadToEndAsync()
     $lines = [Collections.Generic.List[string]]::new()
@@ -85,6 +86,23 @@ foreach ($mode in @('pass', 'pass-zh', 'fail', 'fail-zh')) {
             -not $progress.Contains('method=NexusStackNext.Probe.Tests.Journey') -or $progress.Contains('private-argument-sentinel')) {
             throw 'Live progress omitted its result or exposed case parameters.'
         }
+        $privateReady = $false
+        $privateWatch = [Diagnostics.Stopwatch]::StartNew()
+        while ($privateWatch.Elapsed.TotalSeconds -lt 2.5 -and -not $privateReady) {
+            $newReports = @(Get-ChildItem -LiteralPath $temporary -Directory -Filter 'nsn-test-results-*' | Where-Object FullName -NotIn $previousReports)
+            if ($newReports.Count -gt 1) { throw 'Ambiguous live private diagnostics.' }
+            if ($newReports.Count -eq 1) {
+                $privatePath = Join-Path $newReports[0].FullName 'Probe.Tests.console.log'
+                if (Test-Path -LiteralPath $privatePath) {
+                    $privateStream = [IO.File]::Open($privatePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                    $privateReader = [IO.StreamReader]::new($privateStream)
+                    try { $privateReady = $privateReader.ReadToEnd().Contains('private-argument-sentinel') }
+                    finally { $privateReader.Dispose() }
+                }
+            }
+            if (-not $privateReady) { Start-Sleep -Milliseconds 25 }
+        }
+        if (-not $privateReady -or $process.HasExited) { throw 'Private diagnostic evidence was not available before the workload finished.' }
         [IO.File]::WriteAllText($release, 'release')
         $tail = $process.StandardOutput.ReadToEndAsync()
         if (-not $process.WaitForExit(10000)) { throw 'The released runner did not finish.' }
@@ -93,7 +111,7 @@ foreach ($mode in @('pass', 'pass-zh', 'fail', 'fail-zh')) {
             ($expected -eq 'Failed' -and $process.ExitCode -eq 0)) { throw 'Runner result propagation or parameter redaction failed.' }
         $guard = Get-Content -LiteralPath (Join-Path $temporary 'nexusstack-run-tests.lock') -Raw | ConvertFrom-Json
         if ($guard.State -ne 'idle') { throw 'Returned external workload did not release ownership.' }
-        Write-Output "PASS: $mode progress arrives before completion, with parameters withheld and exit/ownership preserved"
+        Write-Output "PASS: $mode progress and private evidence arrive before completion, with parameters withheld and exit/ownership preserved"
     }
     finally {
         # Release only our own external fixture; it has a bounded wait even if a reader failed.
@@ -120,3 +138,6 @@ try {
     Write-Output 'PASS: unknown project rejected before test workload'
 }
 finally { $process.Dispose() }
+
+# Real xUnit verifies early failure stops later work and still disposes the owned fixture.
+& (Join-Path $PSScriptRoot 'check-test-stop.ps1')

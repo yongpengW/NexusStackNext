@@ -8,13 +8,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityFactCapacityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityFactCapacityTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task MenuCreation_RequiresCapacityForItsEntireFactBatch_AndNextRequestCanRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "capacity-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-root-password");

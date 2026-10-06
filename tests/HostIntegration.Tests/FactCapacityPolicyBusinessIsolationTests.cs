@@ -37,7 +37,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyBusinessIsolationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyBusinessIsolationTests(JourneyDatabaseTemplates databases)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly DateTimeOffset Now = new(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
@@ -170,22 +171,15 @@ public sealed class FactCapacityPolicyBusinessIsolationTests
     public Task PricingPostgres_CancellationDuringSerialization_PreservesBusinessPolicyAndRetry()
         => VerifyFailureAsync("pricing", true, true);
 
-    private static async Task VerifyAsync(string context, bool postgres)
+    private async Task VerifyAsync(string context, bool postgres)
     {
-        await using var database = postgres ? await IdentityJourneyDatabase.CreateAsync() : null;
-        if (database is not null) { await MigrateAsync(database, context); }
+        await using var database = postgres ? await databases.CreateAsync(context) : null;
         await using var app = CreateApp(context, database?.ConnectionString);
         await VerifyLoweringAsync(app, context);
     }
 
-    private static Task MigrateAsync(IdentityJourneyDatabase database, string context) => context switch
-    {
-        "costing" => CostingDatabase.MigrateAsync(database.ConnectionString),
-        "pricing" => PricingDatabase.MigrateAsync(database.ConnectionString),
-        _ => database.MigrateAsync(),
-    };
 
-    private static async Task VerifyFailureAsync(string context, bool postgres, bool cancel)
+    private async Task VerifyFailureAsync(string context, bool postgres, bool cancel)
     {
         using var cancellation = new CancellationTokenSource();
         var actual = new SystemTextJsonIntegrationEventSerializer();
@@ -197,8 +191,7 @@ public sealed class FactCapacityPolicyBusinessIsolationTests
             CancelOnSerialize = cancellation,
         };
         IIntegrationEventSerializer selected = cancel ? canceling : rejecting;
-        await using var database = postgres ? await IdentityJourneyDatabase.CreateAsync() : null;
-        if (database is not null) { await MigrateAsync(database, context); }
+        await using var database = postgres ? await databases.CreateAsync(context) : null;
         await using var app = CreateApp(context, database?.ConnectionString, selected);
         Assert.True((await WriteAsync(app, context, 1)).IsSuccess);
         Assert.True((await WriteAsync(app, context, 2)).IsSuccess);

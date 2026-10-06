@@ -21,8 +21,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class FactCapacityAdmissionTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityAdmissionTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PlatformLedgerContention_RejectsWithinItsBudget_WithoutCommitting_AndRecovers()

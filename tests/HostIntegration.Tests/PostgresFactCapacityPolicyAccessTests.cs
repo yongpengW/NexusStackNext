@@ -11,8 +11,8 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-[Collection(PlatformJourneyDefinition.Name)]
-public sealed class PostgresFactCapacityPolicyAccessTests(PlatformJourneyTemplate databases)
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PostgresFactCapacityPolicyAccessTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_DefaultRoutes_RequireCurrentSeparateWritePermissionAndTrustedActor()
