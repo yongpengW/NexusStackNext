@@ -24,8 +24,11 @@ while (-not (Test-Path -LiteralPath $env:NSN_PROGRESS_RELEASE)) {
     if ($watch.Elapsed.TotalSeconds -gt 12) { exit 9 }
     Start-Sleep -Milliseconds 25
 }
-
-
+$directoryIndex = [array]::IndexOf($args, '--results-directory')
+$passed = if ($outcome -eq 'Passed') { 1 } else { 0 }
+$failed = 1 - $passed
+$xml = '<TestRun><Results><UnitTestResult testName="Probe.Journey(private-argument-sentinel)" outcome="' + $outcome + '" /></Results><ResultSummary><Counters total="1" executed="1" passed="' + $passed + '" failed="' + $failed + '" notExecuted="0" /></ResultSummary></TestRun>'
+[IO.File]::WriteAllText((Join-Path $args[$directoryIndex + 1] 'Probe.Tests.trx'), $xml)
 if ($outcome -eq 'Failed') {
     Write-Output 'Failed! - Failed: 1, Passed: 0, Skipped: 0, Total: 1'
     exit 7

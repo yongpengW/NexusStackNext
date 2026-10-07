@@ -144,6 +144,10 @@ jobs:
         shell: pwsh
         run: ./scripts/check-test-progress.ps1
 
+      - name: 验证定向测试范围与结果拒绝
+        shell: pwsh
+        run: ./scripts/check-test-scope.ps1
+
       - name: 验证本地隔离数据库入口
         shell: pwsh
         run: ./scripts/check-local-postgres.ps1
