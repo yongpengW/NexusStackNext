@@ -8,13 +8,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingPersistenceJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PlanAudit_PreservesDelegateAndCreation_AndIgnoresRepeatedPause()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var schedulingClock = new MutableClock(DateTimeOffset.UtcNow);
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password",
             schedulingWorkerEnabled: false, schedulingClock: schedulingClock);
@@ -67,8 +67,7 @@ public sealed class SchedulingPersistenceJourneyTests
     [PostgresFact]
     public async Task IndependentSchedulingMigration_IsRequired_AndDatabaseOutageChangesReadiness()
     {
-        await using var platform = await IdentityJourneyDatabase.CreateAsync();
-        await platform.MigrateAsync();
+        await using var platform = await databases.CreateAsync();
         await using var scheduling = await IdentityJourneyDatabase.CreateAsync();
         await using (var unprepared = new PersistentIdentityApp(platform.ConnectionString, schedulingConnectionString: scheduling.ConnectionString))
         {
@@ -97,8 +96,7 @@ public sealed class SchedulingPersistenceJourneyTests
     [PostgresFact]
     public async Task UnavailableSchedulingDatabase_RefusesStartupWithSanitizedDiagnostic()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString,
             schedulingConnectionString: "Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1");
         var error = Assert.ThrowsAny<Exception>(() => app.CreateClient());
@@ -109,8 +107,7 @@ public sealed class SchedulingPersistenceJourneyTests
     [PostgresFact]
     public async Task Restart_PreservesTargetPauseVersionAndNextOccurrenceTime()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         long id;
         var itemId = Guid.NewGuid();
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "schedule-root-password"))

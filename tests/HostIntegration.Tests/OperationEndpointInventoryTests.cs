@@ -29,8 +29,11 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
     public async Task EveryRealHostEndpoint_IsObservedOrExplicitlyExcluded()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            await CostingDatabase.MigrateAsync(database.ConnectionString);
+            await PricingDatabase.MigrateAsync(database.ConnectionString);
+        }
         await using var platform = new PlatformApp { SchedulingWorkerEnabled = false };
         await InspectAsync(platform, "platform");
         await using var costing = new BusinessApp<CostingHostMarker>("Costing", database.ConnectionString);

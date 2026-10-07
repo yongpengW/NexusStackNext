@@ -14,7 +14,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryRestartTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryRestartTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task Files_RecoveryReceiptSurvivesSourceProcessRestart_WithoutChangingMetadataOrPrivateBytes()
@@ -24,10 +25,9 @@ public sealed class FactDeliveryRecoveryRestartTests
     public Task Scheduling_RecoveryReceiptSurvivesSourceProcessRestart_WithoutChangingNonemptyPlanHistory()
         => VerifySourceRestartAsync("scheduling");
 
-    private static async Task VerifySourceRestartAsync(string source)
+    private async Task VerifySourceRestartAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var storageRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "nsn-fact-recovery-restart-" + Guid.NewGuid().ToString("N")));
         var expectedParent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
         var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
