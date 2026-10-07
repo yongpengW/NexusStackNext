@@ -6,13 +6,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PlatformPersistenceJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PlatformPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task SettingAudit_ReportsPersistedActorAndTime_AndNoOpPreservesMetadata()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
@@ -52,8 +52,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task OverlappingWrites_WithoutClientVersions_StillRejectDatabaseConflicts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
@@ -105,8 +104,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task UnavailablePlatformDatabase_RefusesStartup_WithSanitizedDiagnostic()
     {
-        await using var identity = await IdentityJourneyDatabase.CreateAsync();
-        await identity.MigrateAsync();
+        await using var identity = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(identity.ConnectionString,
             platformConnectionString: "Host=127.0.0.1;Port=1;Database=unavailable;Timeout=1");
         var error = Assert.ThrowsAny<Exception>(() => app.CreateClient());
@@ -126,8 +124,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task FailedDatabaseCommit_DoesNotLeavePartialValueOrDescription_AndNextWriteRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
@@ -159,8 +156,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task ConcurrentFirstWrites_CreateExactlyOneRegistration_AndReportConflict()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
@@ -183,8 +179,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task ConditionalWrites_RejectStaleChanges_AndDoNotAdvanceNoOpVersion()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "settings-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "settings-root-password");
@@ -233,8 +228,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task PlatformOutage_ChangesReadinessButNotLiveness_AndRecoversIndependentlyOfIdentity()
     {
-        await using var identity = await IdentityJourneyDatabase.CreateAsync();
-        await identity.MigrateAsync();
+        await using var identity = await databases.CreateAsync();
         await using var platform = await IdentityJourneyDatabase.CreateAsync();
         var migration = await IdentityJourneyDatabase.RunMigrationAsync(platform.ConnectionString, "Platform");
         Assert.Equal(0, migration.ExitCode);
@@ -311,8 +305,7 @@ public sealed class PlatformPersistenceJourneyTests
     [PostgresFact]
     public async Task CommittedSetting_IsAvailableAfterHostRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "settings-root-password"))
         {
             var client = first.Client;

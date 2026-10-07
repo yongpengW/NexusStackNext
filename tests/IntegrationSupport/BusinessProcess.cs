@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
-using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
@@ -16,12 +14,13 @@ internal sealed class BusinessProcess : IAsyncDisposable
     private readonly Process _process;
     private readonly Task<string> _output;
     private readonly Task<string> _error;
-    private BusinessProcess(Process process, Uri address)
+    private readonly ListeningAddress _listening = new();
+    private BusinessProcess(Process process)
     {
         _process = process;
-        _output = process.StandardOutput.ReadToEndAsync();
+        _output = _listening.CaptureAsync(process.StandardOutput);
         _error = process.StandardError.ReadToEndAsync();
-        Client = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(10) };
+        Client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
     }
 
     internal static readonly string SigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -49,19 +48,24 @@ internal sealed class BusinessProcess : IAsyncDisposable
 
     private static async Task<BusinessProcess> StartHttpAsync(ProcessStartInfo start)
     {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        var address = new Uri($"http://127.0.0.1:{port}");
-        start.Environment["ASPNETCORE_URLS"] = address.ToString();
-        var app = new BusinessProcess(Process.Start(start)!, address);
+        start.Environment["ASPNETCORE_URLS"] = "http://127.0.0.1:0";
+        start.Environment["Serilog__MinimumLevel__Override__Microsoft.Hosting.Lifetime"] = "Information";
+        var app = new BusinessProcess(Process.Start(start)!);
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             while (!timeout.IsCancellationRequested)
             {
                 Assert.False(app._process.HasExited, "业务宿主提前退出；诊断输出保留在子进程，不回显凭据。");
+                if (app.Client.BaseAddress is null && app._listening.Address is { } address)
+                {
+                    app.Client.BaseAddress = address;
+                }
+                if (app.Client.BaseAddress is null)
+                {
+                    await Task.Delay(100, timeout.Token);
+                    continue;
+                }
                 try
                 {
                     using var response = await app.Client.GetAsync(new Uri("/health", UriKind.Relative), timeout.Token);

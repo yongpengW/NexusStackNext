@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -16,6 +18,13 @@ public sealed class PlatformJourneyIsolationTests(JourneyDatabaseTemplates datab
         await using var secondHost = new PersistentIdentityApp(second.ConnectionString, schedulingWorkerEnabled: false);
         using var firstClient = firstHost.CreateClient();
         using var secondClient = secondHost.CreateClient();
+        var firstStorage = firstHost.Services.GetRequiredService<IConfiguration>()["Files:StorageRoot"];
+        var secondStorage = secondHost.Services.GetRequiredService<IConfiguration>()["Files:StorageRoot"];
+        Assert.False(string.IsNullOrWhiteSpace(firstStorage));
+        Assert.False(string.IsNullOrWhiteSpace(secondStorage));
+        Assert.NotEqual(firstStorage, secondStorage);
+        Assert.True(Directory.Exists(firstStorage));
+        Assert.True(Directory.Exists(secondStorage));
         var account = new { userName = "independent-journey-user", password = "independent-journey-password" };
         using var created = await firstClient.PostAsJsonAsync(new Uri("/api/identity/users", UriKind.Relative), account);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -28,5 +37,12 @@ public sealed class PlatformJourneyIsolationTests(JourneyDatabaseTemplates datab
         Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
         using var available = await secondClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, available.StatusCode);
+        await firstHost.DisposeAsync();
+        Assert.False(Directory.Exists(firstStorage));
+        Assert.True(Directory.Exists(secondStorage));
+        using var surviving = await secondClient.GetAsync(new Uri("/health/ready", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, surviving.StatusCode);
+        await secondHost.DisposeAsync();
+        Assert.False(Directory.Exists(secondStorage));
     }
 }

@@ -12,13 +12,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class CalendarSchedulingPersistenceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class CalendarSchedulingPersistenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task IntervalRule_NormalizesSubMicrosecondInput_WithoutFalseRuleChanges()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "calendar-root-password");
@@ -63,8 +63,7 @@ public sealed class CalendarSchedulingPersistenceTests
     [PostgresFact]
     public async Task ProcessCrashDuringDecisionCommit_LeavesNoPartialWork_AndRestartRegistersOneOccurrence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var barrier = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(database.ConnectionString) { Pooling = false }.ConnectionString);
         await barrier.OpenAsync();
         await using (var install = new NpgsqlCommand("""
@@ -167,8 +166,7 @@ public sealed class CalendarSchedulingPersistenceTests
     [PostgresFact]
     public async Task ScannerCommit_WinsAgainstStaleManagementSnapshots_IncludingSameRuleUpdates()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var start = new DateTimeOffset(2026, 10, 2, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(start);
         await using var app = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password",
@@ -249,8 +247,7 @@ public sealed class CalendarSchedulingPersistenceTests
     [PostgresFact]
     public async Task MissingDecisionStorage_RefusesStartup_AndMarksOnlyReadinessUnhealthy()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative));
@@ -283,8 +280,7 @@ public sealed class CalendarSchedulingPersistenceTests
     [PostgresFact]
     public async Task CalendarDecisions_RollBackTogether_ThenCompetingScannersCommitEachWindowOnce()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var clock = new MutableClock(DateTimeOffset.Parse("2026-10-02T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
         await using var app = new PersistentIdentityApp(database.ConnectionString, "calendar-root-password",
             schedulingWorkerEnabled: false, schedulingClock: clock);

@@ -18,13 +18,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalRecoveryCleanupTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalRecoveryCleanupTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresCleanup_RetainsOriginalDeadlineAfterShorteningPolicyAndRestarting()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(now);
         var message = new OperationObservedV1
@@ -80,8 +80,7 @@ public sealed class OperationJournalRecoveryCleanupTests
     [PostgresFact]
     public async Task HostPostgresCleanup_ReleasesExpiredRecoveryQuotaWithoutManualCleanup()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         await AssertAutomaticCleanupAsync(database.ConnectionString);
     }
 
@@ -150,8 +149,7 @@ public sealed class OperationJournalRecoveryCleanupTests
     [PostgresFact]
     public async Task CleanupCancellationAndDeleteFailure_PreserveReceiptAndQuota_ThenConcurrentCleanupCountsOnce()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(now);
         var services = new ServiceCollection();
@@ -239,8 +237,7 @@ public sealed class OperationJournalRecoveryCleanupTests
     [PostgresFact]
     public async Task PostgresCleanup_RespectsReceiptDeadlineAndBatch_AndReleasesOnlyRecoveryQuota()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var clock = new MutableClock(new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero));
         var services = new ServiceCollection();
         services.AddSingleton<IClock>(clock);

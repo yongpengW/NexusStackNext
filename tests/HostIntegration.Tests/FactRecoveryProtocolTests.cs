@@ -20,7 +20,8 @@ using NexusStackNext.Scheduling.Application;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryProtocolTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryProtocolTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task PlatformMemory_CompetingRecoveriesHaveOneWinner_AndReplayPreservesOriginalDecision()
@@ -72,10 +73,9 @@ public sealed class FactRecoveryProtocolTests
     public Task PricingPostgres_CompetingRecoveriesHaveOneWinner_AndReplayPreservesOriginalDecision()
         => VerifyBusinessPostgresAsync("pricing");
 
-    private static async Task VerifyPlatformPostgresAsync(string source)
+    private async Task VerifyPlatformPostgresAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
@@ -83,11 +83,9 @@ public sealed class FactRecoveryProtocolTests
         await VerifyPolicyAsync(client, app.Services, source);
     }
 
-    private static async Task VerifyBusinessPostgresAsync(string source)
+    private async Task VerifyBusinessPostgresAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var host = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);
         host.Authenticate();

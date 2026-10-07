@@ -8,7 +8,8 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyOpenApiTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyOpenApiTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public Task PlatformMemory_PublishesOnlyPolicyInputsAndExactResponseContracts()
@@ -45,8 +46,7 @@ public sealed class FactCapacityPolicyOpenApiTests
     [PostgresFact]
     public async Task CostingPostgres_PublishesOnlyPolicyInputsAndExactResponseContracts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString);
         await VerifyDocumentAsync(host.Client, "costing");
     }
@@ -54,8 +54,7 @@ public sealed class FactCapacityPolicyOpenApiTests
     [PostgresFact]
     public async Task PricingPostgres_PublishesOnlyPolicyInputsAndExactResponseContracts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         await using var host = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString);
         await VerifyDocumentAsync(host.Client, "pricing");
     }
@@ -67,10 +66,9 @@ public sealed class FactCapacityPolicyOpenApiTests
         await VerifyDocumentAsync(client, context);
     }
 
-    private static async Task VerifyPlatformPostgresAsync(string context)
+    private async Task VerifyPlatformPostgresAsync(string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await VerifyDocumentAsync(client, context);

@@ -27,13 +27,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityPersistenceJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task TerminatingTheProcess_PreservesCommittedUsersAndRevocation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         JsonElement tokens;
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString))
         {
@@ -54,8 +54,7 @@ public sealed class IdentityPersistenceJourneyTests
     [PostgresFact]
     public async Task RefreshReplay_RevokesReplacementTokensAcrossRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         JsonElement original;
         JsonElement replacement;
         await using (var app = new PersistentIdentityApp(database.ConnectionString))
@@ -94,8 +93,7 @@ public sealed class IdentityPersistenceJourneyTests
     [PostgresFact]
     public async Task FailedPasswordAttempts_AreCountedAcrossRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using (var app = new PersistentIdentityApp(database.ConnectionString))
         {
             using var client = app.CreateClient();
@@ -126,8 +124,7 @@ public sealed class IdentityPersistenceJourneyTests
     [PostgresFact]
     public async Task RoleAndMenuGrants_SurviveRestart_WithoutResettingRootCredentials()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var credentials = new { userName = "persistent-operator", password = "journey-test-password" };
         long userId;
         long menuId;
@@ -184,8 +181,7 @@ public sealed class IdentityPersistenceJourneyTests
     [PostgresFact]
     public async Task DatabaseOutage_ChangesReadinessButNotLiveness_AndRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString);
         using var client = app.CreateClient();
         using var ready = await client.GetAsync(new Uri("/health/ready", UriKind.Relative));
@@ -210,8 +206,7 @@ public sealed class IdentityPersistenceJourneyTests
     [PostgresFact]
     public async Task Logout_RemainsRevokedAfterRestart_AndFreshLoginWorks()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var credentials = new { userName = "logout-user", password = "journey-test-password" };
         JsonElement tokens;
         await using (var app = new PersistentIdentityApp(database.ConnectionString))
@@ -282,6 +277,8 @@ public sealed class IdentityPersistenceJourneyTests
 
 internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
 {
+    private readonly JourneyFileStorage _files = new();
+    private readonly string? _filesRoot;
     private readonly string _connectionString;
     private readonly string _platformConnectionString;
     private readonly string _filesConnectionString;
@@ -293,7 +290,7 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
 
     public PersistentIdentityApp(string connectionString, string? rootPassword = null, string? platformConnectionString = null,
         string? filesConnectionString = null, string? auditingConnectionString = null, bool schedulingWorkerEnabled = true,
-        string? schedulingConnectionString = null, IClock? schedulingClock = null)
+        string? schedulingConnectionString = null, IClock? schedulingClock = null, string? filesRoot = null)
     {
         _connectionString = connectionString;
         _platformConnectionString = platformConnectionString ?? connectionString;
@@ -303,6 +300,7 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
         _rootPassword = rootPassword;
         _schedulingWorkerEnabled = schedulingWorkerEnabled;
         _schedulingClock = schedulingClock;
+        _filesRoot = filesRoot;
         UseKestrel(0);
     }
 
@@ -329,6 +327,7 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
                 ["ConnectionStrings:OperationJournal"] = _connectionString,
                 ["ConnectionStrings:Scheduling"] = _schedulingConnectionString,
             }));
+        _files.Configure(builder, _filesRoot);
         return base.CreateHost(builder);
     }
 
@@ -356,6 +355,19 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
                 ["Identity:Root:UserName"] = _rootPassword is null ? null : "journey-root",
                 ["Identity:Root:Password"] = _rootPassword,
             }));
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        _files.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing) { _files.Dispose(); }
     }
 }
 

@@ -323,6 +323,7 @@ public sealed class IdentityApiTests(PlatformApp app) : IClassFixture<PlatformAp
 /// </summary>
 public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
 {
+    private readonly JourneyFileStorage _files = new();
     /// <summary>是否启用真实后台扫描；手动调用扫描器的测试显式关闭。</summary>
     public bool SchedulingWorkerEnabled { get; init; } = true;
 
@@ -343,6 +344,7 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
                 ["Scheduling:Storage:Provider"] = "Memory",
                 ["Scheduling:Worker:Enabled"] = SchedulingWorkerEnabled.ToString(),
             }));
+        _files.Configure(builder);
         return base.CreateHost(builder);
     }
 
@@ -363,5 +365,20 @@ public class PlatformApp : WebApplicationFactory<PlatformHostMarker>
             {
                 ["Jwt:SigningKey"] = "integration-test-signing-key-long-enough-for-hs256",
             }));
+    }
+
+    /// <inheritdoc />
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        _files.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    /// <inheritdoc />
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        if (disposing) { _files.Dispose(); }
     }
 }

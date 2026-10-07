@@ -12,7 +12,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryPersistenceFailureTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryPersistenceFailureTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PlatformPostgres_ReceiptAndLedgerFailuresPreserveMeaning_AndCancelBeforeCommitLeavesNoPartialRecovery()
@@ -38,10 +39,9 @@ public sealed class FactRecoveryPersistenceFailureTests
     public Task PricingPostgres_ReceiptAndLedgerFailuresPreserveMeaning_AndCancelBeforeCommitLeavesNoPartialRecovery()
         => VerifyBusinessAsync("pricing");
 
-    private static async Task VerifyPlatformAsync(string source)
+    private async Task VerifyPlatformAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
         { ApplicationName = "nsn-fact-recovery-cancel" }.ConnectionString;
         await using var app = new PersistentIdentityApp(connection, PlatformAppWithRootAccount.RootPassword, schedulingWorkerEnabled: false);
@@ -50,11 +50,9 @@ public sealed class FactRecoveryPersistenceFailureTests
         await VerifyAsync(client, app.Services, connection, source);
     }
 
-    private static async Task VerifyBusinessAsync(string source)
+    private async Task VerifyBusinessAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
         { ApplicationName = "nsn-fact-recovery-cancel" }.ConnectionString;
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;

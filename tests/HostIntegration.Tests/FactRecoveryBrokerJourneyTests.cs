@@ -24,7 +24,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryBrokerJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public Task Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts()
@@ -53,8 +54,7 @@ public sealed class FactRecoveryBrokerJourneyTests
     [AuditBrokerFact]
     public async Task FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-memory-recovery", ClientName = prefix };
         string[] sources = ["platform", "identity", "files", "scheduling"];
@@ -199,14 +199,10 @@ public sealed class FactRecoveryBrokerJourneyTests
         }
     }
 
-    private static async Task VerifyAsync(string source)
+    private async Task VerifyAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else if (source == "pricing") { await PricingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await database.MigrateAsync(); }
-        await using var centralDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await centralDatabase.MigrateAsync();
+        await using var database = await databases.CreateAsync(source);
+        await using var centralDatabase = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-recovery", ClientName = prefix };
         var topic = source + ".fact-capacity-policy-changed.v1";

@@ -18,7 +18,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingOperationTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task PlanWithoutOperationOrigin_RetainsItsKnownDelegator_WithoutInventingAParentOperation()
@@ -51,8 +52,7 @@ public sealed class SchedulingOperationTests
     [PostgresFact]
     public async Task CancelDuringTriggerCommit_PreservesCanceledObservation_WithoutRegisteringAnOccurrence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "schedule-root-password");
@@ -118,8 +118,7 @@ public sealed class SchedulingOperationTests
     [PostgresFact]
     public async Task PlanCreationOrigin_SurvivesRestart_AndFlowsIntoTheTriggeredOccurrence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         OperationObservedV1 creation;
         long planId;
         var targetId = Guid.NewGuid();
@@ -220,8 +219,7 @@ public sealed class SchedulingOperationTests
         Assert.Equal(creation.OperationId, preserved.RootOperationId);
         Assert.Equal(creation.ActorId, preserved.InitiatorId);
 
-        await using var costingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costingDatabase.ConnectionString);
+        await using var costingDatabase = await databases.CreateAsync("costing");
         var costingServices = new ServiceCollection();
         costingServices.AddLogging();
         costingServices.AddNexusStackApplication();
