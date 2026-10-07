@@ -8,7 +8,8 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryOpenApiTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryOpenApiTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("platform")]
@@ -40,8 +41,7 @@ public sealed class FactDeliveryRecoveryOpenApiTests
     [PostgresFact]
     public async Task PricingPostgres_DeclaresConditionalRecoveryInputsAndSafeExactResponseContracts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         await using var host = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location,
             "Pricing", database.ConnectionString);
         await VerifyDocumentAsync(host.Client, "pricing");
@@ -58,17 +58,15 @@ public sealed class FactDeliveryRecoveryOpenApiTests
     [PostgresFact]
     public async Task CostingPostgres_DeclaresConditionalRecoveryInputsAndSafeExactResponseContracts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location,
             "Costing", database.ConnectionString);
         await VerifyDocumentAsync(host.Client, "costing");
     }
 
-    private static async Task VerifyPlatformPostgresAsync(string source)
+    private async Task VerifyPlatformPostgresAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await VerifyDocumentAsync(client, source);

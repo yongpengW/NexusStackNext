@@ -18,13 +18,13 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class BusinessFactCapacityAdmissionTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class BusinessFactCapacityAdmissionTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PricingLedgerContention_DoesNotAcknowledgeCostOrCommitFee_AndOriginalRequestsRecoverOnce()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var connection = new CommittedFactCapacityWriteOptions { Timeout = TimeSpan.FromMilliseconds(250) }.ConfigureConnection(database.ConnectionString);
         await using var app = TaskOperationTests.CreatePricingApp(connection, null);
         await using var scope = app.Services.CreateAsyncScope();
@@ -79,8 +79,7 @@ public sealed class BusinessFactCapacityAdmissionTests
     [PostgresFact]
     public async Task PricingLedgerContention_RollsBackManualInputAndCompletion_AndSameLeaseCanRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var settings = new Dictionary<string, string> { ["Pricing__AuditDelivery__CapacityWrite__Timeout"] = "00:00:00.250" };
         await using var host = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString, settings: settings);
         host.Authenticate();
@@ -130,8 +129,7 @@ public sealed class BusinessFactCapacityAdmissionTests
     [PostgresFact]
     public async Task CostingLedgerContention_RollsBackManualInputAndCompletion_AndSameLeaseCanRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var settings = new Dictionary<string, string> { ["Costing__AuditDelivery__CapacityWrite__Timeout"] = "00:00:00.250" };
         await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString, settings: settings);
         host.Authenticate();

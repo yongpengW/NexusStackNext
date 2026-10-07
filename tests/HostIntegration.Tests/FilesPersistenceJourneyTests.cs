@@ -8,13 +8,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesPersistenceJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-root-password");
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-root-password");
@@ -44,8 +44,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-pending-fairness-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             long firstId;
             long nextId;
             string firstBytes;
@@ -97,13 +96,12 @@ public sealed class FilesPersistenceJourneyTests
     [PostgresFact]
     public Task UnwritableOrphanProtection_DoesNotBlockOtherOrphanRecovery() => AssertOrphanRecoveryContinuesAsync(true);
 
-    private static async Task AssertOrphanRecoveryContinuesAsync(bool unwritableProtection)
+    private async Task AssertOrphanRecoveryContinuesAsync(bool unwritableProtection)
     {
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-orphan-fairness-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             await using (var connection = new NpgsqlConnection(database.ConnectionString))
             {
                 await connection.OpenAsync();
@@ -147,8 +145,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-concurrent-delete-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root);
             using var client = new HttpClient { BaseAddress = host.Client.BaseAddress, Timeout = TimeSpan.FromSeconds(20) };
             await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-root-password");
@@ -206,8 +203,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-interrupted-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             await using (var connection = new NpgsqlConnection(database.ConnectionString))
             {
                 await connection.OpenAsync();
@@ -263,8 +259,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-unknown-commit-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             await using var observer = new NpgsqlConnection(database.ConnectionString);
             await observer.OpenAsync();
             await using (var setup = new NpgsqlCommand("""
@@ -355,8 +350,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-orphan-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             await using (var connection = new NpgsqlConnection(database.ConnectionString))
             {
                 await connection.OpenAsync();
@@ -386,14 +380,13 @@ public sealed class FilesPersistenceJourneyTests
     [PostgresFact]
     public Task ReplacedStorageDirectory_DoesNotFalselyConfirmDeletion() => AssertDeletionRecoversAsync(true);
 
-    private static async Task AssertDeletionRecoversAsync(bool emptyReplacementDirectory)
+    private async Task AssertDeletionRecoversAsync(bool emptyReplacementDirectory)
     {
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-delete-" + Guid.NewGuid().ToString("N"));
         var unavailable = root + "-offline";
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             long id;
             await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "files-root-password", root))
             {
@@ -487,8 +480,7 @@ public sealed class FilesPersistenceJourneyTests
     [PostgresFact]
     public async Task FilesDatabaseOutage_ChangesReadiness_WithoutStoppingIdentity_AndRecovers()
     {
-        await using var identity = await IdentityJourneyDatabase.CreateAsync();
-        await identity.MigrateAsync();
+        await using var identity = await databases.CreateAsync();
         await using var files = await IdentityJourneyDatabase.CreateAsync();
         var migration = await IdentityJourneyDatabase.RunMigrationAsync(files.ConnectionString, "Files");
         Assert.Equal(0, migration.ExitCode);
@@ -516,8 +508,7 @@ public sealed class FilesPersistenceJourneyTests
         var root = Path.Combine(Path.GetTempPath(), "nsn-files-persistence-" + Guid.NewGuid().ToString("N"));
         try
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await database.MigrateAsync();
+            await using var database = await databases.CreateAsync();
             byte[] bytes = [0, 128, 255, 13, 10, 42];
             var beforeUpload = DateTimeOffset.UtcNow;
             string originalAudit;

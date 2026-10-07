@@ -13,7 +13,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class BusinessFactDeliveryRecoveryGatewayTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class BusinessFactDeliveryRecoveryGatewayTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task CostingPostgres_BusinessRoutes_RequireRootAndKeepRecoveryIdentityTrusted()
@@ -27,11 +28,9 @@ public sealed class BusinessFactDeliveryRecoveryGatewayTests
     public Task PricingPostgres_BusinessRoutes_RequireRootAndKeepRecoveryIdentityTrusted()
         => VerifyAsync("pricing", "routes.business.json");
 
-    private static async Task VerifyAsync(string source, string configurationFile)
+    private async Task VerifyAsync(string source, string configurationFile)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var host = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);
         await using var reader = source == "costing"

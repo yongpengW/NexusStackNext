@@ -12,13 +12,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalDeliveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalDeliveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresRecovery_RejectsOldPublisherFailures_ButAcceptsItsRealConfirmation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         await using var app = PostgresApplication(database.ConnectionString);
         await AssertInFlightRecoveryAsync(app, 1, false);
         await AssertInFlightRecoveryAsync(app, 2, false);
@@ -96,8 +96,7 @@ public sealed class OperationJournalDeliveryTests
     [PostgresFact]
     public async Task RecoveryCancellationAndSaveFailure_PreserveStoppedEvidence_AndAllowLaterRecovery()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         await using var app = PostgresApplication(database.ConnectionString);
         await using var scope = app.CreateAsyncScope();
         var journal = scope.ServiceProvider.GetRequiredService<IOperationJournal>();
@@ -166,8 +165,7 @@ public sealed class OperationJournalDeliveryTests
     [PostgresFact]
     public async Task ConcurrentRecovery_HasOneWinner_AndRevisionSurvivesReopening()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var message = Started(now);
         await using (var app = PostgresApplication(database.ConnectionString))
@@ -228,8 +226,7 @@ public sealed class OperationJournalDeliveryTests
     [PostgresFact]
     public async Task PostgresDeadLetters_AreBoundedFilteredSafeAndRemovedFromTheListAfterRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddOperationJournalPostgresStorage(database.ConnectionString);
@@ -282,8 +279,7 @@ public sealed class OperationJournalDeliveryTests
     [PostgresFact]
     public async Task PostgresRetry_PreservesTheOriginalMessage_AndRejectsStaleAndRepeatedRecovery()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddOperationJournalPostgresStorage(database.ConnectionString, new() { MaxRecords = 1 });

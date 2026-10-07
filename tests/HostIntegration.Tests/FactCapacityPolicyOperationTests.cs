@@ -15,7 +15,8 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyOperationTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task PlatformMemory_AdjustmentReplayAndRejection_ProduceSafeDistinctObservations()
@@ -56,9 +57,7 @@ public sealed class FactCapacityPolicyOperationTests
     [PostgresFact]
     public async Task CostingPostgres_FromRealProcess_AdjustmentReplayAndRejection_ProduceSafeDistinctObservations()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var settings = new Dictionary<string, string>
         {
             ["OperationJournal__Storage__Provider"] = "Postgres",
@@ -78,9 +77,7 @@ public sealed class FactCapacityPolicyOperationTests
     [PostgresFact]
     public async Task PricingPostgres_FromRealProcess_AdjustmentReplayAndRejection_ProduceSafeDistinctObservations()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var settings = new Dictionary<string, string>
         {
             ["OperationJournal__Storage__Provider"] = "Postgres",
@@ -109,10 +106,9 @@ public sealed class FactCapacityPolicyOperationTests
     [PostgresFact]
     public Task SchedulingPostgres_AdjustmentReplayAndRejection_ProduceSafeDistinctObservations() => VerifyPlatformPostgresAsync("scheduling");
 
-    private static async Task VerifyPlatformPostgresAsync(string context)
+    private async Task VerifyPlatformPostgresAsync(string context)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString,
             PlatformAppWithRootAccount.RootPassword, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();

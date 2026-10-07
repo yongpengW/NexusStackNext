@@ -23,15 +23,15 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class TaskOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class TaskOperationTests(JourneyDatabaseTemplates databases)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [PostgresFact]
     public async Task ExpiredPricingAttempt_IsObservedAsLeaseLost_WithoutChangingItsReplacementResult()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         await using var original = CreatePricingApp(database.ConnectionString, "original-initiator",
             new PricingTaskOptions { LeaseDuration = TimeSpan.FromMilliseconds(500) });
         await using var scope = original.Services.CreateAsyncScope();
@@ -71,8 +71,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task ReplacedCostInputs_AreObservedAsSuperseded_AndOnlyCurrentCalculationPublishesAResult()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await using var app = CreateCostingApp(database.ConnectionString, "original-initiator");
         await using var scope = app.Services.CreateAsyncScope();
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
@@ -106,8 +105,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task CanceledInputRead_RecordsCanceledExecution_WithoutCancelingTheBusinessTask()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var command = new UpdatePricingCost(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 0.2m);
         await using (var producer = CreatePricingApp(database.ConnectionString, "original-initiator"))
         await using (var scope = producer.Services.CreateAsyncScope())
@@ -139,8 +137,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task RolledBackPricingAttempt_StaysFailed_AndManualRetryKeepsTheOriginalInitiator()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var command = new UpdatePricingCost(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 0.2m);
         Guid rootOperation;
         await using (var producer = CreatePricingApp(database.ConnectionString, "original-initiator"))
@@ -226,8 +223,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task CostMessage_RejectsMalformedOrigin_BeforeInboxOrTaskAcceptance()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var operationId = Guid.NewGuid();
         var origin = new ExecutionOrigin(operationId, "costing", operationId, "costing", "original-initiator", operationId.ToString("N"));
         var message = new CostCalculatedV1
@@ -274,8 +270,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task CostMessageReplay_CannotChangeOrRemoveItsOriginalExecutionAssociation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var operationId = Guid.NewGuid();
         var origin = new ExecutionOrigin(operationId, "costing", operationId, "costing", "original-initiator", operationId.ToString("N"));
         var message = new CostCalculatedV1
@@ -315,10 +310,8 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task CostResultMessage_PreservesRootInitiatorAndImmediateAttempt_InPricingAfterRestart()
     {
-        await using var costDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await using var priceDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costDatabase.ConnectionString);
-        await PricingDatabase.MigrateAsync(priceDatabase.ConnectionString);
+        await using var costDatabase = await databases.CreateAsync("costing");
+        await using var priceDatabase = await databases.CreateAsync("pricing");
         var command = new UpdateCostInputs(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 20m);
         Guid rootOperation;
         Guid costAttempt;
@@ -378,8 +371,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task PricingAttempt_RecordsSystemExecution_LinkedToTheAcceptedTaskAndInitiator()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var command = new UpdatePricingCost(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 0.2m);
         Guid originId;
         await using (var producer = CreatePricingApp(database.ConnectionString, "original-initiator"))
@@ -421,8 +413,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task CostingAttempt_RecordsSystemExecution_LinkedToTheAcceptedTaskAndInitiator()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var command = new UpdateCostInputs(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 20m);
         Guid originId;
         await using (var producer = CreateCostingApp(database.ConnectionString, "original-initiator"))
@@ -469,10 +460,9 @@ public sealed class TaskOperationTests
     public Task AcceptedPricingTaskForFee_PreservesItsOperationAndInitiator_AcrossRestartAndReplay() =>
         CheckPricingOriginAsync(feeOnly: true);
 
-    private static async Task CheckPricingOriginAsync(bool feeOnly)
+    private async Task CheckPricingOriginAsync(bool feeOnly)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var initial = new UpdatePricingCost(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 0.2m);
         ICommand<RecalculationStatus> command = initial;
         Guid operationId;
@@ -512,8 +502,7 @@ public sealed class TaskOperationTests
     [PostgresFact]
     public async Task AcceptedCostTask_PreservesItsOperationAndInitiator_AcrossRestartAndReplay()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var command = new UpdateCostInputs(Guid.NewGuid(), Guid.NewGuid(), 0, 80m, 20m);
         Guid operationId;
         await using (var app = CreateCostingApp(database.ConnectionString, "original-initiator"))

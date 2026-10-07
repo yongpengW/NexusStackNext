@@ -18,13 +18,13 @@ using RabbitMQ.Client;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class AuditBusinessJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class AuditBusinessJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task CrashBetweenInboxAndAuditEntry_RollsBackReceipt_AndRedeliveryCompletes()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-audit", ClientName = prefix };
         var subscription = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix };
@@ -73,8 +73,7 @@ public sealed class AuditBusinessJourneyTests
     [AuditBrokerFact]
     public async Task ExhaustedBrokerDelivery_IsVisibleAndCanBeRetriedAfterRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-audit", ClientName = prefix };
         var subscription = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix };
@@ -128,8 +127,7 @@ public sealed class AuditBusinessJourneyTests
     [AuditBrokerFact]
     public async Task AuditStorageOutage_DoesNotBlockBusiness_AndBrokerRedeliversAcrossRestart()
     {
-        await using var business = await IdentityJourneyDatabase.CreateAsync();
-        await business.MigrateAsync();
+        await using var business = await databases.CreateAsync();
         await using var auditing = await IdentityJourneyDatabase.CreateAsync();
         Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(auditing.ConnectionString, "Auditing")).ExitCode);
         var prefix = RabbitMqTestBroker.UniquePrefix();
@@ -217,8 +215,7 @@ public sealed class AuditBusinessJourneyTests
     [AuditBrokerFact]
     public async Task RolledBackConflictingAndNoOpSettings_DoNotCreateCommittedFacts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-audit", ClientName = prefix };
         var subscription = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix };
@@ -263,8 +260,7 @@ public sealed class AuditBusinessJourneyTests
     [AuditBrokerFact]
     public async Task CommittedSetting_SurvivesProducerRestart_AndBecomesPrivateTrustedAudit()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-audit", ClientName = prefix };
         var subscription = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix };

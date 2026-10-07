@@ -18,16 +18,15 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class ScheduledCostBusinessJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class ScheduledCostBusinessJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task CostingCrashBeforeReceiptCommit_RollsBackTaskAndInbox_AndRedeliveryRecovers()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await TaskOperationJourneyTests.MigrateJournalAsync(typeof(CostingHostMarker).Assembly.Location, database.ConnectionString);
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-schedule-crash", ClientName = prefix };
         var subscription = new EventSubscription { EventName = ScheduleTriggeredV1.Name, ConsumerName = prefix + "-costing" };
@@ -123,14 +122,11 @@ public sealed class ScheduledCostBusinessJourneyTests
     public Task GatewayCalendar_SurvivesCostingOutageAndCreatorLogout_ThenCompletesThroughPricing() =>
         VerifyScheduledBusinessJourneyAsync(calendar: true);
 
-    private static async Task VerifyScheduledBusinessJourneyAsync(bool calendar)
+    private async Task VerifyScheduledBusinessJourneyAsync(bool calendar)
     {
-        await using var platformDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await platformDatabase.MigrateAsync();
-        await using var costingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costingDatabase.ConnectionString);
-        await using var pricingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(pricingDatabase.ConnectionString);
+        await using var platformDatabase = await databases.CreateAsync();
+        await using var costingDatabase = await databases.CreateAsync("costing");
+        await using var pricingDatabase = await databases.CreateAsync("pricing");
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-schedule-business", ClientName = prefix };
         var audit = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-audit" };

@@ -18,13 +18,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FilesFactCapacityPolicyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FilesFactCapacityPolicyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task FilesPostgres_UnrelatedReceiptLockError_RollsBackPolicyAndPreservesFileFacts()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -151,8 +151,7 @@ public sealed class FilesFactCapacityPolicyTests
     [PostgresFact]
     public async Task FilesPostgres_ControlCleanupRequiresReceiptAndDeliveryDeadlines_AndKeepsDeadLetters()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -209,8 +208,8 @@ public sealed class FilesFactCapacityPolicyTests
     [PostgresFact]
     public async Task FilesPostgres_PolicyExpansionAndReceiptSurviveHostRecreation_WithoutChangingStoredBytes()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        using var storage = new JourneyFileStorage();
+        await using var database = await databases.CreateAsync();
         var path = new Uri("/api/files/audit-capacity", UriKind.Relative);
         var expansion = new FactCapacityPolicyRequest(Guid.NewGuid(), 2, 4, 268435456, 16384, "operator-adjustment");
         string receipt;
@@ -218,7 +217,7 @@ public sealed class FilesFactCapacityPolicyTests
         long version;
         DateTimeOffset? updatedAt;
         System.Net.Http.Headers.AuthenticationHeaderValue? authorization;
-        await using (var app = new PersistentIdentityApp(database.ConnectionString, "files-policy-root", schedulingWorkerEnabled: false))
+        await using (var app = new PersistentIdentityApp(database.ConnectionString, "files-policy-root", schedulingWorkerEnabled: false, filesRoot: storage.Root))
         {
             using var client = app.CreateClient();
             await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "files-policy-root");
@@ -256,7 +255,7 @@ public sealed class FilesFactCapacityPolicyTests
             Assert.Equal(updatedAt, unchanged.UpdatedAt);
         }
         // Host recreation is in this test process; real OS process restart has a separate qualification.
-        await using var recreated = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
+        await using var recreated = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false, filesRoot: storage.Root);
         using var restored = recreated.CreateClient();
         restored.DefaultRequestHeaders.Authorization = authorization;
         using var replay = await restored.PutAsJsonAsync(path, expansion);

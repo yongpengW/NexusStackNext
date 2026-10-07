@@ -16,7 +16,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryCapacityBoundaryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryCapacityBoundaryTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("platform", false)]
@@ -84,10 +85,9 @@ public sealed class FactRecoveryCapacityBoundaryTests
     public Task PricingPostgres_FullRecordPoolRejectsWholeRecovery_AndExpiryReleasesOnlyEvidence()
         => VerifyBusinessPostgresAsync("pricing", recordLimit: true);
 
-    private static async Task VerifyPlatformPostgresAsync(string source, bool recordLimit = false)
+    private async Task VerifyPlatformPostgresAsync(string source, bool recordLimit = false)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await SetOwnedByteEnvelopeAsync(database.ConnectionString, source, recordLimit);
         await using var app = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
@@ -96,11 +96,9 @@ public sealed class FactRecoveryCapacityBoundaryTests
         await VerifyAsync(client, app.Services, source, recordLimit);
     }
 
-    private static async Task VerifyBusinessPostgresAsync(string source, bool recordLimit = false)
+    private async Task VerifyBusinessPostgresAsync(string source, bool recordLimit = false)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         await SetOwnedByteEnvelopeAsync(database.ConnectionString, source, recordLimit);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var host = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);

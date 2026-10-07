@@ -1,3 +1,4 @@
+using NexusStackNext.Auditing.Infrastructure.Persistence;
 using NexusStackNext.Costing.Infrastructure;
 using NexusStackNext.Pricing.Infrastructure;
 
@@ -16,14 +17,22 @@ public sealed class JourneyDatabaseTemplates : IAsyncLifetime
     private readonly Lazy<Task<IdentityJourneyDatabase>> _platform = new(() => CreateTemplateAsync(database => database.MigrateAsync()));
     private readonly Lazy<Task<IdentityJourneyDatabase>> _costing = new(() => CreateTemplateAsync(database => MigrateBusinessAsync(database, "costing")));
     private readonly Lazy<Task<IdentityJourneyDatabase>> _pricing = new(() => CreateTemplateAsync(database => MigrateBusinessAsync(database, "pricing")));
+    private readonly Lazy<Task<IdentityJourneyDatabase>> _journal = new(() => CreateTemplateAsync(MigrateJournalAsync));
 
     public Task InitializeAsync() => Task.CompletedTask;
+
+    private static async Task MigrateJournalAsync(IdentityJourneyDatabase database)
+    {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
+        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+    }
 
     private static async Task MigrateBusinessAsync(IdentityJourneyDatabase database, string context)
     {
         await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         if (context == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
         else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
     }
 
     internal Task<IdentityJourneyDatabase> CreateAsync() => CreateAsync("platform");
@@ -35,6 +44,7 @@ public sealed class JourneyDatabaseTemplates : IAsyncLifetime
             "platform" or "identity" or "files" or "scheduling" => _platform,
             "costing" => _costing,
             "pricing" => _pricing,
+            "journal" => _journal,
             _ => throw new ArgumentOutOfRangeException(nameof(context), context, "No journey template exists for this context."),
         };
         return await (await template.Value).CopyAsync();
@@ -43,7 +53,7 @@ public sealed class JourneyDatabaseTemplates : IAsyncLifetime
     public async Task DisposeAsync()
     {
         List<Exception> failures = [];
-        foreach (var template in new[] { _platform, _costing, _pricing })
+        foreach (var template in new[] { _platform, _costing, _pricing, _journal })
         {
             if (template.IsValueCreated && template.Value.IsCompletedSuccessfully)
             {

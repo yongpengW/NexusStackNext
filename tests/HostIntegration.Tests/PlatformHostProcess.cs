@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using System.Net;
-using System.Net.Sockets;
+using NexusStackNext.IntegrationSupport;
 using NexusStackNext.PlatformHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -10,17 +9,14 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     private readonly Process _process;
     private readonly Task<string> _output;
     private readonly Task<string> _errors;
+    private readonly ListeningAddress _listening = new();
 
     public HttpClient Client { get; }
 
     private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
         IReadOnlyDictionary<string, string>? settings)
     {
-        using var reservation = new TcpListener(IPAddress.Loopback, 0);
-        reservation.Start();
-        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
-        reservation.Stop();
-        Client = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}"), Timeout = TimeSpan.FromSeconds(3) };
+        Client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         var start = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
@@ -29,7 +25,8 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         };
         start.ArgumentList.Add(typeof(PlatformHostMarker).Assembly.Location);
         start.ArgumentList.Add("--urls");
-        start.ArgumentList.Add(Client.BaseAddress.ToString());
+        start.ArgumentList.Add("http://127.0.0.1:0");
+        start.Environment["Serilog__MinimumLevel__Override__Microsoft.Hosting.Lifetime"] = "Information";
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment["Identity__Storage__Provider"] = "Postgres";
         start.Environment["Platform__Storage__Provider"] = "Postgres";
@@ -55,7 +52,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["Identity__Root__Password"] = rootPassword ?? string.Empty;
         if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
         _process = Process.Start(start)!;
-        _output = _process.StandardOutput.ReadToEndAsync();
+        _output = _listening.CaptureAsync(_process.StandardOutput);
         _errors = _process.StandardError.ReadToEndAsync();
     }
 
@@ -69,6 +66,15 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
             int? lastStatus = null;
             while (elapsed.Elapsed < TimeSpan.FromSeconds(20) && !host._process.HasExited)
             {
+                if (host.Client.BaseAddress is null && host._listening.Address is { } address)
+                {
+                    host.Client.BaseAddress = address;
+                }
+                if (host.Client.BaseAddress is null)
+                {
+                    await Task.Delay(100);
+                    continue;
+                }
                 try
                 {
                     using var ready = await host.Client.GetAsync(new Uri(requireReady ? "/health/ready" : "/health/live", UriKind.Relative));

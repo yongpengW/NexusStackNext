@@ -21,11 +21,10 @@ public sealed class FilesFactCapacityTests(JourneyDatabaseTemplates databases)
     [PostgresFact]
     public async Task ConcurrentRepositories_RespectLastSlot_NoOps_AndSameScopeRetryAfterConfirmedCleanup()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await using var database = await databases.CreateAsync();
         var options = new DbContextOptionsBuilder<FilesDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, FilesDbContext.SchemaName).Options;
         await using var context = new FilesDbContext(options);
-        await context.Database.MigrateAsync();
         await SetMaxRecordsAsync(database.ConnectionString, 1);
         await using var provider = FilesCommittedAuditTests.BuildStorage(database.ConnectionString);
         var outcomes = await Task.WhenAll(Enumerable.Range(0, 4).Select(async index =>

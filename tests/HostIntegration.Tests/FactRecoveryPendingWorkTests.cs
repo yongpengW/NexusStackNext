@@ -34,7 +34,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryPendingWorkTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryPendingWorkTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task Scheduling_RecoveryCommitsIndependently_WithoutSavingOrDiscardingTheCallersPendingPlanAndOrigin()
@@ -44,10 +45,9 @@ public sealed class FactRecoveryPendingWorkTests
     public Task SchedulingMemory_BusyRecoveryPreservesTheCallersPendingPlanAndOrigin_AndCanRecoverAfterCommit()
         => VerifyPendingPlanAsync("Memory");
 
-    private static async Task VerifyPendingPlanAsync(string provider)
+    private async Task VerifyPendingPlanAsync(string provider)
     {
-        await using var database = provider == "Postgres" ? await IdentityJourneyDatabase.CreateAsync() : null;
-        if (database is not null) { await database.MigrateAsync(); }
+        await using var database = provider == "Postgres" ? await databases.CreateAsync() : null;
         var instant = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         using var serializer = new PausingEventSerializer(new SystemTextJsonIntegrationEventSerializer(), PlanCommittedV1.Name);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -134,10 +134,9 @@ public sealed class FactRecoveryPendingWorkTests
     public Task FilesMemory_BusyRecoveryPreservesTheCallersPendingPrivateUpload_AndCanRecoverAfterCommit()
         => VerifyPendingFileAsync("Memory");
 
-    private static async Task VerifyPendingFileAsync(string provider)
+    private async Task VerifyPendingFileAsync(string provider)
     {
-        await using var database = provider == "Postgres" ? await IdentityJourneyDatabase.CreateAsync() : null;
-        if (database is not null) { await database.MigrateAsync(); }
+        await using var database = provider == "Postgres" ? await databases.CreateAsync() : null;
         var instant = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         using var serializer = new PausingEventSerializer(new SystemTextJsonIntegrationEventSerializer(), StoredFileCommittedV1.Name);
         var storageRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "nsn-files-pending-recovery-" + Guid.NewGuid().ToString("N")));
@@ -226,10 +225,9 @@ public sealed class FactRecoveryPendingWorkTests
     public Task PlatformMemory_RecoveryCommitsIndependently_WithoutSavingOrDiscardingTheCallersPendingSetting()
         => VerifyPendingSettingAsync("Memory");
 
-    private static async Task VerifyPendingSettingAsync(string provider)
+    private async Task VerifyPendingSettingAsync(string provider)
     {
-        await using var database = provider == "Postgres" ? await IdentityJourneyDatabase.CreateAsync() : null;
-        if (database is not null) { await database.MigrateAsync(); }
+        await using var database = provider == "Postgres" ? await databases.CreateAsync() : null;
         var instant = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         using var serializer = new PausingEventSerializer(new SystemTextJsonIntegrationEventSerializer(), SettingCommittedV1.Name);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -283,8 +281,7 @@ public sealed class FactRecoveryPendingWorkTests
     [PostgresFact]
     public async Task Costing_RecoveryCommitsIndependently_WithoutSavingOrDiscardingTheCallersPendingCostAndTask()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var instant = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         using var serializer = new PausingEventSerializer(new SystemTextJsonIntegrationEventSerializer(), CostSheetCommittedV1.Name);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
@@ -346,8 +343,7 @@ public sealed class FactRecoveryPendingWorkTests
     [PostgresFact]
     public async Task Pricing_RecoveryCommitsIndependently_WithoutSavingOrDiscardingTheCallersPendingQuoteAndTask()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         var instant = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         using var serializer = new PausingEventSerializer(new SystemTextJsonIntegrationEventSerializer(), PriceQuoteCommittedV1.Name);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });

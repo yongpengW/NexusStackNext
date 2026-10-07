@@ -17,7 +17,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryOperationTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("identity")]
@@ -64,10 +65,9 @@ public sealed class FactDeliveryRecoveryOperationTests
         await VerifyAsync(client, app.Services, "platform", "platform");
     }
 
-    private static async Task VerifyPlatformPostgresAsync(string source)
+    private async Task VerifyPlatformPostgresAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
@@ -75,12 +75,9 @@ public sealed class FactDeliveryRecoveryOperationTests
         await VerifyAsync(client, app.Services, source, "platform");
     }
 
-    private static async Task VerifyBusinessPostgresAsync(string source)
+    private async Task VerifyBusinessPostgresAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         var settings = new Dictionary<string, string>
         {

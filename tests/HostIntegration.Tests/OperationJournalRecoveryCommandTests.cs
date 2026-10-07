@@ -15,13 +15,13 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalRecoveryCommandTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalRecoveryCommandTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task RecoveryCommand_ReplaysAcrossHosts_RecordsSystemActor_AndHonorsConfiguredPolicy()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddOperationJournalPostgresStorage(database.ConnectionString);
         await using var provider = services.BuildServiceProvider();
