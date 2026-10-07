@@ -21,7 +21,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryEvidenceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryEvidenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task SchedulingPostgres_AcceptedRecoveryCannotBeRewritten_AndExpiryReleasesOnlyItsCapacity()
@@ -39,10 +40,9 @@ public sealed class FactDeliveryRecoveryEvidenceTests
     public Task IdentityPostgres_AcceptedRecoveryCannotBeRewritten_AndExpiryReleasesOnlyItsCapacity()
         => VerifyImmutableRecoveryAsync("identity");
 
-    private static async Task VerifyImmutableRecoveryAsync(string source)
+    private async Task VerifyImmutableRecoveryAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "evidence-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "evidence-root-password");

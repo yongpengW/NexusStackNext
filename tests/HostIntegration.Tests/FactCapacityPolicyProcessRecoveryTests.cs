@@ -7,13 +7,13 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyProcessRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyProcessRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task FourPlatformPolicies_ReplayOriginalReceiptsAfterProcessCrash_WithoutChangingUsage()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var filesRoot = Path.Combine(Path.GetTempPath(), "nsn-policy-crash-" + Guid.NewGuid().ToString("N"));
         var settings = new Dictionary<string, string>(StringComparer.Ordinal)
         {

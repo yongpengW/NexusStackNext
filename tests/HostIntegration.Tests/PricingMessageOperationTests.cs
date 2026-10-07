@@ -25,7 +25,10 @@ public sealed class PricingMessageOperationTests
     private static async Task InterruptedMessageCommitAsync(bool cancel)
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            await PricingDatabase.MigrateAsync(database.ConnectionString);
+        }
         await using var app = TaskOperationTests.CreatePricingApp(database.ConnectionString, null);
         await using var scope = app.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -88,7 +91,10 @@ public sealed class PricingMessageOperationTests
     public async Task MessageConsumption_HasItsOwnSystemOperation_AndTaskAndFactsKeepTheFirstAcceptanceAcrossRestart()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            await PricingDatabase.MigrateAsync(database.ConnectionString);
+        }
         var parent = new ExecutionOrigin(Guid.NewGuid(), "costing", Guid.NewGuid(), "costing", "original-user", "cost-message-trace", "cost-message-correlation");
         var message = new CostCalculatedV1
         {

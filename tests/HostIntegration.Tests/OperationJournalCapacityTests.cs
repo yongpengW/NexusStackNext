@@ -24,7 +24,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalCapacityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalCapacityTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("MaxRecords", "0")]
@@ -49,8 +50,7 @@ public sealed class OperationJournalCapacityTests
     {
         foreach (var limitRecords in new[] { true, false })
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+            await using var database = await databases.CreateAsync("journal");
             var sample = Started();
             var wireSize = Encoding.UTF8.GetByteCount(new SystemTextJsonIntegrationEventSerializer().Serialize(sample));
             var capacity = new OperationJournalCapacityOptions
@@ -173,8 +173,7 @@ public sealed class OperationJournalCapacityTests
     {
         foreach (var singleRecordLimit in new[] { true, false })
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+            await using var database = await databases.CreateAsync("journal");
             var first = Started();
             var wireSize = Encoding.UTF8.GetByteCount(new SystemTextJsonIntegrationEventSerializer().Serialize(first));
             var services = new ServiceCollection();
@@ -229,8 +228,7 @@ public sealed class OperationJournalCapacityTests
     [PostgresFact]
     public async Task PostgresCapacity_RejectsNewRecordsButPreservesDuplicatesAndAcceptedRecords()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddOperationJournalPostgresStorage(database.ConnectionString, new() { MaxRecords = 2 });

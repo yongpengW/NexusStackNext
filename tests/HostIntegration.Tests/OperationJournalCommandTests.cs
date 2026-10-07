@@ -13,13 +13,13 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalCommandTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalCommandTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task ShowDelivery_ReadsPersistentSafeStateWithoutStartingTheBusinessHost()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddOperationJournalPostgresStorage(database.ConnectionString);
         await using var app = services.BuildServiceProvider();

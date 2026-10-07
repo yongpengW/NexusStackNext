@@ -24,7 +24,10 @@ public sealed class PlatformFactCapacityTests(JourneyDatabaseTemplates databases
         var options = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, PlatformDbContext.SchemaName).Options;
         await using var context = new PlatformDbContext(options);
-        await context.Database.MigrateAsync();
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            await context.Database.MigrateAsync();
+        }
         await context.Database.ExecuteSqlRawAsync("""
             UPDATE platform.fact_capacity SET "MaxRecords" = 1;
             CREATE FUNCTION platform.reject_after_accounting() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -62,7 +65,10 @@ public sealed class PlatformFactCapacityTests(JourneyDatabaseTemplates databases
         var options = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, PlatformDbContext.SchemaName).Options;
         await using var context = new PlatformDbContext(options);
-        await context.Database.MigrateAsync();
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            await context.Database.MigrateAsync();
+        }
         await context.Database.ExecuteSqlRawAsync("""
             UPDATE platform.fact_capacity SET "MaxRecords" = 10, "MaxPayloadBytes" = 6, "MaxRecordPayloadBytes" = 3;
             """);

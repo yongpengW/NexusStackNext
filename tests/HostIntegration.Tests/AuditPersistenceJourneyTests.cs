@@ -9,13 +9,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class AuditPersistenceJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class AuditPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task UnmigratedAuditDatabase_RefusesStartup_UntilIndependentMigration()
     {
-        await using var business = await IdentityJourneyDatabase.CreateAsync();
-        await business.MigrateAsync();
+        await using var business = await databases.CreateAsync();
         await using var auditing = await IdentityJourneyDatabase.CreateAsync();
         await using (var unprepared = new PersistentIdentityApp(business.ConnectionString, auditingConnectionString: auditing.ConnectionString))
         {
@@ -32,8 +32,7 @@ public sealed class AuditPersistenceJourneyTests
     [PostgresFact]
     public async Task FailedRecordDoesNotConsumeIdentity_AndConcurrentRedeliveryCreatesOneRecord()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "audit-root-password");
         using var client = app.CreateClient();
         var fact = new AuditFact(Guid.NewGuid(), "platform.setting-committed.v1", "platform", "platform.setting.changed",

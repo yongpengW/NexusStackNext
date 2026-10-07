@@ -21,7 +21,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalCleanupTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalCleanupTests(JourneyDatabaseTemplates databases)
 {
     [Theory]
     [InlineData("DeliveredRetention", "00:59:59")]
@@ -46,8 +47,7 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task HostCleanup_TimeoutIsVisibleAndRecovers_WithoutClearingMissingObservations()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = DateTimeOffset.UtcNow;
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -108,9 +108,11 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task SourceCleanup_DoesNotEraseCentralObservationOrItsDuplicateAndConflictProtection()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
-        Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing")).ExitCode);
+        await using var database = await databases.CreateAsync("journal");
+        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        {
+            Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing")).ExitCode);
+        }
         var now = DateTimeOffset.UtcNow;
         var services = new ServiceCollection();
         services.AddLogging();
@@ -185,8 +187,7 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task ConcurrentCleanup_ReleasesEachRecordOnce_AndConcurrentAppendStaysWithinCapacity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = DateTimeOffset.UtcNow;
         var services = new ServiceCollection();
         services.AddLogging();
@@ -229,8 +230,7 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task CanceledCleanup_DoesNotReleaseCapacity_AndSameScopeCanRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = DateTimeOffset.UtcNow;
         var services = new ServiceCollection();
         services.AddLogging();
@@ -250,6 +250,11 @@ public sealed class OperationJournalCleanupTests
         await using (var block = new NpgsqlCommand("LOCK TABLE operation_journal.outbox IN ACCESS EXCLUSIVE MODE", blocker, transaction))
         { await block.ExecuteNonQueryAsync(); }
         using var cancellation = new CancellationTokenSource();
+        // A prior activity snapshot must not hide the cleanup's later relation-lock wait.
+        await using (var initial = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity", blocker, transaction))
+        {
+            await initial.ExecuteScalarAsync();
+        }
         var attempt = maintenance.CleanupDeliveredAsync(cancellation.Token);
         try
         {
@@ -257,8 +262,10 @@ public sealed class OperationJournalCleanupTests
             while (true)
             {
                 await using var waiting = new NpgsqlCommand("""
-                    SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
-                        AND wait_event_type = 'Lock' AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))
+                    SELECT EXISTS (SELECT 1 FROM pg_locks
+                        WHERE database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                          AND relation = 'operation_journal.outbox'::regclass AND NOT granted
+                          AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))
                     """, blocker, transaction);
                 if ((bool)(await waiting.ExecuteScalarAsync(proof.Token))!) { break; }
                 Assert.False(attempt.IsCompleted);
@@ -277,8 +284,7 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task CleanupFailureAfterDelete_RollsBackRecordsAndCapacity_AndCanRetry()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = DateTimeOffset.UtcNow;
         var services = new ServiceCollection();
         services.AddLogging();
@@ -317,8 +323,7 @@ public sealed class OperationJournalCleanupTests
     [PostgresFact]
     public async Task PostgresCleanup_UsesDeliveryAgeAndBatchLimit_AndReleasesOnlyRemovedCapacity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var services = new ServiceCollection();
         services.AddLogging();

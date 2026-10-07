@@ -11,13 +11,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalPersistenceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalPersistenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task LockedJournalWrite_StopsOnItsCancellationBudget_AndSameObservationCanRecover()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         await using var app = CreateApplication(database.ConnectionString, new() { MaxRecords = 1 });
         await using var scope = app.CreateAsyncScope();
         var journal = scope.ServiceProvider.GetRequiredService<IOperationJournal>();
@@ -32,6 +32,11 @@ public sealed class OperationJournalPersistenceTests
             await block.ExecuteNonQueryAsync();
         }
         using var cancellation = new CancellationTokenSource();
+        // Prime activity statistics before dispatch; the lock proof must observe a later state.
+        await using (var initial = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity", blocker, transaction))
+        {
+            await initial.ExecuteScalarAsync();
+        }
         var blockedWrite = journal.AppendAsync(observation, cancellation.Token);
         try
         {
@@ -40,8 +45,9 @@ public sealed class OperationJournalPersistenceTests
             {
                 await using var waiting = new NpgsqlCommand("""
                     SELECT EXISTS (
-                        SELECT 1 FROM pg_stat_activity
-                        WHERE datname = current_database() AND wait_event_type = 'Lock'
+                        SELECT 1 FROM pg_locks
+                        WHERE database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                          AND relation = 'operation_journal.outbox'::regclass AND NOT granted
                           AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))
                     """, blocker, transaction);
                 if ((bool)(await waiting.ExecuteScalarAsync(proofTimeout.Token))!) { break; }
@@ -67,8 +73,7 @@ public sealed class OperationJournalPersistenceTests
     [PostgresFact]
     public async Task DuplicateAndConflictingStages_PreserveOneImmutableRecordPerPhaseAfterReopen()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var started = Started();
         var finished = started with
         {
@@ -113,8 +118,7 @@ public sealed class OperationJournalPersistenceTests
     [PostgresFact]
     public async Task AmbientBusinessTransactionRollback_DoesNotRollBackTheIndependentJournal()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var observation = Started();
         await using (var app = CreateApplication(database.ConnectionString))
         await using (var write = app.CreateAsyncScope())

@@ -1,5 +1,44 @@
 # 本机并行类的资源审查
 
+## 当前票据122：剩余普通资源与独占准备
+
+基线为已合并dev bdfe19f的完整1097项宿主报告。新增7类29项，候选共111类857项；240项仍独占。
+所有权、4/2/1路、重操作单许可、整类及Theory同worker和worker内部串行保持。
+资格、实测与交付见[票据122](https://github.com/yongpengW/NexusStackNext/issues/122)；以下118/120为历史。
+
+| 新增普通整类 | 项数 | 所属资源与保留边界 |
+|---|---:|---|
+| OperationJournalCleanupTests | 16 | 每例journal复制库、provider/clock/行锁/故障触发器；真实HTTP宿主动态端口。中央Auditing仍在本例库实际执行迁移CLI，受单许可保护；清理和取消预算不变。该CLI用于准备中央存储，没有删除CLI断言。 |
+| OperationJournalPersistenceTests | 3 | 每例journal复制库、provider与行锁；真实等待证明和取消预算保留，TransactionScope属于本例。provider重开不是OS进程重启。 |
+| PricingMessageOperationTests | 3 | Pricing-only新库与实际迁移受单许可；自己的provider/消息/触发器/advisory锁640066，整类串行；失败及取消后重投与provider重开保留，不添加journal schema。 |
+| PlatformFactCapacityTests | 3 | 前两项Platform-only新库实际迁移受单许可；第三项平台复制库。故障、配额、清理与触发器只改本例库。 |
+| SchedulingFactAtomicityTests | 2 | 自有Memory存储或平台复制库、serializer/provider/clock与故障触发器；计划决定与发生原子性断言不变。 |
+| GatewayHubTests | 1 | 类所属TestServer、Memory journal、受控健康HTTP适配器、Hub客户端和channel；路由文件只读，变化推送/不变静默的原观察时间保留。 |
+| OperationEndpointInventoryTests | 1 | Costing/Pricing-only新库，两个实际迁移在同一重操作许可内；Memory平台factory持有文件根，所属业务factory、动态网关backend与路由文件；真实端点逐个HTTP采集保留。 |
+
+七类继续独占，仅复用普通准备：AuditPersistenceJourneyTests、SchedulingPersistenceJourneyTests、
+FactDeliveryRecoveryRestartTests、FactCapacityPolicyProcessRecoveryTests、FactDeliveryRecoveryEvidenceTests、
+OperationJournalCapacityTests、OperationJournalCommandTests。Audit/Scheduling独立未迁移库、实际迁移CLI、
+历史IMigrator升级/降级及真实进程崩溃/重启不改。JournalCapacity的历史迁移方法和JournalCommand的
+未迁移拒绝仍使用新库；FactDeliveryRecoveryEvidence仅换初始平台准备，历史迁移、数据/凭据检查保留。
+不修改原方法名、Theory、业务断言、故障预算或产品代码。118阶段对Cleanup的独占记录已由本次具体资源审查更新。
+
+网关原实时通道沿真实runner公开CLI验证：原用例通过但调度先红（parallel=0/exclusive=1），
+声明后转绿（parallel=1/exclusive=0），身份保持。修正后66项与冻结实现最终1935项原身份各一次Passed；build/tests/format、八护栏和重命名模板通过，
+不将声明清单、筛选结果或未完成运行当成完整交付。
+
+### 定向失败与锁证明修正
+
+首轮66项定向在新增普通日志写入的锁证明处失败，worker正常返回、所有权idle，无压力信号；
+该轮不是资格。单个原用例提前读取活动统计后，旧探针在10秒证明预算内失败。
+同一事务的pg_stat_activity活动快照会保持不变，无法证明后来出现的阻塞；
+现在从pg_locks读取本例数据库、operation_journal.outbox表的未授予锁，并用原pg_blocking_pids
+条件确认阻塞者。日志清理的相同探针一并修正。提前读取统计保留为回归准备，
+原10秒等待、250毫秒取消、5秒返回/恢复及原断言保持。单个原用例修正后通过，
+不把该项通过或前轮片段拼成完整资格；产品代码不变。修正后新一轮66项原身份各一次Passed，控制器323.8秒；29项并行与37项独占完整返回，所有权idle、峰值22/100、无压力信号。冻结实现完整1935项资格也已通过，宿主1097项含857并行/240独占，五个worker正常返回；965执行源和私有配置不变、所有权idle，峰值49/100、PG探测最慢3017毫秒，无连续压力停止信号。单次观察不能证明服务器全部健康。
+依据：[事务内活动快照](https://www.postgresql.org/docs/17/monitoring-stats.html)、
+[实时锁与阻塞者](https://www.postgresql.org/docs/17/view-pg-locks.html)。
+
 票据118相对dev fcee91c扩大显式清单。以下是具体类与资源归属的审查记录，
 分类用于说明代码路径，运行时只读取明确类名；不按正则或名称自动批准新增类。
 候选87类770项，327项仍独占；最终资格与交付见[扩大宿主并行与初始化复用](https://github.com/yongpengW/NexusStackNext/issues/118)。
