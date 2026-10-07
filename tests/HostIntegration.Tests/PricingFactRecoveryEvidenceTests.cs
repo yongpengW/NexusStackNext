@@ -19,13 +19,13 @@ using RecoveryMigration = NexusStackNext.Pricing.Infrastructure.Migrations.Condi
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PricingFactRecoveryEvidenceTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PricingFactRecoveryEvidenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task NormalMigration_PreservesExistingQuoteTaskAndPolicy_AndRecoveryEvidenceSurvivesProcessRestartAndRejectsRewrite()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing-only");
         var assembly = typeof(PricingHostMarker).Assembly.Location;
         var settings = new Dictionary<string, string> { ["Pricing__AuditDelivery__RecoveryMaintenance__Enabled"] = "false" };
         await using var app = TaskOperationTests.CreatePricingApp(database.ConnectionString, null);

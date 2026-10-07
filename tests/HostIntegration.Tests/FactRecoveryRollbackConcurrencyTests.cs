@@ -13,7 +13,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactRecoveryRollbackConcurrencyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task Platform_ConcurrentAcceptedRecoveryPreventsDestructiveRollback() => VerifyAsync("platform");
@@ -33,12 +34,9 @@ public sealed class FactRecoveryRollbackConcurrencyTests
     [PostgresFact]
     public Task Pricing_ConcurrentAcceptedRecoveryPreventsDestructiveRollback() => VerifyAsync("pricing");
 
-    private static async Task VerifyAsync(string source)
+    private async Task VerifyAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else if (source == "pricing") { await PricingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await database.MigrateAsync(); }
+        await using var database = await databases.CreateAsync(source is "costing" or "pricing" ? source + "-only" : "platform");
         var connectionString = new NpgsqlConnectionStringBuilder(database.ConnectionString)
         { ApplicationName = "nsn-recovery-rollback-race" }.ConnectionString;
         await using var costing = source == "costing" ? TaskOperationTests.CreateCostingApp(connectionString, null) : null;

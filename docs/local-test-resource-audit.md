@@ -1,6 +1,39 @@
 # 本机并行类的资源审查
 
-## 当前票据122：剩余普通资源与独占准备
+## 当前票据124：13个独占类的普通准备
+
+以dev 0620d42完整1935项报告为基线，本轮不增加并行类、不改权重：111类857项普通／240项独占。
+新增costing-only、pricing-only迁移蓝图不含operation_journal，避免用含journal的结构掩盖首次日志迁移。
+原四种蓝图仍保留；所有模板惰性建立、不可连接，每例独立复制可写库，六种模板由collection清理。
+建库、模板迁移、复制和删库仍持有跨进程单许可。以下37项整类继续独占：
+
+| 类（同名源码） | 原项数 | 复用准备与保留边界 |
+|---|---:|---|
+| FactCapacityPolicyMigrationTests | 4 | 初始平台复制库；后续历史IMigrator升降级、结构与证据断言保持。 |
+| FactCapacityPolicyAuditMigrationTests | 1 | 初始平台复制库；历史审计迁移与数据保留断言保持。 |
+| FactRecoveryRollbackConcurrencyTests | 6 | 按来源选择平台或业务-only复制库；历史回滚竞争、真实业务进程及等待预算保持。 |
+| BusinessFactCapacityDiagnosticsTests | 4 | 普通读取用业务-only复制库；缺ledger故障只改本例。预算启动拒绝方法仍在同一新库实际迁移Costing和Pricing。 |
+| FactDeliveryRecoveryTests | 9 | 仅历史方法的普通初始平台准备改为复制；未迁移库、IMigrator及实际进程重启保持。 |
+| MemoryFilesCommittedAuditTests | 4 | 中央平台复制库；实际中央进程、Memory来源factory、消息与文件根仍属于本例。 |
+| CostingCommittedAuditTests | 1 | 中央平台与来源Costing-only复制库；在尚无journal的来源上实际运行首次journal迁移CLI，生产者重启保持。 |
+| CostingFactCapacityPolicyTests | 1 | Costing-only复制库；实际业务进程重启、成本/任务/配额与事件断言保持。 |
+| PricingFactCapacityPolicyTests | 1 | Pricing-only复制库；实际业务进程重启、报价/任务/配额与事件断言保持。 |
+| CostingFactDeliveryRecoveryTests | 2 | Costing-only复制库；真实进程、ISender、投递恢复和业务结果保持。 |
+| PricingFactDeliveryRecoveryTests | 2 | Pricing-only复制库；真实进程、ISender、投递恢复和业务结果保持。 |
+| CostingFactRecoveryEvidenceTests | 1 | Costing-only复制库；历史IMigrator两方向、重启、原数据与改写拒绝保持。 |
+| PricingFactRecoveryEvidenceTests | 1 | Pricing-only复制库；历史IMigrator两方向、重启、原数据与改写拒绝保持。 |
+
+FactCapacityPolicyBusinessMigrationTests的预算内初始迁移、FactCapacityUpgradeTests的指定旧版本起步、
+AuditInvestigationIndexTests与OperationObservationPersistenceTests的实际迁移CLI、Scheduling-only迁移，
+以及身份/日历等生命周期旅程均不替换。PricingMessageOperationTests的普通并行范围及既有准备也不改。
+全部原测试名、Theory、Assert与故障预算对照保持，临时阶段测量已移除；最终定向与完整资格见
+[票据124](https://github.com/yongpengW/NexusStackNext/issues/124)，下方是前轮历史。
+37项原身份定向各一次通过，仍在独占worker内执行；558条原Assert及迁移/重启/预算对照未变。
+控制器269.7秒、所有权idle、峰值32/100，无压力停止信号；八护栏和重命名模板构建/进度检查通过。
+
+冻结实现本机build → 原1935项完整tests → format全零，23工程原身份各一次Passed、宿主1097项完整，五worker正常返回、所有权idle。965执行源与私有配置不变；八护栏和重命名模板通过。整套59.48 → 53.06 分钟（观察少10.8%）、宿主49.41 → 43.55 分钟（少11.9%），同240项独占37.98 → 33.59 分钟（少11.5%）。峰值48/100、PG最慢1545 毫秒，无压力停止信号；单次环境观察不证明全部收益来自本次改造。双轴、Linux四报告Verify/统一门禁与dev实际资格树见票据124原生交付。
+
+## 已交付票据122：剩余普通资源与独占准备
 
 基线为已合并dev bdfe19f的完整1097项宿主报告。新增7类29项，候选共111类857项；240项仍独占。
 所有权、4/2/1路、重操作单许可、整类及Theory同worker和worker内部串行保持。

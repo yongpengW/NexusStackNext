@@ -10,15 +10,14 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class CostingCommittedAuditTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class CostingCommittedAuditTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task CostFacts_SurviveProducerRestart_AndLinkSystemCalculationToItsOriginalHttpOperation()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
-        await using var source = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(source.ConnectionString);
+        await using var central = await databases.CreateAsync();
+        await using var source = await databases.CreateAsync("costing-only");
         await TaskOperationJourneyTests.MigrateJournalAsync(typeof(CostingHostMarker).Assembly.Location, source.ConnectionString);
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-cost-facts", ClientName = prefix };

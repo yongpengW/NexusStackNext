@@ -15,13 +15,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyAuditMigrationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyAuditMigrationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task CentralPolicyUpgrade_PreservesBaselineFingerprintsAndFacts_AndRefusesDestructiveDown()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var facts = LegacyFacts();
         // These four signatures were produced by the exact fingerprint projection from baseline 7c8334a.
         // They cover legacy, execution, and related-subject shapes (with and without execution).

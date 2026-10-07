@@ -20,13 +20,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyMigrationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task IdentityPolicyMigration_PreservesOldRolePolicyAndUsage_AndRejectsRollbackOfAcceptedHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         Role originalRole;
         CommittedFactCapacitySnapshot originalCapacity;
@@ -122,8 +122,7 @@ public sealed class FactCapacityPolicyMigrationTests
     [PostgresFact]
     public async Task PlatformPolicyMigration_PreservesOldSettingPolicyAndUsage_AndRejectsRollbackOfAcceptedHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         var settingPath = new Uri("/api/platform/settings/pre-policy.sender", UriKind.Relative);
         string originalSetting;
@@ -218,8 +217,7 @@ public sealed class FactCapacityPolicyMigrationTests
     [PostgresFact]
     public async Task SchedulingPolicyMigration_PreservesOldPlanPolicyAndUsage_AndRejectsRollbackOfAcceptedHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         string originalPlan;
         CommittedFactCapacitySnapshot originalCapacity;
@@ -306,8 +304,7 @@ public sealed class FactCapacityPolicyMigrationTests
     [PostgresFact]
     public async Task FilesPolicyMigration_PreservesOldBusinessPolicyAndUsage_AndRejectsRollbackOfAcceptedHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         await using var context = new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, FilesDbContext.SchemaName).Options);
