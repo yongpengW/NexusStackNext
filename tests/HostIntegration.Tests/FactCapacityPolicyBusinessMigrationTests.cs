@@ -46,8 +46,8 @@ public sealed class FactCapacityPolicyBusinessMigrationTests
         var assembly = costing ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         var previousMigration = costing ? "20261004070201_FactCapacityWaitBudget" : "20261004070409_FactCapacityWaitBudget";
         var policyMigrationId = costing ? "20261004164558_AuditedFactCapacityPolicy" : "20261004164907_AuditedFactCapacityPolicy";
-        if (costing) { await CostingDatabase.MigrateAsync(database.ConnectionString, deadline.Token); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString, deadline.Token); }
+        if (costing) { await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(database.ConnectionString, deadline.Token), deadline.Token); }
+        else { await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(database.ConnectionString, deadline.Token), deadline.Token); }
         var itemId = Guid.NewGuid();
         var taskId = Guid.NewGuid();
         var policyPath = new Uri($"/api/{source}/audit-capacity", UriKind.Relative);
@@ -80,7 +80,7 @@ public sealed class FactCapacityPolicyBusinessMigrationTests
         var outbox = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
         var originalFacts = await outbox.ReadPendingAsync(10, DateTimeOffset.MaxValue, deadline.Token);
         Assert.Single(originalFacts);
-        await migrator.MigrateAsync(previousMigration, deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration, deadline.Token), deadline.Token);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
@@ -89,7 +89,7 @@ public sealed class FactCapacityPolicyBusinessMigrationTests
                 """, connection);
             Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
         }
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(ownedContext.Database.HasPendingModelChanges());
         await using var upgraded = await BusinessProcess.StartAsync(assembly, context, database.ConnectionString);
         upgraded.Authenticate();
@@ -105,11 +105,11 @@ public sealed class FactCapacityPolicyBusinessMigrationTests
         using var accepted = await upgraded.Client.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var receipt = await accepted.Content.ReadApiDataAsync();
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         using var replay = await upgraded.Client.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync(previousMigration, deadline.Token));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration, deadline.Token), deadline.Token));
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal($"{source}_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains(policyMigrationId, await ownedContext.Database.GetAppliedMigrationsAsync(deadline.Token));

@@ -1,6 +1,86 @@
 # 本机并行类的资源审查
 
-## 当前票据124：13个独占类的普通准备
+## 当前票据128：全部当前宿主类受控并行
+
+用户于2026-10-08授权将剩余独占范围全部纳入并行。本轮基线dev 407e40c；以下审核58类240原项，
+加一项真实双进程文件隔离回归，候选169类1098项全部显式声明。原1097项身份、Theory、业务断言、
+CLI/历史升降级/真实崩溃重启与预算保持；每个worker内仍串行。未来未审核类保留独占安全回退。
+审查对象是下表同名 tests/HostIntegration.Tests/*.cs 及其引用的数据库/文件/进程夹具，不是按名称自动批准。
+
+所有建库、复制、模板迁移、删库及数据库管理操作保持单许可。新增历史EF迁移、发布迁移SQL、
+平台迁移CLI和业务迁移CLI使用同一许可；外层已持有许可的模板准备不再次包装。
+原带期限迁移将相同取消令牌用于排队与迁移，既有业务期限不放宽。
+真实平台子进程默认使用 JourneyFileStorage 的私有根；显式根与配置覆盖仍由调用旅程拥有，
+关闭自己的进程后仅清理自己生成的默认根。真实双进程上传/字节/清理/就绪验证先红，修正后再验。
+
+数据库内的普通行写入、所属故障触发器与业务竞争可并行；许可控制迁移和数据库生命周期这类重操作，
+不把所有SQL都当迁移。回滚竞争持许可期间仍同时运行恢复与回滚，其他worker可处理业务请求。
+MQ管理只操作自身随机拓扑，断连注入只在子进程配置；没有全局flush或终止共享服务器进程。
+单所有者、压力停止/正常排空、取消及不确定完成的恢复拒绝不变。资格与交付以
+[全部当前宿主旅程纳入受控并行并隔离专项资源](https://github.com/yongpengW/NexusStackNext/issues/128)为准。
+
+| 新增显式整类 | 原项数 | 资源归属及保留边界 |
+|---|---:|---|
+| FactRecoveryBrokerJourneyTests | 7 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FilesPersistenceJourneyTests | 13 | 每例新库/复制库；连接、schema、锁与故障仅属本例；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| CalendarSchedulingPersistenceTests | 7 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactCapacityPolicyBrokerJourneyTests | 5 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| ScheduledCostBusinessJourneyTests | 3 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| PlatformPersistenceJourneyTests | 11 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| AuditBusinessJourneyTests | 5 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| IdentityPersistenceJourneyTests | 8 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| TaskOperationJourneyTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactDeliveryRecoveryTests | 9 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactDeliveryRecoveryEvidenceTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| IdentityCommittedAuditTests | 5 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationLoggingJourneyTests | 3 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| IdentityResourceAuthorizationTests | 3 | 每例 Memory 平台与文件根、身份/权限存储，无共享业务数据 |
+| SchedulingPersistenceJourneyTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| SchedulingDeliveryJourneyTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationCoverageJourneyTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FilesCommittedAuditTests | 7 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| AuditPersistenceJourneyTests | 3 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| FactCapacityPolicyMigrationTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| FactDeliveryRecoveryRestartTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| SchedulingFactCapacityTests | 6 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| IdentityFactDeliveryRecoveryTests | 8 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationJournalGatewayTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| SchedulingCommittedAuditTests | 8 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactCapacityWriteConfigurationTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactCapacityPolicyProcessRecoveryTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；显式文件/报告路径随机命名，由旅程持有；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactRecoveryRollbackConcurrencyTests | 6 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离；迁移窗口单许可在原10秒预算前获得；恢复与回滚两任务仍实际竞争 |
+| BusinessFactCapacityDiagnosticsTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| CostingCommittedAuditTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactCapacityPolicyBusinessMigrationTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| MemoryIdentityAuditJourneyTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationObservationPersistenceTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| FactCapacityWaitMigrationTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| PricingFactRecoveryEvidenceTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationJournalCommandTests | 9 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| CostingFactRecoveryEvidenceTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| CostingFactDeliveryRecoveryTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationJournalCapacityTests | 14 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| PricingFactDeliveryRecoveryTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| MemoryFilesCommittedAuditTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例；MQ exchange/consumer/queue 使用本例随机前缀，仅清理所属拓扑；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| FactCapacityUpgradeTests | 4 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| OperationNewHostStartupTests | 4 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| FactCapacityPolicyAuditMigrationTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| CommittedFactCompatibilityTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| CostingFactCapacityPolicyTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| OperationCompatibilityTests | 2 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| PricingFactCapacityPolicyTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；真实子进程动态端口，仅停止持有的 PID；平台默认目录已隔离 |
+| AuditInvestigationIndexTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例 |
+| CalendarRuntimeTests | 2 | 独立宿主/空时区目录/报告；IANA 故障只传入所属子进程，关闭后清理 |
+| AuditingStorageStartupTests | 6 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| PlatformStorageStartupTests | 6 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| IdentityStorageStartupTests | 5 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| SchedulingStorageStartupTests | 6 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| FilesStorageStartupTests | 6 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+| IdentityDatabaseLifecycleTests | 1 | 每例新库/复制库；连接、schema、锁与故障仅属本例；环境变量仅本 worker 进程可见，worker 内串行并恢复；终止仅匹配本例数据库、应用名与 PID；异常删库也持单许可 |
+| GatewayRouteAdminTests | 4 | factory 独立 Memory journal、Guid 路由文件；JWT 环境态仅 worker 内可见，关闭清理 |
+| OperationJournalStorageStartupTests | 4 | 缺配置/非法 Provider/127.0.0.1:1 的启动或 CLI 拒绝；未启动业务写入；原脱敏诊断保持 |
+
+## 已交付票据124：13个独占类的普通准备
 
 以dev 0620d42完整1935项报告为基线，本轮不增加并行类、不改权重：111类857项普通／240项独占。
 新增costing-only、pricing-only迁移蓝图不含operation_journal，避免用含journal的结构掩盖首次日志迁移。

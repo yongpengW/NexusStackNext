@@ -93,7 +93,7 @@ public sealed class OperationJournalCapacityTests(JourneyDatabaseTemplates datab
             .UseNexusStackPostgres(database.ConnectionString, OperationJournalDbContext.SchemaName).Options;
         await using (var context = new OperationJournalDbContext(options))
         {
-            await context.GetService<IMigrator>().MigrateAsync("20261002171202_InitialOperationJournal");
+            await JourneyDatabaseOperation.RunAsync(() => context.GetService<IMigrator>().MigrateAsync("20261002171202_InitialOperationJournal"));
         }
         var legacy = Started();
         var payload = new SystemTextJsonIntegrationEventSerializer().Serialize(legacy);
@@ -111,7 +111,7 @@ public sealed class OperationJournalCapacityTests(JourneyDatabaseTemplates datab
             seed.Parameters.AddWithValue("operation", legacy.OperationId);
             await seed.ExecuteNonQueryAsync();
         }
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => OperationJournalDatabase.MigrateAsync(database.ConnectionString));
         foreach (var limitRecords in new[] { true, false })
         {
             await using var app = PostgresApplication(database.ConnectionString, new()

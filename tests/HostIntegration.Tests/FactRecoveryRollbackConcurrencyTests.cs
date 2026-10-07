@@ -86,6 +86,9 @@ public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplate
         Assert.True(migrations.Length >= 2);
         Assert.EndsWith("_ConditionalFactRecovery", migrations[^1], StringComparison.Ordinal);
         var migrator = context.GetService<IMigrator>();
+        // Only this migration window owns the heavy-operation lease. Recovery still races rollback.
+        // Acquire before starting the original ten-second race budget; database cleanup occurs after release.
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         await using var control = new NpgsqlConnection(database.ConnectionString);
         await control.OpenAsync();
         await using (var arrange = new NpgsqlCommand($"""

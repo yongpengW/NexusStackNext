@@ -20,8 +20,8 @@ public sealed class BusinessFactCapacityDiagnosticsTests(JourneyDatabaseTemplate
         foreach (var owner in new[] { "Costing", "Pricing" })
         {
             var assembly = owner == "Costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
-            if (owner == "Costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-            else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+            if (owner == "Costing") { await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(database.ConnectionString)); }
+            else { await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(database.ConnectionString)); }
             // 同一数据库和其余配置先实际启动，排除未迁移等其他拒绝原因；宿主错误文本刻意脱敏。
             await using (var valid = await BusinessProcess.StartAsync(assembly, owner, database.ConnectionString))
             {

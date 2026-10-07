@@ -103,9 +103,9 @@ public sealed class FactDeliveryRecoveryEvidenceTests(JourneyDatabaseTemplates d
         };
         var singlePath = new Uri($"/api/{source}/audit-deliveries/{original.Id}", UriKind.Relative);
         var stopped = (await client.GetFromJsonAsync<JsonElement>(singlePath)).GetProperty("data").Clone();
-        await migrator.MigrateAsync(previous);
-        await migrator.MigrateAsync();
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.False(migrations.Database.HasPendingModelChanges());
         Assert.True(JsonElement.DeepEquals(stopped, (await client.GetFromJsonAsync<JsonElement>(singlePath)).GetProperty("data")));
         var request = new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = stoppedAt, expectedRetryRevision = "0", reason = "manual-retry" };
@@ -153,7 +153,7 @@ public sealed class FactDeliveryRecoveryEvidenceTests(JourneyDatabaseTemplates d
         Assert.Equal(original.Id, pending.Id);
         Assert.Equal(original.Payload, pending.Payload);
         Assert.Equal(original.OccurredAt, pending.OccurredAt);
-        var rollback = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync(previous));
+        var rollback = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous)));
         Assert.Equal("P0001", rollback.SqlState);
         Assert.Equal(source + "_fact_recovery_history_exists", rollback.ConstraintName);
         Assert.True(JsonElement.DeepEquals(receipt, (await client.GetFromJsonAsync<JsonElement>(receiptPath)).GetProperty("data")));
@@ -174,8 +174,8 @@ public sealed class FactDeliveryRecoveryEvidenceTests(JourneyDatabaseTemplates d
         Assert.Equal(pending, Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue)));
         Assert.Equal(beforeBusiness, (await business.ReadAsync()).Value);
         Assert.Equal(beforePolicies, (await policies.ReadPolicyAsync()).Value);
-        await migrator.MigrateAsync(previous);
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.True(JsonElement.DeepEquals(state, (await client.GetFromJsonAsync<JsonElement>(singlePath)).GetProperty("data")));
         Assert.Equal(pending, Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue)));
     }

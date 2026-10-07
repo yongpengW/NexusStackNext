@@ -27,7 +27,7 @@ public sealed class SchedulingFactCapacityTests(JourneyDatabaseTemplates databas
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await using var context = CreateContext(database.ConnectionString);
-        await context.Database.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => context.Database.MigrateAsync());
         await context.Database.ExecuteSqlRawAsync("UPDATE scheduling.fact_capacity SET \"MaxRecords\" = 1, \"MaxRecordPayloadBytes\" = 1");
         await using var provider = BuildStorage(database.ConnectionString);
         await using var scope = provider.CreateAsyncScope();
@@ -82,7 +82,7 @@ public sealed class SchedulingFactCapacityTests(JourneyDatabaseTemplates databas
         {
             await using var database = await IdentityJourneyDatabase.CreateAsync();
             await using var context = CreateContext(database.ConnectionString);
-            await context.Database.MigrateAsync();
+            await JourneyDatabaseOperation.RunAsync(() => context.Database.MigrateAsync());
             await using var provider = BuildStorage(database.ConnectionString);
             await using var scope = provider.CreateAsyncScope();
             var store = scope.ServiceProvider.GetRequiredService<IScheduledTaskStore>();
@@ -146,7 +146,7 @@ public sealed class SchedulingFactCapacityTests(JourneyDatabaseTemplates databas
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await using var context = CreateContext(database.ConnectionString);
-        await context.Database.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => context.Database.MigrateAsync());
         await SetMaxRecordsAsync(database.ConnectionString, 1);
         await using var provider = BuildStorage(database.ConnectionString);
         var now = new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
@@ -202,7 +202,7 @@ public sealed class SchedulingFactCapacityTests(JourneyDatabaseTemplates databas
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await using var context = CreateContext(database.ConnectionString);
-        await context.Database.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => context.Database.MigrateAsync());
         await using var provider = BuildStorage(database.ConnectionString);
         await using var scope = provider.CreateAsyncScope();
         var store = scope.ServiceProvider.GetRequiredService<IScheduledTaskStore>();

@@ -19,7 +19,7 @@ public sealed class OperationJournalGatewayTests
     public async Task JournalStorageOutage_KeepsBusinessTrafficAvailableThroughGateway_AndRecoveryPreservesDegradation()
     {
         await using var business = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(business.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(business.ConnectionString));
         await using var journal = await IdentityJourneyDatabase.CreateAsync();
         var settings = new Dictionary<string, string>(StringComparer.Ordinal)
         {
@@ -42,7 +42,7 @@ public sealed class OperationJournalGatewayTests
         migration.ArgumentList.Add("migrate-operation-journal");
         migration.Environment["ConnectionStrings__OperationJournal"] = journal.ConnectionString;
         migration.Environment["Jwt__SigningKey"] = string.Empty;
-        var migrated = await BusinessProcess.RunToExitAsync(migration);
+        var migrated = await JourneyDatabaseOperation.RunAsync(() => BusinessProcess.RunToExitAsync(migration));
         Assert.Equal(0, migrated.ExitCode);
         Assert.True(migrated.Output.Contains("OperationJournal migrations applied.", StringComparison.Ordinal), "Missing journal migration confirmation.");
 

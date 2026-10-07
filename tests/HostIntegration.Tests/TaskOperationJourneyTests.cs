@@ -26,7 +26,7 @@ public sealed class TaskOperationJourneyTests(JourneyDatabaseTemplates databases
     {
         await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(source.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(source.ConnectionString));
         await MigrateJournalAsync(typeof(PricingHostMarker).Assembly.Location, source.ConnectionString);
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-interrupted-operation", ClientName = prefix };
@@ -140,10 +140,10 @@ public sealed class TaskOperationJourneyTests(JourneyDatabaseTemplates databases
     {
         await using var central = await databases.CreateAsync();
         await using var costDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costDatabase.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(costDatabase.ConnectionString));
         await MigrateJournalAsync(typeof(CostingHostMarker).Assembly.Location, costDatabase.ConnectionString);
         await using var priceDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(priceDatabase.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(priceDatabase.ConnectionString));
         await MigrateJournalAsync(typeof(PricingHostMarker).Assembly.Location, priceDatabase.ConnectionString);
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-task-operations", ClientName = prefix };
@@ -285,6 +285,7 @@ public sealed class TaskOperationJourneyTests(JourneyDatabaseTemplates databases
 
     internal static async Task MigrateJournalAsync(string assembly, string connection)
     {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         var start = BusinessProcess.StartInfo(assembly, "OperationJournal", connection);
         start.ArgumentList.Add("migrate-operation-journal");
         Assert.Equal(0, (await BusinessProcess.RunToExitAsync(start)).ExitCode);

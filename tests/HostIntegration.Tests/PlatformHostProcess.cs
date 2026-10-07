@@ -10,8 +10,10 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     private readonly Task<string> _output;
     private readonly Task<string> _errors;
     private readonly ListeningAddress _listening = new();
+    private readonly JourneyFileStorage _files = new();
 
     public HttpClient Client { get; }
+    internal string FilesRoot { get; }
 
     private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
         IReadOnlyDictionary<string, string>? settings)
@@ -44,13 +46,15 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         start.Environment["ConnectionStrings__Auditing"] = connectionString;
         start.Environment["ConnectionStrings__OperationJournal"] = connectionString;
         start.Environment["ConnectionStrings__Scheduling"] = connectionString;
-        if (filesRoot is not null) { start.Environment["Files__StorageRoot"] = filesRoot; }
+        start.Environment["Files__StorageRoot"] = filesRoot ?? _files.Root;
         start.Environment["Jwt__SigningKey"] = "integration-test-signing-key-long-enough-for-hs256";
         start.Environment["AgileConfig__AppId"] = string.Empty;
         start.Environment["RabbitMQ__HostName"] = string.Empty;
         start.Environment["Identity__Root__UserName"] = rootPassword is null ? string.Empty : "journey-root";
         start.Environment["Identity__Root__Password"] = rootPassword ?? string.Empty;
         if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
+        FilesRoot = start.Environment.TryGetValue("Files__StorageRoot", out var configuredRoot) && !string.IsNullOrWhiteSpace(configuredRoot)
+            ? configuredRoot : Path.Combine(AppContext.BaseDirectory, "file-storage");
         _process = Process.Start(start)!;
         _output = _listening.CaptureAsync(_process.StandardOutput);
         _errors = _process.StandardError.ReadToEndAsync();
@@ -123,5 +127,6 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         await CrashAsync();
         Client.Dispose();
         _process.Dispose();
+        _files.Dispose();
     }
 }

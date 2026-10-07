@@ -12,6 +12,39 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class FilesPersistenceJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task DefaultProcessStorage_IsIsolatedAndOnlyOwnedBytesAreCleaned()
+    {
+        await using var firstDatabase = await databases.CreateAsync();
+        await using var secondDatabase = await databases.CreateAsync();
+        string firstRoot;
+        string secondRoot;
+        await using (var second = await PlatformHostProcess.StartAsync(secondDatabase.ConnectionString, "files-root-password"))
+        {
+            secondRoot = second.FilesRoot;
+            await using (var first = await PlatformHostProcess.StartAsync(firstDatabase.ConnectionString, "files-root-password"))
+            {
+                firstRoot = first.FilesRoot;
+                Assert.NotEqual(firstRoot, secondRoot);
+                await PlatformSettingsAccessTests.LoginAsync(first.Client, "journey-root", "files-root-password");
+                await PlatformSettingsAccessTests.LoginAsync(second.Client, "journey-root", "files-root-password");
+                using var firstBytes = new ByteArrayContent([1, 2]);
+                using var secondBytes = new ByteArrayContent([3, 4]);
+                using var firstUpload = await first.Client.PostAsync(new Uri("/api/files?name=first.bin", UriKind.Relative), firstBytes);
+                using var secondUpload = await second.Client.PostAsync(new Uri("/api/files?name=second.bin", UriKind.Relative), secondBytes);
+                Assert.Equal(HttpStatusCode.Created, firstUpload.StatusCode);
+                Assert.Equal(HttpStatusCode.Created, secondUpload.StatusCode);
+                Assert.Equal(new byte[] { 1, 2 }, await File.ReadAllBytesAsync(Assert.Single(Directory.EnumerateFiles(firstRoot, "v1-*"), path => Path.GetExtension(path).Length == 0)));
+                Assert.Equal(new byte[] { 3, 4 }, await File.ReadAllBytesAsync(Assert.Single(Directory.EnumerateFiles(secondRoot, "v1-*"), path => Path.GetExtension(path).Length == 0)));
+            }
+            Assert.False(Directory.Exists(firstRoot));
+            Assert.True(Directory.Exists(secondRoot));
+            using var health = await second.Client.GetAsync(new Uri("/health/ready", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        }
+        Assert.False(Directory.Exists(secondRoot));
+    }
+
+    [PostgresFact]
     public async Task FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor()
     {
         await using var database = await databases.CreateAsync();

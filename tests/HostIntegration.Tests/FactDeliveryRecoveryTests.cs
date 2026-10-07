@@ -238,9 +238,9 @@ public sealed class FactDeliveryRecoveryTests(JourneyDatabaseTemplates databases
         var migrator = migrations.GetService<IMigrator>();
         const string previous = "20261004141238_AuditedFactCapacityPolicy";
         // Empty recovery history can be removed; the original stopped fact must survive upgrade.
-        await migrator.MigrateAsync(previous);
-        await migrator.MigrateAsync();
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.False(migrations.Database.HasPendingModelChanges());
         var requestId = Guid.Parse("4e08f7d8-77ef-49bc-9790-83fd8db66d82");
         JsonElement receipt;
@@ -259,7 +259,7 @@ public sealed class FactDeliveryRecoveryTests(JourneyDatabaseTemplates databases
             Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
             receipt = (await accepted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").Clone();
         }
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync(previous));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous)));
         Assert.Equal("P0001", refusal.SqlState);
         Assert.Equal("platform_fact_recovery_history_exists", refusal.ConstraintName);
         await using var retained = await PlatformHostProcess.StartAsync(database.ConnectionString, "recovery-root-password");
