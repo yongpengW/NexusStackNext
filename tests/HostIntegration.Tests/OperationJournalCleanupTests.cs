@@ -109,10 +109,7 @@ public sealed class OperationJournalCleanupTests(JourneyDatabaseTemplates databa
     public async Task SourceCleanup_DoesNotEraseCentralObservationOrItsDuplicateAndConflictProtection()
     {
         await using var database = await databases.CreateAsync("journal");
-        await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
-        {
-            Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing")).ExitCode);
-        }
+        Assert.Equal(0, (await IdentityJourneyDatabase.RunMigrationAsync(database.ConnectionString, "Auditing")).ExitCode);
         var now = DateTimeOffset.UtcNow;
         var services = new ServiceCollection();
         services.AddLogging();
