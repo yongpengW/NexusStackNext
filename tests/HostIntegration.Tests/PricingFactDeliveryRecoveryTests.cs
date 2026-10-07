@@ -14,7 +14,8 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PricingFactDeliveryRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PricingFactDeliveryRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task Http_QuoteFactRecoveryPreservesCompletedTask_AndQuote()
@@ -24,10 +25,9 @@ public sealed class PricingFactDeliveryRecoveryTests
     public Task Http_PolicyFactRecoveryPreservesCompletedTask_AndQuote()
         => VerifyRecoveryAsync(policyFact: true);
 
-    private static async Task VerifyRecoveryAsync(bool policyFact)
+    private async Task VerifyRecoveryAsync(bool policyFact)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing-only");
         await using var host = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString);
         host.Authenticate();
         var itemId = Guid.NewGuid();

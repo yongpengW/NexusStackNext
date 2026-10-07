@@ -10,13 +10,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PricingFactCapacityPolicyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PricingFactCapacityPolicyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PricingPolicyExpansion_SurvivesProcessRestart_AndPreservesQuoteAndAcceptedTask()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing-only");
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync();

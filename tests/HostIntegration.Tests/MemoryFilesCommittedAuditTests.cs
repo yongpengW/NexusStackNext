@@ -17,13 +17,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class MemoryFilesCommittedAuditTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class MemoryFilesCommittedAuditTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task MemorySource_PublishesThroughHostComposition_AndCentralCanReceiveAfterSourceStops()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-memory-files", ClientName = prefix };
         var topology = EventTopology.Create(broker.ExchangeName,

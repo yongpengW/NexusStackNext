@@ -214,8 +214,7 @@ public sealed class FactDeliveryRecoveryTests(JourneyDatabaseTemplates databases
     [PostgresFact]
     public async Task PlatformPostgres_RecoveryMigrationPreservesStoppedFact_AndRefusesRollbackOfAcceptedHistory()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var options = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, PlatformDbContext.SchemaName).Options;
         Guid messageId;

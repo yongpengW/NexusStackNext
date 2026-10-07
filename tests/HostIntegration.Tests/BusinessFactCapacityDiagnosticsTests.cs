@@ -10,7 +10,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class BusinessFactCapacityDiagnosticsTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class BusinessFactCapacityDiagnosticsTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task BusinessSources_RejectInvalidReadBudgetsBeforeStarting()
@@ -40,9 +41,7 @@ public sealed class BusinessFactCapacityDiagnosticsTests
     {
         foreach (var owner in new[] { "Costing", "Pricing" })
         {
-            await using var database = await IdentityJourneyDatabase.CreateAsync();
-            if (owner == "Costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-            else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+            await using var database = await databases.CreateAsync(owner.ToLowerInvariant() + "-only");
             var assembly = owner == "Costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
             await using var app = await BusinessProcess.StartAsync(assembly, owner, database.ConnectionString);
             app.Authenticate();
@@ -74,8 +73,7 @@ public sealed class BusinessFactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task Pricing_OnlyOperatorCanReadCommittedCapacity_AndReadDoesNotAcceptMoreWork()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing-only");
         await using var app = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", database.ConnectionString);
         var path = new Uri("/api/pricing/audit-capacity", UriKind.Relative);
         using var anonymous = await app.Client.GetAsync(path);
@@ -99,8 +97,7 @@ public sealed class BusinessFactCapacityDiagnosticsTests
     [PostgresFact]
     public async Task Costing_OnlyOperatorCanReadCommittedCapacity_AndReadDoesNotAcceptMoreWork()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing-only");
         await using var app = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString);
         var path = new Uri("/api/costing/audit-capacity", UriKind.Relative);
         using var anonymous = await app.Client.GetAsync(path);
