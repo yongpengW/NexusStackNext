@@ -50,13 +50,14 @@ Message Chains · Middle Man · Refused Bequest
 
 ```powershell
 dotnet build NexusStackNext.slnx        # 警告即错误：这一步同时是"没有坏味道"的检查
-pwsh -File scripts/run-tests.ps1        # 默认串行；授权的本地受控4/2路见 docs/local-test-concurrency.md
+pwsh -File scripts/run-tests.ps1        # 全量入口；日常按 docs/testing-strategy.md 选择Focused范围
 pwsh -File scripts/check-format.ps1     # 格式：`dotnet format --verify-no-changes`
 pwsh -File scripts/check-tracker.ps1    # 跟踪器与规范的一致性
 pwsh -File scripts/assert-no-credentials.ps1
 ```
 
 顺序是固定的：**typecheck → tests → format**（`resolving-merge-conflicts` 的三段）。
+测试范围与对应脚本检查按[分阶段测试策略](../testing-strategy.md)选择；PR仍需完整CI。
 `check-format.ps1` 第一次跑就抓到 448 处违规（24 个文件）而构建全绿——所以它不是一个形式步骤。
 
 ## 不在标准里的东西

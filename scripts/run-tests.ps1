@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    跑全部测试，并把 env/test.dev 里的环境变量注入。
+    跑全量或定向测试，并把 env/test.dev 里的环境变量注入。
 
 .DESCRIPTION
     集成测试需要真实 PostgreSQL（本机没有容器运行时，见 ADR-0005）。
@@ -13,6 +13,7 @@
 .EXAMPLE
     pwsh -File scripts/run-tests.ps1 -Init    # 首次：生成 env/test.dev
     pwsh -File scripts/run-tests.ps1          # 之后：跑全部测试
+    pwsh -File scripts/run-tests.ps1 -Scope Focused -Project Identity.Domain.Tests
     pwsh -File scripts/run-tests.ps1 -Filter 'FullyQualifiedName~Integration'
 #>
 [CmdletBinding()]
@@ -23,6 +24,9 @@ param(
 
     [Alias('Project')]
     [string] $ProjectName,
+
+    [ValidateSet('Full', 'Focused')]
+    [string] $Scope = 'Full',
 
     [ValidateSet('Debug', 'Release')]
     [string] $Configuration = 'Debug',
@@ -43,6 +47,21 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Scope validation precedes private configuration and workload ownership.
+$hasSelection = -not [string]::IsNullOrWhiteSpace($ProjectName) -or -not [string]::IsNullOrWhiteSpace($Filter)
+if (($PSBoundParameters.ContainsKey('Filter') -and [string]::IsNullOrWhiteSpace($Filter)) -or
+    ($PSBoundParameters.ContainsKey('ProjectName') -and [string]::IsNullOrWhiteSpace($ProjectName))) {
+    throw 'TEST_SELECTION_EMPTY: selectors must be nonempty.'
+}
+if ($Scope -eq 'Focused' -and [string]::IsNullOrWhiteSpace($ProjectName)) {
+    throw 'TEST_SCOPE_PROJECT_REQUIRED: Focused requires one exact Project.'
+}
+if ($PSBoundParameters.ContainsKey('Scope') -and $Scope -eq 'Full' -and $hasSelection) {
+    throw 'TEST_SCOPE_CONFLICT: Full does not accept Project or Filter.'
+}
+if ($CiShard -ge 0 -and $Scope -eq 'Focused') { throw 'CI shards require full discovery; Focused is local only.' }
+$runScope = if ($hasSelection) { 'Focused' } else { 'Full' }
 
 if ($PSBoundParameters.ContainsKey('LocalPostgresConnectionFile')) {
     throw 'LOCAL_POSTGRES_CONFIGURATION_REJECTED: local overrides are retired; use the shared test configuration.'
@@ -221,9 +240,11 @@ if ($CiShard -ge 0) {
 }
 
 $results = @()
+$selectedCases = 0
 $testReportDirectory = if ($CiShard -lt 0 -and $ReportDirectory) { [IO.Path]::GetFullPath($ReportDirectory) } else { Join-Path ([System.IO.Path]::GetTempPath()) ('nsn-test-results-' + [Guid]::NewGuid().ToString('N')) }
 if (Test-Path -LiteralPath $testReportDirectory) { throw 'Local private report directory must be new; existing evidence is never overwritten.' }
 [void][IO.Directory]::CreateDirectory($testReportDirectory)
+Write-Host "TEST_SCOPE scope=$(if ($CiShard -ge 0) { 'CiShard' } else { $runScope }) projects=$($testProjects.Count) fullSuite=$($CiShard -lt 0 -and $runScope -eq 'Full')"
 foreach ($project in $testProjects) {
     $name = $project.BaseName
     Write-Host ''
@@ -278,15 +299,30 @@ foreach ($project in $testProjects) {
     $watch.Stop()
     if ($CiShard -ge 0) { $ciResults += @(Get-TestReportResults $reportPath $name) }
 
+    $validFocusedReport = $false
     if (Test-Path -LiteralPath $reportPath) {
         try {
             [xml] $summary = Get-Content -LiteralPath $reportPath -Raw
             $counters = $summary.SelectSingleNode('//*[local-name()="Counters"]')
             if ($null -ne $counters) {
                 Write-Host "  TEST_RESULT project=$name passed=$([int]$counters.passed) failed=$([int]$counters.failed) total=$([int]$counters.total)"
+                if ($CiShard -lt 0 -and $runScope -eq 'Focused') {
+                    $entries = @($summary.SelectNodes('//*[local-name()="UnitTestResult"]'))
+                    $count = $entries.Count
+                    $validFocusedReport = $counters.total -match '^\d+$' -and $counters.executed -match '^\d+$' -and
+                        $counters.passed -match '^\d+$' -and $counters.failed -match '^\d+$' -and $counters.notExecuted -match '^\d+$' -and
+                        [int]$counters.total -eq $count -and [int]$counters.executed -eq $count -and
+                        [int]$counters.passed -eq $count -and [int]$counters.failed -eq 0 -and [int]$counters.notExecuted -eq 0 -and
+                        @($entries | Where-Object outcome -CNE 'Passed').Count -eq 0
+                    if ($validFocusedReport) { $selectedCases += $count }
+                }
             }
         }
         catch { Write-Host '  结果报告不可解析；不回显原始控制台输出。' }
+    }
+    if ($CiShard -lt 0 -and $runScope -eq 'Focused' -and -not $validFocusedReport) {
+        $testExitCode = 1
+        Write-Host 'TEST_FOCUSED_REPORT_INVALID: missing, malformed, inconsistent or nonpassing evidence.' -ForegroundColor Red
     }
 
     if ($testExitCode -ne 0) {
@@ -337,12 +373,17 @@ $results | Sort-Object Seconds -Descending | ForEach-Object {
 
 $failed = @($results | Where-Object { $_.ExitCode -ne 0 })
 Write-Host ''
+if ($CiShard -lt 0 -and $runScope -eq 'Focused' -and $selectedCases -eq 0) {
+    Write-Host 'TEST_SELECTION_NO_CASES: no passing cases were executed; focused validation failed.' -ForegroundColor Red
+    exit 1
+}
 if ($failed.Count -gt 0) {
     Write-Host ("失败的工程 " + $failed.Count + " 个：" + (($failed | ForEach-Object { $_.Project }) -join '、')) -ForegroundColor Red
     exit 1
 }
 
-Write-Host ("全部 " + $results.Count + " 个工程通过，合计 " + [math]::Round(($results | Measure-Object -Property Seconds -Sum).Sum, 1) + " 秒。") -ForegroundColor Green
+$coverage = if ($CiShard -ge 0) { 'CI分组验证' } elseif ($runScope -eq 'Focused') { '定向验证（不代表全量验收）' } else { '本机全量验证' }
+Write-Host ($coverage + "：" + $results.Count + " 个工程通过，合计 " + [math]::Round(($results | Measure-Object -Property Seconds -Sum).Sum, 1) + " 秒。") -ForegroundColor Green
 if ($CiShard -ge 0) {
     [void][IO.Directory]::CreateDirectory($ReportDirectory)
     $report = [ordered]@{

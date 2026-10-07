@@ -7,7 +7,7 @@
 
 ```powershell
 git switch -c fix/<票据号>-<短名>
-# 改动 → 本地三段：dotnet build → scripts/run-tests.ps1 → scripts/check-format.ps1
+# 改动 → 本地三段：build → 按影响范围选tests → format（见 docs/testing-strategy.md）
 git push -u origin HEAD
 gh pr create --fill          # 标题/正文从提交取；CI 会在 PR 上再跑一遍
 gh pr checks --watch
@@ -39,7 +39,8 @@ gh run view --log-failed     # 红了先读原文，别猜
 所有进程仍受一份跨工作区所有权及重操作单许可约束；见 [受控并发](../local-test-concurrency.md)。
 Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_REDIS` 仍只写入被忽略的测试配置。
 
-所以"本地全绿"是**必要条件**，不是替代品：平台差异（路径分隔符、大小写敏感、换行、区域设置、
+本机按[分阶段测试策略](../testing-strategy.md)验证相关范围，完整Linux CI是合并前的验收条件：
+平台差异（路径分隔符、大小写敏感、换行、区域设置、
 可用工具）只会在这里现形。它真的现形过一次——检查脚本里三处路径正则写死了 Windows 反斜杠，
 本机永远绿，而 ubuntu 上检查**逐个上下文指控"没有 docs/adr/"：五个冤枉**
 （详见 `AGENTS.md` 纪律第六条）。
@@ -120,8 +121,9 @@ Pricing 缓存旅程另用 CI 专属 Redis 7.2.14；本机的 `NEXUSSTACK_TEST_R
 （Linux / 干净检出）—— 这一轮它抓到过"路径正则只认 Windows 反斜杠、本机永远绿而 ubuntu 上冤枉五个上下文" ✓。
 所以 `dev` 上的直推**也过 CI**：坏提交**立刻**看到红 ✓，不会攒到 `dev → main` 的 PR ✗。
 
-仍然推荐：**推之前先本地跑三段**（`dotnet build` → `scripts/run-tests.ps1` → `scripts/check-format.ps1`；当前耗时以逐工程报告为准）
-—— 它比 CI 快，能在推送前拦下问题 ✓（这是习惯，不是闸）。
+推之前本机执行**构建 → 受影响测试/对应脚本护栏 → 格式**；
+范围与本机全量的触发条件见[分阶段测试策略](../testing-strategy.md)。
+本机定向成功不能代替CI完整门禁，也不要求每次机械重复本机宿主全量。
 
 另：`dev` 不要活太久 ✓ —— 每完成一个完整小块就 `dev → main` 一次，PR 才好看、才不容易冲突 ✓。
 

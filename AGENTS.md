@@ -126,13 +126,16 @@ dotnet build NexusStackNext.slnx     # 全量构建
 pwsh -File scripts/run-tests.ps1    # 全部测试（含架构不变量测试与负载所有权）
 ```
 
-### 三段自动化检查，顺序固定
+### 分阶段验证，三段顺序固定
 
-`typecheck → tests → format`（`resolving-merge-conflicts` 要求的三段，缺一段就等于没有这一段）：
+`typecheck → tests → format` 顺序保持；测试范围按
+[分阶段测试策略](docs/testing-strategy.md)选择。日常开发验证受影响模块与宿主旅程，
+PR合并前由完整Linux CI验收；不机械重复本机全量。筛选通过只证明所选范围。
+测试脚本修改执行相应无服务护栏；纯文档执行相关规范检查。
 
 ```powershell
 dotnet build NexusStackNext.slnx              # ① 类型与警告（TreatWarningsAsErrors）
-pwsh -File scripts/run-tests.ps1              # ② 测试（默认1路；受控并发见下）
+pwsh -File scripts/run-tests.ps1 -Scope Focused -Project Identity.Domain.Tests -NoBuild # ② 示例：按变更选范围
 pwsh -File scripts/check-format.ps1           # ③ 格式（dotnet format --verify-no-changes）
 ```
 
@@ -151,6 +154,7 @@ CI **只在 Linux 上跑**：部署目标是 Linux 容器，Windows / macOS 只�
 
 ```powershell
 ./scripts/run-tests.ps1                                      # 全量
+./scripts/run-tests.ps1 -Scope Focused -Project HostIntegration.Tests -Filter 'FullyQualifiedName~IdentityTransactionTests'
 ./scripts/run-tests.ps1 -Filter 'FullyQualifiedName~SomeTest' # 过滤
 ./scripts/run-tests.ps1 -Concurrency 4 -StopOnFailure         # 已审核普通旅程最多4路
 ```
