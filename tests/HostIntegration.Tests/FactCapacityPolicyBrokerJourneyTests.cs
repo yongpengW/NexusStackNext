@@ -26,13 +26,13 @@ using RabbitMQ.Client.Exceptions;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyBrokerJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyBrokerJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task AuditingHostPolicySubscriptions_AreRemovedByExistingJourneyCleanup()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-policy", ClientName = prefix };
         var subscription = new EventSubscription { EventName = SettingCommittedV1.Name, ConsumerName = prefix };
@@ -80,8 +80,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
     [AuditBrokerFact]
     public async Task PlatformPolicy_CentralOfflineAndProcessRestart_PreserveTypedEvidenceAndRejectConflictingRedelivery()
     {
-        await using var business = await IdentityJourneyDatabase.CreateAsync();
-        await business.MigrateAsync();
+        await using var business = await databases.CreateAsync();
         await using var auditing = await IdentityJourneyDatabase.CreateAsync();
         await MigrateAuditingAsync(auditing.ConnectionString);
         var prefix = RabbitMqTestBroker.UniquePrefix();
@@ -150,12 +149,9 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
     [AuditBrokerFact]
     public async Task SixSourcePolicies_ReachCentralAfterProducersExit_AndSafelyReusedRequestCreatesANewEvent()
     {
-        await using var platformDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await platformDatabase.MigrateAsync();
-        await using var costingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(costingDatabase.ConnectionString);
-        await using var pricingDatabase = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(pricingDatabase.ConnectionString);
+        await using var platformDatabase = await databases.CreateAsync();
+        await using var costingDatabase = await databases.CreateAsync("costing");
+        await using var pricingDatabase = await databases.CreateAsync("pricing");
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-policy", ClientName = prefix };
         var taps = PolicyTopics.Select(name => new EventSubscription { EventName = name, ConsumerName = prefix + "-tap" }).ToArray();
@@ -273,8 +269,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
     [AuditBrokerFact]
     public async Task FourMemorySourcePolicies_AlreadyPublishedEvidenceSurvivesSourceProcessExit()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-policy", ClientName = prefix };
         var taps = PolicyTopics.Take(4).Select(name => new EventSubscription { EventName = name, ConsumerName = prefix + "-tap" }).ToArray();
@@ -325,8 +320,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests
     [AuditBrokerFact]
     public async Task CentralPolicyEvidence_MissingAmountsAndCrashBeforeEntry_DoNotLeaveAnAcceptedInboxReceipt()
     {
-        await using var business = await IdentityJourneyDatabase.CreateAsync();
-        await business.MigrateAsync();
+        await using var business = await databases.CreateAsync();
         await using var auditing = await IdentityJourneyDatabase.CreateAsync();
         await MigrateAuditingAsync(auditing.ConnectionString);
         var prefix = RabbitMqTestBroker.UniquePrefix();

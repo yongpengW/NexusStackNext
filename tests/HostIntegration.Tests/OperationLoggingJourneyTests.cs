@@ -18,15 +18,14 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationLoggingJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationLoggingJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task RecoveredJournal_CanBeCleanedWhileCentralIsOffline_AndBrokerReplayRemainsIdempotent()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
-        await using var source = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(source.ConnectionString);
+        await using var central = await databases.CreateAsync();
+        await using var source = await databases.CreateAsync("journal");
         var now = DateTimeOffset.UtcNow;
         // PostgreSQL 的时刻精度为微秒；管理请求应回传查询所得的时间，而不是本地未保存的 tick。
         var stoppedAt = new DateTimeOffset(now.Ticks - now.Ticks % 10, TimeSpan.Zero);
@@ -105,8 +104,7 @@ public sealed class OperationLoggingJourneyTests
     [AuditBrokerFact]
     public async Task PricingJournal_SurvivesProducerRestart_AndBrokerRedeliveryIsIdempotent()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
         await PricingDatabase.MigrateAsync(source.ConnectionString);
         var migration = BusinessProcess.StartInfo(typeof(PricingHostMarker).Assembly.Location, "Pricing", source.ConnectionString);
@@ -194,8 +192,7 @@ public sealed class OperationLoggingJourneyTests
     [AuditBrokerFact]
     public async Task DefaultHttpCapture_DeliversSafeStartedAndFinishedObservations()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-operations", ClientName = prefix };
         var subscription = new EventSubscription { EventName = "auditing.operation-observed.v1", ConsumerName = prefix };

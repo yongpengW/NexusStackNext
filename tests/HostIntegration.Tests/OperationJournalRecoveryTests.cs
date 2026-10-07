@@ -10,13 +10,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresRecovery_UsesSeparateBoundedQuotaAndNeverOverwritesEvidence()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var services = new ServiceCollection();
         services.AddOperationJournalPostgresStorage(database.ConnectionString, new() { MaxRecords = 2, MaxRecoveryRecords = 1 });
         await using var app = services.BuildServiceProvider();
@@ -83,8 +83,7 @@ public sealed class OperationJournalRecoveryTests
     [PostgresFact]
     public async Task PostgresRecovery_ReplaysOneReceiptEvenAfterDeliveryAndSourceCleanup()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var services = new ServiceCollection();
         services.AddSingleton<IClock>(new FixedClock(now.AddDays(2).AddTicks(7)));

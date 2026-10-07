@@ -12,13 +12,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class PricingFactCapacityObservationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class PricingFactCapacityObservationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task MessageCapacityRefusal_IsObservedAsFailed_AndRecoveryIsASeparateAcceptedAttempt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         await SetQuotaAsync(database.ConnectionString, 1);
         await using var app = TaskOperationTests.CreatePricingApp(database.ConnectionString, null);
         await using var scope = app.Services.CreateAsyncScope();
@@ -63,8 +63,7 @@ public sealed class PricingFactCapacityObservationTests
     [PostgresFact]
     public async Task TaskCapacityRefusal_IsObservedAsFailed_AndSameLeaseRecoveryIsASeparateCompletedAttempt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("pricing");
         await SetQuotaAsync(database.ConnectionString, 1);
         await using var app = TaskOperationTests.CreatePricingApp(database.ConnectionString, "price-capacity-initiator",
             new PricingTaskOptions { LeaseDuration = TimeSpan.FromSeconds(60) });

@@ -9,13 +9,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class CostingFactCapacityObservationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class CostingFactCapacityObservationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task CapacityRefusal_IsObservedAsFailed_AndSameLeaseRecoveryIsASeparateCompletedAttempt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await SetQuotaAsync(database.ConnectionString, 1);
         await using var app = TaskOperationTests.CreateCostingApp(database.ConnectionString, "cost-capacity-initiator");
         await using var scope = app.Services.CreateAsyncScope();

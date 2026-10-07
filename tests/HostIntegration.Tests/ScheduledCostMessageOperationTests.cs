@@ -14,7 +14,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class ScheduledCostMessageOperationTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class ScheduledCostMessageOperationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task FailedAcceptanceCommit_RollsBackReceiptTaskAndInbox_WhileKeepingTheFailedObservation() => InterruptedCommitAsync(cancel: false, targetExists: true);
@@ -25,10 +26,9 @@ public sealed class ScheduledCostMessageOperationTests
     [PostgresFact]
     public Task FailedRejectionCommit_IsNotAcknowledged_AndOnlyCommittedRejectionIsStable() => InterruptedCommitAsync(cancel: false, targetExists: false);
 
-    private static async Task InterruptedCommitAsync(bool cancel, bool targetExists)
+    private async Task InterruptedCommitAsync(bool cancel, bool targetExists)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await using var app = TaskOperationTests.CreateCostingApp(database.ConnectionString, "ambient-user");
         await using var scope = app.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;
@@ -95,8 +95,7 @@ public sealed class ScheduledCostMessageOperationTests
     [PostgresFact]
     public async Task ConcurrentDelivery_HasOneAcceptance_AndRestartedWorkKeepsItsOriginalMessageOperation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         var parent = new ExecutionOrigin(Guid.NewGuid(), "platform", Guid.NewGuid(), "platform", "42", "schedule-trace", "schedule-correlation");
         var message = Trigger(Guid.NewGuid()) with { ExecutionOrigin = parent };
         Guid acceptance;
@@ -170,8 +169,7 @@ public sealed class ScheduledCostMessageOperationTests
     [PostgresFact]
     public async Task StableBusinessRejection_IsAcknowledgedButObservedAsRejected_AndRedeliveryCannotReinterpretIt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("costing");
         await using var app = TaskOperationTests.CreateCostingApp(database.ConnectionString, "ambient-user");
         await using var scope = app.Services.CreateAsyncScope();
         var services = scope.ServiceProvider;

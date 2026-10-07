@@ -19,7 +19,8 @@ using NexusStackNext.Scheduling.Contracts;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactCapacityPolicyAuditIngestionTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactCapacityPolicyAuditIngestionTests(JourneyDatabaseTemplates databases)
 {
     [Fact]
     public async Task PolicyHeaderWithoutTypedAmounts_IsRejectedWithoutRecordingAChangedPlaceholder()
@@ -71,11 +72,9 @@ public sealed class FactCapacityPolicyAuditIngestionTests
     [PostgresFact]
     public Task PricingPolicy_FromRealSourceProcess_PreservesOwnedContractInCentralInvestigation() => VerifyBusinessSourceAsync("pricing");
 
-    private static async Task VerifyBusinessSourceAsync(string source)
+    private async Task VerifyBusinessSourceAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var producer = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);
         producer.Authenticate();
@@ -94,8 +93,7 @@ public sealed class FactCapacityPolicyAuditIngestionTests
     [PostgresFact]
     public async Task PlatformPolicyPostgres_PersistsTypedAmountsAndInboxAcrossHostRecreation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         EventEnvelope envelope;
         await using (var original = new PersistentIdentityApp(database.ConnectionString, "audit-policy-root", schedulingWorkerEnabled: false))
         {
@@ -122,8 +120,7 @@ public sealed class FactCapacityPolicyAuditIngestionTests
     [PostgresFact]
     public async Task PlatformPolicyPostgres_RejectsChangedNumericEvidenceUnderSameMessageId()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "audit-policy-root", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "audit-policy-root");
