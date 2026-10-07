@@ -447,6 +447,7 @@ internal sealed class IdentityJourneyDatabase : IAsyncDisposable
 
     internal static async Task<(int ExitCode, string Output, string Error)> RunMigrationAsync(string? connectionString, string context = "Identity")
     {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         var start = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,

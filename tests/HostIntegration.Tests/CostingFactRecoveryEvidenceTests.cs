@@ -67,9 +67,9 @@ public sealed class CostingFactRecoveryEvidenceTests(JourneyDatabaseTemplates da
         Assert.Equal(2, (await publisher.PublishPendingAsync()).DeadLettered);
         var delivery = scope.ServiceProvider.GetRequiredService<ICostingAuditDelivery>();
         var stopped = (await delivery.GetAsync(target.Id)).Value;
-        await migrator.MigrateAsync(previousMigration);
-        await migrator.MigrateAsync();
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Equal(stopped, (await delivery.GetAsync(target.Id)).Value);
         var request = new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = stoppedAt, expectedRetryRevision = "0", reason = "dependency-restored" };
@@ -123,7 +123,7 @@ public sealed class CostingFactRecoveryEvidenceTests(JourneyDatabaseTemplates da
             unchanged.Parameters.AddWithValue("id", request.requestId);
             Assert.Equal(1, await unchanged.ExecuteNonQueryAsync());
         }
-        var rollback = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync(previousMigration));
+        var rollback = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration)));
         Assert.Equal(PostgresErrorCodes.RaiseException, rollback.SqlState);
         Assert.Equal("costing_fact_recovery_history_exists", rollback.ConstraintName);
         var retained = (await delivery.GetRecoveryAsync(request.requestId)).Value;
@@ -136,8 +136,8 @@ public sealed class CostingFactRecoveryEvidenceTests(JourneyDatabaseTemplates da
         var released = (await delivery.ReadRecoveryCapacityAsync()).Value.Capacity;
         Assert.Equal(0, released.RetainedRecords);
         Assert.Equal(0, released.RetainedPayloadBytes);
-        await migrator.MigrateAsync(previousMigration);
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.Equal(recovered, (await delivery.GetAsync(target.Id)).Value);
         Assert.Equal(pending, Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue)));
     }

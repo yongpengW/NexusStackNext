@@ -57,9 +57,9 @@ public sealed class FactCapacityPolicyAuditMigrationTests(JourneyDatabaseTemplat
         await using var migrations = new AuditingDbContext(new DbContextOptionsBuilder<AuditingDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, AuditingDbContext.SchemaName).Options);
         var migrator = migrations.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261003072449_OutboxRetryRevision");
-        await migrator.MigrateAsync();
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261003072449_OutboxRetryRevision"));
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         await using var upgraded = new PersistentIdentityApp(database.ConnectionString, "audit-policy-root", schedulingWorkerEnabled: false);
         using var queryClient = upgraded.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(queryClient, "journey-root", "audit-policy-root");
@@ -79,7 +79,7 @@ public sealed class FactCapacityPolicyAuditMigrationTests(JourneyDatabaseTemplat
             { Previous = new(1, 16384, 16384), Current = new(2, 32768, 16384) }
         };
         Assert.Equal(IngestionOutcome.Accepted, (await restored.IngestAsync(policy)).Value);
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync("20261003072449_OutboxRetryRevision"));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261003072449_OutboxRetryRevision")));
         Assert.Equal("P0001", refusal.SqlState);
         Assert.Equal("auditing_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004171835_CapacityPolicyAuditEvidence", await migrations.Database.GetAppliedMigrationsAsync());

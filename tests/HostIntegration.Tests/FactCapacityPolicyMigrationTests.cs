@@ -56,7 +56,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         await using var context = new IdentityDbContext(new DbContextOptionsBuilder<IdentityDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, IdentityDbContext.SchemaName).Options);
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261004065429_FactCapacityWaitBudget", deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065429_FactCapacityWaitBudget", deadline.Token), deadline.Token);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
@@ -65,7 +65,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
                 """, connection);
             Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
         }
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(context.Database.HasPendingModelChanges());
         await using var upgraded = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
@@ -86,11 +86,11 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         using var accepted = await restored.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var receipt = await accepted.Content.ReadApiDataAsync();
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         using var replay = await restored.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync("20261004065429_FactCapacityWaitBudget", deadline.Token));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065429_FactCapacityWaitBudget", deadline.Token), deadline.Token));
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("identity_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004152243_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));
@@ -152,7 +152,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         await using var context = new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, PlatformDbContext.SchemaName).Options);
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261004064942_FactCapacityWaitBudget", deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004064942_FactCapacityWaitBudget", deadline.Token), deadline.Token);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
@@ -161,7 +161,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
                 """, connection);
             Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
         }
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(context.Database.HasPendingModelChanges());
         await using var upgraded = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
@@ -182,11 +182,11 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         using var accepted = await restored.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var receipt = await accepted.Content.ReadApiDataAsync();
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         using var replay = await restored.PutAsJsonAsync(policyPath, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync("20261004064942_FactCapacityWaitBudget", deadline.Token));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004064942_FactCapacityWaitBudget", deadline.Token), deadline.Token));
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("platform_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004141238_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));
@@ -250,7 +250,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         await using var context = new SchedulingDbContext(new DbContextOptionsBuilder<SchedulingDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, SchedulingDbContext.SchemaName).Options);
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("20261004065840_FactCapacityWaitBudget", deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065840_FactCapacityWaitBudget", deadline.Token), deadline.Token);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
@@ -259,7 +259,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
                 """, connection);
             Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
         }
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(context.Database.HasPendingModelChanges());
         await using var upgraded = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var restored = upgraded.CreateClient();
@@ -279,11 +279,11 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         using var accepted = await restored.PutAsJsonAsync(path, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var receipt = await accepted.Content.ReadApiDataAsync();
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         using var replay = await restored.PutAsJsonAsync(path, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
-        var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrator.MigrateAsync("20261004065840_FactCapacityWaitBudget", deadline.Token));
+        var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065840_FactCapacityWaitBudget", deadline.Token), deadline.Token));
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("scheduling_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004162527_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));
@@ -310,7 +310,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
             .UseNexusStackPostgres(database.ConnectionString, FilesDbContext.SchemaName).Options);
         var migrator = context.GetService<IMigrator>();
         // Empty control history permits a rollback; arrange actual pre-policy business state there.
-        await migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token), deadline.Token);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))
         {
             await connection.OpenAsync(deadline.Token);
@@ -333,7 +333,7 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         Assert.Equal(2, originalFacts.Count);
         var capacityReader = new PostgresCommittedFactCapacityReader<FilesDbContext>(context, "files", new());
         var originalCapacity = (await capacityReader.ReadAsync(deadline.Token)).Value;
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(context.Database.HasPendingModelChanges());
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-upgrade-root", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
@@ -353,12 +353,12 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         using var accepted = await client.PutAsJsonAsync(path, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
         var receipt = await accepted.Content.ReadApiDataAsync();
-        await migrator.MigrateAsync(cancellationToken: deadline.Token);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         using var replay = await client.PutAsJsonAsync(path, request, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
         var refusal = await Assert.ThrowsAsync<PostgresException>(() =>
-            migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token));
+            JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token), deadline.Token));
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("files_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004155433_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));

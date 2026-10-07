@@ -44,7 +44,7 @@ public sealed class CommittedFactCompatibilityTests
             .UseNexusStackPostgres(database.ConnectionString, AuditingDbContext.SchemaName).Options;
         await using (var context = new AuditingDbContext(options))
         {
-            await context.GetService<IMigrator>().MigrateAsync("20261002222303_ScheduleExecutionCorrelation");
+            await JourneyDatabaseOperation.RunAsync(() => context.GetService<IMigrator>().MigrateAsync("20261002222303_ScheduleExecutionCorrelation"));
         }
         var serializer = new SystemTextJsonIntegrationEventSerializer();
         var message = serializer.Deserialize<SettingCommittedV1>(LegacyPayload);

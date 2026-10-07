@@ -156,12 +156,13 @@ CI **只在 Linux 上跑**：部署目标是 Linux 容器，Windows / macOS 只�
 ./scripts/run-tests.ps1                                      # 全量
 ./scripts/run-tests.ps1 -Scope Focused -Project HostIntegration.Tests -Filter 'FullyQualifiedName~IdentityTransactionTests'
 ./scripts/run-tests.ps1 -Filter 'FullyQualifiedName~SomeTest' # 过滤
-./scripts/run-tests.ps1 -Concurrency 4 -StopOnFailure         # 已审核普通旅程最多4路
+./scripts/run-tests.ps1 -Concurrency 4 -StopOnFailure         # 已审核宿主整类最多4路
 ```
 
 **受控并发、筛选、压力停止或恢复负载时**，先读
 [共用测试库受控并发](docs/local-test-concurrency.md)。用户于2026-10-07授权先4路、不稳降2路；
-只有声明的普通旅程在一个所有者下并行，重操作单许可、特殊旅程独占，CI保持原隔离模式。
+当前全部169个宿主类均显式声明并行，包含迁移、MQ与真实重启旅程；整类/Theory同worker，worker内串行。
+重操作单许可、单所有者及压力排空保持；未来未审核类仍独占回退，CI保持原隔离模式。
 下方事故说明的是无约束工程并发，不能用它绕过当前调度与所有权保护。
 
 `dotnet test <解决方案>` 会**并行**跑十几个测试工程，而它们**全部连同一台 PostgreSQL**。

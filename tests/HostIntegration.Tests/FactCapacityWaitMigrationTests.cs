@@ -16,8 +16,8 @@ public sealed class FactCapacityWaitMigrationTests
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await database.MigrateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(database.ConnectionString));
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(database.ConnectionString));
         var sources = new (string Schema, string Event, Migration Migration)[]
         {
             ("platform", "platform.setting-committed.v1", new Platform.Infrastructure.Persistence.Migrations.FactCapacityWaitBudget()),
@@ -78,6 +78,7 @@ public sealed class FactCapacityWaitMigrationTests
 
     private static async Task ApplyAsync(DbContext context, Migration migration, bool down)
     {
+        await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
         migration.ActiveProvider = "Npgsql.EntityFrameworkCore.PostgreSQL";
         var operations = down ? migration.DownOperations : migration.UpOperations;
         Assert.NotEmpty(operations);

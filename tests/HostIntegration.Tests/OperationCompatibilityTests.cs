@@ -42,9 +42,9 @@ public sealed class OperationCompatibilityTests
             .UseNexusStackPostgres(database.ConnectionString, AuditingDbContext.SchemaName).Options;
         await using (var context = new AuditingDbContext(options))
         {
-            await context.GetService<IMigrator>().MigrateAsync("20261002171310_OperationObservations");
+            await JourneyDatabaseOperation.RunAsync(() => context.GetService<IMigrator>().MigrateAsync("20261002171310_OperationObservations"));
         }
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => OperationJournalDatabase.MigrateAsync(database.ConnectionString));
         var serializer = new SystemTextJsonIntegrationEventSerializer();
         var oldMessage = serializer.Deserialize<OperationObservedV1>(LegacyPayload);
         await using (var connection = new NpgsqlConnection(database.ConnectionString))

@@ -37,8 +37,8 @@ public sealed class FactCapacityWriteConfigurationTests
     public async Task BusinessHosts_RejectInvalidWriteBudgets_WhileAcceptingTheUpperBoundary()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(database.ConnectionString);
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(database.ConnectionString));
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(database.ConnectionString));
         foreach (var (owner, invalid) in new[] { ("Costing", "-00:00:01"), ("Pricing", "00:00:31") })
         {
             var assembly = owner == "Costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;

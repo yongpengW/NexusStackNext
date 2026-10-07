@@ -46,7 +46,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Format failed' }
 pwsh -File scripts/run-tests.ps1 -Configuration Release -NoBuild -Scope Full
 ```
 
-共享依赖仍需有效`env/test.dev`；单所有者、工程逐个执行、重操作单许可、特殊旅程独占保持。
+共享依赖仍需有效`env/test.dev`；单所有者、工程逐个执行、重操作单许可保持。
+当前169个宿主类全部可受控并行，未来未审核类独占回退；运行范围见[共用测试库受控并发](local-test-concurrency.md)。
 受控普通4/2路、取消和恢复先读[共用测试库受控并发](local-test-concurrency.md)与
 [负载所有权](local-test-ownership.md)，不绕过脚本直接并行`dotnet test`。
 

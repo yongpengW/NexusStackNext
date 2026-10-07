@@ -22,12 +22,12 @@ public sealed class OperationCoverageJourneyTests(JourneyDatabaseTemplates datab
     {
         await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
-        await CostingDatabase.MigrateAsync(source.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => CostingDatabase.MigrateAsync(source.ConnectionString));
         foreach (var assembly in new[] { typeof(CostingHostMarker).Assembly.Location, typeof(GatewayHostMarker).Assembly.Location })
         {
             var migration = BusinessProcess.StartInfo(assembly, "OperationJournal", source.ConnectionString);
             migration.ArgumentList.Add("migrate-operation-journal");
-            var result = await BusinessProcess.RunToExitAsync(migration);
+            var result = await JourneyDatabaseOperation.RunAsync(() => BusinessProcess.RunToExitAsync(migration));
             Assert.Equal(0, result.ExitCode);
             Assert.Contains("OperationJournal migrations applied.", result.Output, StringComparison.Ordinal);
         }

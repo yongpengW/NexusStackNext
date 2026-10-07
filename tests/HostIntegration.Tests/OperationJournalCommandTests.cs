@@ -75,7 +75,7 @@ public sealed class OperationJournalCommandTests(JourneyDatabaseTemplates databa
         Assert.Equal(1, unavailable.ExitCode);
         Assert.Equal("operation_journal.command_failed", unavailable.Output.Trim());
 
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => OperationJournalDatabase.MigrateAsync(database.ConnectionString));
         var missing = await BusinessProcess.RunToExitAsync(start);
         Assert.Equal(3, missing.ExitCode);
         Assert.Equal("operation_journal.delivery_not_found", missing.Output.Trim());

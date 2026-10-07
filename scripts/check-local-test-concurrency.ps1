@@ -56,7 +56,11 @@ public static class Probe
  public static string PathFor(string kind) => Path.Combine(Root, kind + "-" + (Environment.GetEnvironmentVariable("NSN_LOCAL_WORKER") ?? "serial"));
  public static async Task ExecuteAsync(string owner, string name)
  {
-  await using var lease = Environment.GetEnvironmentVariable("NSN_BYPASS_DDL") == "true" ? null : await JourneyDatabaseOperation.EnterAsync(preparation: true);
+  if (Environment.GetEnvironmentVariable("NSN_BYPASS_DDL") == "true") { await HeavyAsync(owner, name); }
+  else { await JourneyDatabaseOperation.RunAsync(() => HeavyAsync(owner, name)); }
+ }
+ private static async Task HeavyAsync(string owner, string name)
+ {
   var path = Path.Combine(Root, "ddl-" + owner + "-" + name);
   await File.WriteAllTextAsync(path + "-start", DateTimeOffset.UtcNow.Ticks.ToString());
   await Task.Delay(150);
@@ -69,14 +73,14 @@ public sealed class Exclusive
  [Fact] public async Task RequiresIndependentExecution()
  {
   var expected = int.Parse(Environment.GetEnvironmentVariable("NSN_EXPECTED_LANES")!);
-  if (Environment.GetEnvironmentVariable("NSN_LOCAL_WORKER") is not null) { Assert.Equal(expected, Directory.GetFiles(Probe.Root, "disposed-*").Length); }
+  if (Environment.GetEnvironmentVariable("NSN_LOCAL_WORKER") is not null && Environment.GetEnvironmentVariable("NSN_ALL_DECLARED") != "true") { Assert.Equal(expected, Directory.GetFiles(Probe.Root, "disposed-*").Length); }
   File.WriteAllText(Path.Combine(Probe.Root, "exclusive"), "executed");
   if (Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_DDL_GUARD") is not null)
   {
    await using (var held = await JourneyDatabaseOperation.EnterAsync())
    {
     using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => JourneyDatabaseOperation.EnterAsync(cancellationToken: cancel.Token));
+    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => JourneyDatabaseOperation.RunAsync(() => Task.CompletedTask, cancel.Token));
    }
    await using var released = await JourneyDatabaseOperation.EnterAsync();
    Assert.NotNull(released);
@@ -109,6 +113,7 @@ function Start-Probe([string]$Case, [int]$Concurrency, [bool]$Fail, [bool]$Bypas
     $start.Environment['NSN_CONTROLLED_FAILURE'] = $Fail.ToString().ToLowerInvariant()
     $start.Environment['NSN_BYPASS_DDL'] = $Bypass.ToString().ToLowerInvariant()
     $start.Environment['NSN_SIGNAL_AFTER_PASS'] = ([IO.Path]::GetFileName($Case) -eq 'returned-pressure').ToString().ToLowerInvariant()
+    $start.Environment['NSN_ALL_DECLARED'] = ([IO.Path]::GetFileName($Case) -eq 'all-declared').ToString().ToLowerInvariant()
     $start.Environment['GITHUB_ACTIONS'] = 'false'
     $process = [Diagnostics.Process]::Start($start)
     [pscustomobject]@{ Process = $process; Output = $process.StandardOutput.ReadToEndAsync(); Error = $process.StandardError.ReadToEndAsync() }
@@ -139,7 +144,9 @@ function Get-Peak([string]$Case, [string]$Pattern) {
     if ($active -ne 0) { throw 'Resource timing evidence unbalanced.' }
     return $peak
 }
-foreach ($mode in @('four', 'two', 'one', 'returned-pressure', 'filter', 'failure', 'pressure', 'interruption', 'bypass', 'ci')) {
+foreach ($mode in @('four', 'two', 'one', 'all-declared', 'returned-pressure', 'filter', 'failure', 'pressure', 'interruption', 'bypass', 'ci')) {
+    $declared = if ($mode -eq 'all-declared') { @($classes) + 'NexusStackNext.HostIntegration.Tests.Exclusive' } else { $classes }
+    [IO.File]::WriteAllText((Join-Path $scripts 'local-test-classes.json'), (ConvertTo-Json -InputObject $declared))
     $case = Join-Path $lab $mode
     [void][IO.Directory]::CreateDirectory($case)
     $concurrency = switch ($mode) { 'two' { 2 } { $_ -in @('one', 'returned-pressure') } { 1 } default { 4 } }
@@ -212,6 +219,7 @@ foreach ($mode in @('four', 'two', 'one', 'returned-pressure', 'filter', 'failur
         continue
     }
     if ($result.ExitCode -ne 0) { throw 'Healthy concurrency probe failed; private evidence retained.' }
+    if ($mode -eq 'all-declared' -and ($result.Output -notmatch 'parallel=10 exclusive=0' -or @(Get-ChildItem -LiteralPath $case -Recurse -File -Filter '*.lane-exclusive.*').Count)) { throw 'Fully declared inventory still started an exclusive worker.' }
     if ($mode -ne 'filter' -and -not (Test-Path -LiteralPath (Join-Path $case 'later-project'))) { throw 'Healthy run did not exercise the subsequent project.' }
     if ($concurrency -gt 1 -and $result.Output -notmatch 'TEST_PROGRESS worker=HostIntegration.Tests.lane-') { throw 'Actual native parallel workers did not emit safe case progress.' }
     $report = @(Get-ChildItem -LiteralPath $case -File -Recurse -Filter 'HostIntegration.Tests.trx')

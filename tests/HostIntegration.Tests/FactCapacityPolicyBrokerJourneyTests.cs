@@ -416,7 +416,7 @@ public sealed class FactCapacityPolicyBrokerJourneyTests(JourneyDatabaseTemplate
     {
         await using var context = new AuditingDbContext(new DbContextOptionsBuilder<AuditingDbContext>()
             .UseNexusStackPostgres(connection, AuditingDbContext.SchemaName).Options);
-        await context.Database.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => context.Database.MigrateAsync());
     }
 
     internal static async Task<(FactCapacityPolicyRequest Request, Guid EventId)> AdjustAsync(HttpClient client, string source)

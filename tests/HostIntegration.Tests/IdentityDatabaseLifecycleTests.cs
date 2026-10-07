@@ -66,6 +66,7 @@ public sealed class IdentityDatabaseLifecycleTests
             Environment.SetEnvironmentVariable(TestPostgres.ConnectionStringVariable, original);
             if (database is not null && !disposed)
             {
+                await using var operation = await JourneyDatabaseOperation.EnterAsync();
                 var name = new NpgsqlConnectionStringBuilder(database.ConnectionString).Database!;
                 await using var cleanup = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)", controller);
                 await cleanup.ExecuteNonQueryAsync();

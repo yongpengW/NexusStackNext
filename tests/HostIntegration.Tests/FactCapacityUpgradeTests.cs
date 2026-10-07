@@ -40,7 +40,7 @@ public sealed class FactCapacityUpgradeTests
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await using var context = CreateContext(schema, database.ConnectionString);
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync(previousMigration);
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previousMigration));
         if (hasCapacity) { await ConfigureQuotaAsync(context); }
         var at = DateTimeOffset.UtcNow;
         var existing = new OutboxEntry { Id = Guid.NewGuid(), EventName = eventName, Payload = "中", OccurredAt = at };
@@ -49,7 +49,7 @@ public sealed class FactCapacityUpgradeTests
         await context.SaveChangesAsync();
         context.ChangeTracker.Clear();
 
-        await migrator.MigrateAsync();
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         // 既有策略不得被迁移或应用重启覆盖；首次创建账本的上下文迁移后才配置测试额度。
         if (!hasCapacity) { await ConfigureQuotaAsync(context); }
         var second = existing with { Id = Guid.NewGuid(), Payload = "文" };

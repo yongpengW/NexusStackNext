@@ -106,11 +106,11 @@ public sealed class OperationLoggingJourneyTests(JourneyDatabaseTemplates databa
     {
         await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(source.ConnectionString);
+        await JourneyDatabaseOperation.RunAsync(() => PricingDatabase.MigrateAsync(source.ConnectionString));
         var migration = BusinessProcess.StartInfo(typeof(PricingHostMarker).Assembly.Location, "Pricing", source.ConnectionString);
         migration.ArgumentList.Add("migrate-operation-journal");
         migration.Environment["ConnectionStrings__OperationJournal"] = source.ConnectionString;
-        Assert.Equal(0, (await BusinessProcess.RunToExitAsync(migration)).ExitCode);
+        Assert.Equal(0, (await JourneyDatabaseOperation.RunAsync(() => BusinessProcess.RunToExitAsync(migration))).ExitCode);
         var sourceSettings = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["OperationJournal__Storage__Provider"] = "Postgres",
