@@ -20,7 +20,8 @@ public sealed class FactCapacityWaitProtocolTests
         {
             await using var database = await IdentityJourneyDatabase.CreateAsync();
             await using var context = CreateContext(database.ConnectionString, milliseconds);
-            await context.Database.MigrateAsync();
+            await using (var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+            { await context.Database.MigrateAsync(); }
             await context.Database.OpenConnectionAsync();
             var connection = (NpgsqlConnection)context.Database.GetDbConnection();
             await using (var configure = new NpgsqlCommand("SELECT set_config('lock_timeout', @timeout, false), set_config('statement_timeout', '10s', false)", connection))
@@ -80,7 +81,8 @@ public sealed class FactCapacityWaitProtocolTests
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
         await using var context = CreateContext(database.ConnectionString, 250);
-        await context.Database.MigrateAsync();
+        await using (var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        { await context.Database.MigrateAsync(); }
         var now = DateTimeOffset.UtcNow;
         var first = new OutboxEntry { Id = Guid.NewGuid(), EventName = SettingCommittedV1.Name, Payload = "中", OccurredAt = now.AddDays(-8), DeliveredAt = now.AddDays(-8) };
         var second = first with { Id = Guid.NewGuid() };

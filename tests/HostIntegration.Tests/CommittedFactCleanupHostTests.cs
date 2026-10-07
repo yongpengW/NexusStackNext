@@ -39,8 +39,11 @@ public sealed class CommittedFactCleanupHostTests
         foreach (var name in new[] { "Costing", "Pricing" })
         {
             await using var database = await IdentityJourneyDatabase.CreateAsync();
-            if (name == "Costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-            else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+            await using (var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+            {
+                if (name == "Costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
+                else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+            }
             var schema = name.ToLowerInvariant();
             var factName = name == "Costing" ? CostSheetCommittedV1.Name : PriceQuoteCommittedV1.Name;
             var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
@@ -118,7 +121,8 @@ public sealed class CommittedFactCleanupHostTests
     {
         var options = new DbContextOptionsBuilder<TContext>().UseNexusStackPostgres(connection, schema).Options;
         await using var check = factory(options);
-        await check.Database.MigrateAsync();
+        await using (var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        { await check.Database.MigrateAsync(); }
         Assert.Equal(1, await check.Database.SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM pg_indexes WHERE schemaname = {schema} AND indexname = 'ix_outbox_confirmed_event'").SingleAsync());
         var now = new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero);
         var fact = new OutboxEntry { Id = Guid.NewGuid(), EventName = factEvent, Payload = "{}", OccurredAt = now.AddHours(-2), DeliveredAt = now.AddHours(-1) };

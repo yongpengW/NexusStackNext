@@ -12,7 +12,8 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class BusinessFactCapacityPolicyGatewayTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class BusinessFactCapacityPolicyGatewayTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task PricingPostgres_PricingRoutes_RequiresRootAndTrustedActor_WithExactInt64()
@@ -26,11 +27,9 @@ public sealed class BusinessFactCapacityPolicyGatewayTests
     public Task PricingPostgres_BusinessRoutes_RequiresRootAndTrustedActor_WithExactInt64()
         => VerifyAsync("pricing", "routes.business.json");
 
-    private static async Task VerifyAsync(string source, string configurationFile)
+    private async Task VerifyAsync(string source, string configurationFile)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var host = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);
         await using var gateway = new GatewayHttpApp(host.Client.BaseAddress!.AbsoluteUri) { SigningKey = BusinessProcess.SigningKey };

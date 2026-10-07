@@ -17,13 +17,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class FactDeliveryRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class FactDeliveryRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PlatformPostgres_PolicyFactIsVisibleInBoundedHttpInvestigation_AndCanRecoverWithTheSameMessageIdentity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "policy-recovery-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "policy-recovery-password");
@@ -76,8 +76,7 @@ public sealed class FactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PlatformPostgres_CleanupRoundsRetentionUp_AndReleasesOnlyOneStableBatch()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await using var scope = app.Services.CreateAsyncScope();
@@ -274,8 +273,7 @@ public sealed class FactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PlatformPostgres_SubMicrosecondChangedStopCondition_IsRejectedWithoutReservingRequest()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "recovery-root-password");
         await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "recovery-root-password");
         using var saved = await host.Client.PutAsJsonAsync(new Uri("/api/platform/settings/recovery.precision", UriKind.Relative),
@@ -307,8 +305,7 @@ public sealed class FactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PlatformPostgres_RecoveryReceiptSurvivesSourceProcessRestart()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var requestId = Guid.Parse("d7e3504e-a961-48b6-a7a5-ab018df51c80");
         Guid messageId;
         DateTimeOffset stoppedAt;

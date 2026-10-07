@@ -18,13 +18,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingCommittedAuditTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingCommittedAuditTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task PlanFacts_SurviveRestart_AndDeliverManagementAndSystemDecisionsThroughRabbitMq()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-scheduling", ClientName = prefix };
         var topology = EventTopology.Create(broker.ExchangeName,
@@ -108,8 +108,7 @@ public sealed class SchedulingCommittedAuditTests
     [PostgresFact]
     public async Task PostgresFailureBackoffAndRecovery_AreCommittedFacts_AndRepeatedStateAddsNothing()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-root-password", schedulingWorkerEnabled: false);
         await AssertBackoffAsync(app.Services);
     }
@@ -215,8 +214,7 @@ public sealed class SchedulingCommittedAuditTests
     [PostgresFact]
     public async Task PostgresPlanMaintenance_RecordsOnlyCommittedChanges_WithTheCurrentActorAndOperation()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "scheduling-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "scheduling-root-password");

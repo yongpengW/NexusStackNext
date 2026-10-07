@@ -28,7 +28,8 @@ public sealed class PricingRecoveryMaintenanceTests
     public async Task Module_ReportsRecoveryCleanupFailure_ThenReleasesExpiredEvidenceWithoutChangingCompletedPricingWork()
     {
         await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await PricingDatabase.MigrateAsync(database.ConnectionString);
+        await using (var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
+        { await PricingDatabase.MigrateAsync(database.ConnectionString); }
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
         var clock = new MutableClock(now);
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });

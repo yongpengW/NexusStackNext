@@ -11,13 +11,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationJournalRecoveryHealthTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationJournalRecoveryHealthTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresRecoveryCapacity_IsVisibleBeforeRefusal_AndRecoversAfterCleanup()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await OperationJournalDatabase.MigrateAsync(database.ConnectionString);
+        await using var database = await databases.CreateAsync("journal");
         var clock = new MutableClock(new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero));
         var services = new ServiceCollection();
         services.AddLogging();

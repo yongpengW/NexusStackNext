@@ -14,13 +14,13 @@ using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class OperationCoverageJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class OperationCoverageJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task GatewayCostRequest_RecordsBothExecutions_ThroughDurableJournalAndBroker()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
         await CostingDatabase.MigrateAsync(source.ConnectionString);
         foreach (var assembly in new[] { typeof(CostingHostMarker).Assembly.Location, typeof(GatewayHostMarker).Assembly.Location })

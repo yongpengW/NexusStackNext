@@ -19,7 +19,8 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingFactCapacityTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingFactCapacityTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task OversizedFact_RejectsThePlanWithoutConsumingCapacity()
@@ -45,8 +46,7 @@ public sealed class SchedulingFactCapacityTests
     [PostgresFact]
     public async Task Restart_PreservesQuotaAndUsage_AndConfirmedCleanupRestoresHttpWrites()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await SetMaxRecordsAsync(database.ConnectionString, 1);
         var settings = new Dictionary<string, string> { ["Scheduling__Worker__Enabled"] = "false" };
         await using (var first = await PlatformHostProcess.StartAsync(database.ConnectionString, "schedule-capacity-password", settings: settings))
@@ -255,8 +255,7 @@ public sealed class SchedulingFactCapacityTests
     [PostgresFact]
     public async Task FullCapacity_RejectsManagementChanges_WhileNoOpsPreserveThePlan()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "schedule-capacity-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "schedule-capacity-password");

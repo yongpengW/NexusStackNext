@@ -18,13 +18,13 @@ using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class TaskOperationJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class TaskOperationJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task KilledAttempt_RemainsUnconfirmed_AfterJournalRecoveryAndSuccessfulNewEpoch()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         await using var source = await IdentityJourneyDatabase.CreateAsync();
         await PricingDatabase.MigrateAsync(source.ConnectionString);
         await MigrateJournalAsync(typeof(PricingHostMarker).Assembly.Location, source.ConnectionString);
@@ -138,8 +138,7 @@ public sealed class TaskOperationJourneyTests
     [AuditBrokerFact]
     public async Task GatewayAcceptance_SurvivesRestart_AndLinksCostingAndPricingAttemptsThroughRealBroker()
     {
-        await using var central = await IdentityJourneyDatabase.CreateAsync();
-        await central.MigrateAsync();
+        await using var central = await databases.CreateAsync();
         await using var costDatabase = await IdentityJourneyDatabase.CreateAsync();
         await CostingDatabase.MigrateAsync(costDatabase.ConnectionString);
         await MigrateJournalAsync(typeof(CostingHostMarker).Assembly.Location, costDatabase.ConnectionString);

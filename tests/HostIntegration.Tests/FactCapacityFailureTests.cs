@@ -32,7 +32,10 @@ public sealed class FactCapacityFailureTests(JourneyDatabaseTemplates databases)
         await using var source = await IdentityJourneyDatabase.CreateAsync();
         await using (var schema = new PlatformDbContext(new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNexusStackPostgres(source.ConnectionString, PlatformDbContext.SchemaName).Options))
-        { await schema.Database.MigrateAsync(); }
+        {
+            await using var preparation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
+            await schema.Database.MigrateAsync();
+        }
         await using var app = new BudgetApp(identity.ConnectionString, source.ConnectionString);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-failure-password");

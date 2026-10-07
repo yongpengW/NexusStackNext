@@ -15,13 +15,13 @@ using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class IdentityFactDeliveryRecoveryTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class IdentityFactDeliveryRecoveryTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public async Task PostgresCleanup_UsesTheFixedDeadlineAndStableBatch_ReleasesOnlyRecoveryCapacity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "cleanup-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await VerifyRecoveryCleanupAsync(client, app.Services, true);
@@ -92,8 +92,7 @@ public sealed class IdentityFactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PostgresHttp_RecoveryCapacityIsIndependent_AndReplayDoesNotConsumeItAgain()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "capacity-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "capacity-root-password");
@@ -172,8 +171,7 @@ public sealed class IdentityFactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PostgresRecovery_PreservesTheCallersUncommittedIdentityWork_AndDoesNotPublishIt()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         await using var app = new PersistentIdentityApp(database.ConnectionString, "pending-work-root-password", schedulingWorkerEnabled: false);
         using var client = app.CreateClient();
         await PlatformSettingsAccessTests.LoginAsync(client, "journey-root", "pending-work-root-password");
@@ -183,8 +181,7 @@ public sealed class IdentityFactDeliveryRecoveryTests
     [PostgresFact]
     public async Task PostgresHttp_OriginalRecoveryReceiptSurvivesActualSourceProcessRestart_AndReplaysWithoutChangingTheMessage()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var options = new DbContextOptionsBuilder<IdentityDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, IdentityDbContext.SchemaName).Options;
         var requestId = Guid.NewGuid();

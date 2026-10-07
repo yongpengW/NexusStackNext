@@ -11,7 +11,8 @@ using NexusStackNext.PricingHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class BusinessFactCapacityPolicyAccessTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class BusinessFactCapacityPolicyAccessTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
     public Task CostingPolicy_RequiresRoot_PreservesInt64_AndUsesTrustedActor() => VerifyAsync("costing");
@@ -19,11 +20,9 @@ public sealed class BusinessFactCapacityPolicyAccessTests
     [PostgresFact]
     public Task PricingPolicy_RequiresRoot_PreservesInt64_AndUsesTrustedActor() => VerifyAsync("pricing");
 
-    private static async Task VerifyAsync(string source)
+    private async Task VerifyAsync(string source)
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        if (source == "costing") { await CostingDatabase.MigrateAsync(database.ConnectionString); }
-        else { await PricingDatabase.MigrateAsync(database.ConnectionString); }
+        await using var database = await databases.CreateAsync(source);
         var assembly = source == "costing" ? typeof(CostingHostMarker).Assembly.Location : typeof(PricingHostMarker).Assembly.Location;
         await using var host = await BusinessProcess.StartAsync(assembly, source == "costing" ? "Costing" : "Pricing", database.ConnectionString);
         var path = new Uri($"/api/{source}/audit-capacity", UriKind.Relative);

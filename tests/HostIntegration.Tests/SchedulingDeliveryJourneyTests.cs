@@ -11,13 +11,13 @@ using RabbitMQ.Client;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-public sealed class SchedulingDeliveryJourneyTests
+[Collection(JourneyDatabaseDefinition.Name)]
+public sealed class SchedulingDeliveryJourneyTests(JourneyDatabaseTemplates databases)
 {
     [AuditBrokerFact]
     public async Task ExhaustedDelivery_AfterBrokerRecovery_RequiresCurrentState_AndPreservesOccurrenceIdentity()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-scheduling", ClientName = prefix };
         var audit = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-audit" };
@@ -64,8 +64,7 @@ public sealed class SchedulingDeliveryJourneyTests
     [AuditBrokerFact]
     public async Task TwoContextOutboxes_AfterProducerRestart_BothDeliverThroughTheSameHost()
     {
-        await using var database = await IdentityJourneyDatabase.CreateAsync();
-        await database.MigrateAsync();
+        await using var database = await databases.CreateAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-scheduling", ClientName = prefix };
         var audit = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-audit" };

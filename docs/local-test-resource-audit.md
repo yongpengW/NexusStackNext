@@ -1,8 +1,56 @@
 # 本机并行类的资源审查
 
-本轮相对dev fcee91c扩大显式清单。以下是具体类与资源归属的审查记录，
+票据118相对dev fcee91c扩大显式清单。以下是具体类与资源归属的审查记录，
 分类用于说明代码路径，运行时只读取明确类名；不按正则或名称自动批准新增类。
 候选87类770项，327项仍独占；最终资格与交付见[扩大宿主并行与初始化复用](https://github.com/yongpengW/NexusStackNext/issues/118)。
+
+## 票据120新增资源审查
+
+以已合并dev `4f3032e`的完整1097项报告为基线，再加入以下17类58项：
+显式清单共104类828项，269项仍独占。类与全部Theory行分配到同一worker，
+worker内部串行；所有104类的权重来自同一份完整基线报告。
+这是候选范围，最终本机、双轴评审、Linux四报告与交付状态见
+[票据120](https://github.com/yongpengW/NexusStackNext/issues/120)，不能以声明清单替代通过证据。
+
+| 类（同名源码） | 项数 | 具体资源与故障边界 |
+|---|---:|---|
+| [SchedulingOccurrenceTests](../tests/HostIntegration.Tests/SchedulingOccurrenceTests.cs) | 3 | 每例独立平台复制库、HTTP factory、时钟；竞争扫描和失败约束仅作用于本库，后台扫描关闭。 |
+| [FactCapacityFailureTests](../tests/HostIntegration.Tests/FactCapacityFailureTests.cs) | 5 | 身份库与来源库各自持有；来源专用Platform schema现场迁移受单许可保护；可用性、250ms故障预算、50ms取消和两秒上限保留。 |
+| [FactCapacityPolicyAuditIngestionTests](../tests/HostIntegration.Tests/FactCapacityPolicyAuditIngestionTests.cs) | 9 | Memory中央或独立平台库；业务源进程只启动一次，自己的Costing/Pricing复制库；factory重建及消息去重不依赖另一用例。 |
+| [ScheduledCostMessageOperationTests](../tests/HostIntegration.Tests/ScheduledCostMessageOperationTests.cs) | 5 | 自有Costing库与provider；故障触发器、advisory锁640067及取消只在本库，整类串行；重建provider不是OS进程重启。 |
+| [BusinessFactCapacityPolicyGatewayTests](../tests/HostIntegration.Tests/BusinessFactCapacityPolicyGatewayTests.cs) | 3 | 独立业务复制库、一次业务进程、动态监听地址；网关所属GUID路由文件，源路由文件只读。 |
+| [BusinessFactCapacityPolicyAccessTests](../tests/HostIntegration.Tests/BusinessFactCapacityPolicyAccessTests.cs) | 2 | 自有业务库、一次动态端口业务进程；HTTP身份和读取provider均属于本例。 |
+| [OperationJournalRecoveryTests](../tests/HostIntegration.Tests/OperationJournalRecoveryTests.cs) | 4 | 自有journal复制库或Memory存储；并发恢复配额竞争只在本例provider；重开provider读取同一所属库。 |
+| [OperationJournalRecoveryHealthTests](../tests/HostIntegration.Tests/OperationJournalRecoveryHealthTests.cs) | 2 | 所属journal库、MutableClock与health服务；清理和配额恢复不共享状态。 |
+| [HttpInt64ContractTests](../tests/HostIntegration.Tests/HttpInt64ContractTests.cs) | 5 | Memory factory或本例动态端口WebApplication；Node子进程只通过stdin接收本例JSON，不写共享文件，原20秒预算保留。 |
+| [IdentityApiTests](../tests/HostIntegration.Tests/IdentityApiTests.cs) | 8 | 整类持有Memory PlatformApp，默认文件根归factory所有；HTTP请求、令牌与账号不跨worker共享。 |
+| [AuthorizationChainJourneyTests](../tests/HostIntegration.Tests/AuthorizationChainJourneyTests.cs) | 2 | 整类持有Memory根账号factory；原两项授权与幂等断言保留，同worker执行。 |
+| [CostingRecoveryMaintenanceTests](../tests/HostIntegration.Tests/CostingRecoveryMaintenanceTests.cs) | 1 | 独立Costing-only库现场迁移受单许可保护；所属动态端口WebApplication和MutableClock，原故障行锁及维护预算保留。 |
+| [PricingRecoveryMaintenanceTests](../tests/HostIntegration.Tests/PricingRecoveryMaintenanceTests.cs) | 1 | 独立Pricing-only库现场迁移受单许可保护；所属动态端口WebApplication和MutableClock，原故障行锁及维护预算保留。 |
+| [CostingFactCapacityObservationTests](../tests/HostIntegration.Tests/CostingFactCapacityObservationTests.cs) | 1 | 所属Costing复制库与provider；配额拒绝、同租约恢复和日志关联只改本库。 |
+| [PricingFactCapacityObservationTests](../tests/HostIntegration.Tests/PricingFactCapacityObservationTests.cs) | 2 | 所属Pricing复制库与provider；消息去重、配额拒绝与任务租约恢复均为本例状态。 |
+| [CommittedFactCleanupHostTests](../tests/HostIntegration.Tests/CommittedFactCleanupHostTests.cs) | 3 | 所属新库、单上下文实际迁移与索引断言保留，迁移受单许可保护；清理worker、时钟与故障触发器只在本例。 |
+| [FactCapacityWaitProtocolTests](../tests/HostIntegration.Tests/FactCapacityWaitProtocolTests.cs) | 2 | 所属Platform-only库实际迁移受单许可保护；原会话配置、锁、事务回滚及等待预算保留，许可在故障阶段前释放。 |
+
+另外九个类只复用普通准备，整类继续独占：FactCapacityPolicyBrokerJourneyTests、
+FactDeliveryRecoveryTests、IdentityFactDeliveryRecoveryTests、OperationLoggingJourneyTests、
+OperationCoverageJourneyTests、SchedulingDeliveryJourneyTests、SchedulingCommittedAuditTests、
+TaskOperationJourneyTests、SchedulingFactCapacityTests。真实Broker、进程退出／崩溃／重启、
+历史迁移与回滚断言保留。Scheduling-only及Auditing-only专用建库保留；
+日志迁移CLI首次创建存储所需的业务-only库也保留，不能用含journal的模板遮蔽首次迁移。
+
+CalendarRuntimeTests的启动拒绝、GatewayRouteAdminTests的进程环境变量改写、
+OperationCompatibilityTests／CommittedFactCompatibilityTests的历史迁移，及
+CostingFactCapacityPolicyTests／PricingFactCapacityPolicyTests的真实重启均仍独占。
+未审核类继续独占，不凭名称、正则或普通方法的占比自动批准整类。
+
+新增8项Identity调度的公开CLI断言先红后绿，随后新增范围与九个独占类涉及的102项原身份
+定向回归全部通过。冻结实现的最终build → 完整tests → format均返回零；
+23工程原1935项各一次通过、1097项宿主清单精确相同，包含原日历提交崩溃／重启旅程。
+全部worker正常返回、所有权idle，965份执行源与私有测试配置未变；八护栏与重命名模板通过。
+资源采样峰值51/100、数据库探测最慢1081.9毫秒，无压力停止信号；结束时连接10。
+相同边界整套67.97 → 63.79分钟、宿主58.59 → 53.84分钟；一次观察不排除环境波动。
+双轴评审与Linux完整四报告Verify、统一门禁、实际dev交付树以票据120最新原生记录为准。
 
 ## 共同资源边界
 
