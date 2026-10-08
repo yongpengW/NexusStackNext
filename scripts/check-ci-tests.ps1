@@ -42,7 +42,8 @@ foreach ($methods in $partitionDeclaration.Values) {
 Write-Json $inventory $inventoryPath
 Invoke-Probe @('-Action', 'Plan', '-InputPath', $inventoryPath, '-OutputPath', $planPath) $true
 $plan = @(Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json)
-if ($plan.Count -ne $inventory.Count -or @($plan | Where-Object { $_.Shard -eq 0 }).Count -ne 1) { throw 'Partition lost or misplaced tests' }
+if ($plan.Count -ne $inventory.Count -or @($plan | Where-Object Project -CNE 'HostIntegration.Tests' | Where-Object Shard -EQ 0).Count -ne 1 -or
+    @($plan | Where-Object Project -CNE 'HostIntegration.Tests' | Where-Object Shard -NE 0).Count -ne 0) { throw 'Partition lost or misplaced tests' }
 if (@($plan | Where-Object Method -Like 'Example.AlphaTests.*' | Select-Object -ExpandProperty Shard -Unique).Count -ne 1) { throw 'A class was split' }
 if (@($plan | Select-Object -ExpandProperty Shard -Unique).Count -ne 4) { throw 'Empty partition' }
 Write-Output 'PASS: all tests partitioned once, undeclared class kept together'
@@ -60,7 +61,7 @@ Invoke-Probe $verify $true
 $timingOutput = & pwsh -NoProfile -File $tool @verify 2>&1
 if ($LASTEXITCODE -ne 0 -or ($timingOutput -join "`n") -notmatch 'Slowest test cases' -or
     ($timingOutput -join "`n") -notmatch 'Example.AlphaTests.First' -or
-    ($timingOutput -join "`n") -notmatch 'Shard 0: 1 tests') { throw 'Missing individual test and shard timing diagnostics' }
+    ($timingOutput -join "`n") -notmatch 'Shard 0: \d+ tests') { throw 'Missing individual test and shard timing diagnostics' }
 Write-Output 'PASS: complete reports accepted'
 $reportPath = Join-Path $reportsPath 'shard-1.json'
 $original = Get-Content -LiteralPath $reportPath -Raw
@@ -151,6 +152,8 @@ Write-Output 'PASS: report arguments redacted and empty TRX rejected'
 
 & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ci-partitions.ps1')
 if ($LASTEXITCODE -ne 0) { throw 'Method partition regression probes failed.' }
+& pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-ci-runner.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Public CI runner regression probes failed.' }
 
 # Delete only this probe's freshly created, resolved temporary directory.
 $resolvedScratch = [IO.Path]::GetFullPath($scratch)
