@@ -86,7 +86,7 @@ internal sealed class HttpSessionValidator(IHttpClientFactory clients, IHttpCont
                 ? Result.Success(new ValidatedSession(decision.IsRoot)) : Unavailable();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable(); }
-        catch (HttpRequestException) { cancellationToken.ThrowIfCancellationRequested(); return Unavailable(); }
+        catch (Exception error) when (error is HttpRequestException or IOException) { cancellationToken.ThrowIfCancellationRequested(); return Unavailable(); }
         catch (JsonException) { return Unavailable(); }
         catch (InvalidOperationException) { return Unavailable(); }
         finally { calls.Permits.Release(); }

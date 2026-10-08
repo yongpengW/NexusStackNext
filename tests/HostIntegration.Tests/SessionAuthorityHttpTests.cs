@@ -20,6 +20,17 @@ public sealed class SessionAuthorityHttpTests
             Assert.Equal("/api/identity/session/v1", http.Request.Path);
             Assert.Equal(string.Empty, http.Request.QueryString.Value ?? string.Empty);
             if (mode == "timeout") { await Task.Delay(TimeSpan.FromSeconds(10), http.RequestAborted); }
+            if (mode == "truncated")
+            {
+                http.Response.ContentType = "application/json";
+                http.Response.ContentLength = 128;
+                await http.Response.WriteAsync("{", http.RequestAborted);
+                await http.Response.Body.FlushAsync(http.RequestAborted);
+                Assert.True(http.Response.HasStarted);
+                await Task.Delay(100, http.RequestAborted);
+                http.Abort();
+                return Results.Empty;
+            }
             if (mode == "malformed") { return Results.Text("not-json", "application/json"); }
             if (mode == "oversized") { return Results.Text(new string('x', 4097), "application/json"); }
             if (mode == "unavailable") { return Results.StatusCode(503); }
@@ -38,7 +49,7 @@ public sealed class SessionAuthorityHttpTests
         using var client = gateway.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("admin", true));
         using (var initial = await client.GetAsync(new Uri("/gateway/routes/probe", UriKind.Relative))) { Assert.Equal(HttpStatusCode.OK, initial.StatusCode); }
-        foreach (var fault in new[] { "unavailable", "timeout", "malformed", "oversized", "missing-root", "wrong-contract", "wrong-subject", "wrong-version", "revoked", "non-root" })
+        foreach (var fault in new[] { "unavailable", "timeout", "truncated", "malformed", "oversized", "missing-root", "wrong-contract", "wrong-subject", "wrong-version", "revoked", "non-root" })
         {
             mode = fault;
             var started = Stopwatch.StartNew();
@@ -51,7 +62,7 @@ public sealed class SessionAuthorityHttpTests
             using var absent = await client.GetAsync(new Uri("/gateway/routes/must-not-exist", UriKind.Relative));
             Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
         }
-        Assert.Equal(21, Volatile.Read(ref calls));
+        Assert.Equal(23, Volatile.Read(ref calls));
     }
 
     [Fact]
