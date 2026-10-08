@@ -30,9 +30,12 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
         var scheduled = Trigger(item) with { EventId = child };
         Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
         Assert.True((await sender.QueryAsync(new GetCostCalculation(child))).IsFailure);
-        Assert.True((await sender.SendAsync(new CancelCostBatch(batchId, 0))).IsSuccess);
+        var lease = (await sender.SendAsync(new ClaimCostBatch())).Value!;
+        Assert.True((await sender.SendAsync(new ExecuteCostBatchSegment(batchId, lease.Epoch))).Value);
+        Assert.Equal("Completed", (await sender.QueryAsync(new GetCostBatch(batchId))).Value.State);
+        Assert.Equal(new CostBatchReference(batchId, 1, 1), (await sender.QueryAsync(new GetCostCalculation(child))).Value.Batch);
         Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
-        Assert.True((await sender.QueryAsync(new GetCostCalculation(child))).IsFailure);
+        Assert.Equal(new CostBatchReference(batchId, 1, 1), (await sender.QueryAsync(new GetCostCalculation(child))).Value.Batch);
     }
 
     [PostgresFact]

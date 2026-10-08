@@ -10,7 +10,6 @@ internal static class CostBatchJson
 {
     private static readonly HashSet<string> BatchFields = new(StringComparer.Ordinal) { "batchRequestId", "rows" };
     private static readonly HashSet<string> RowFields = new(StringComparer.Ordinal) { "sourceRow", "itemId", "expectedVersion", "purchaseCost", "freightCost" };
-    private static readonly string[] RequiredRowFields = ["itemId", "expectedVersion", "purchaseCost", "freightCost"];
 
     public static async Task<CostBatchJsonResult> ReadAsync(HttpRequest request, JsonSerializerOptions options, CancellationToken token)
     {
@@ -51,6 +50,7 @@ internal static class CostBatchJson
             Schema(root, BatchFields, 0);
             var batchId = root.TryGetProperty("batchRequestId", out var identity) && identity.ValueKind == JsonValueKind.String && identity.TryGetGuid(out var parsedId)
                 ? parsedId : Guid.Empty;
+            if (batchId == Guid.Empty) { Add(0, "batchRequestId", "invalid"); }
             if (!root.TryGetProperty("rows", out var originalRows) || originalRows.ValueKind != JsonValueKind.Array || originalRows.GetArrayLength() is < 1 or > 5000)
             {
                 Add(0, "rows", "invalid");
@@ -62,27 +62,36 @@ internal static class CostBatchJson
             {
                 var position = ++index;
                 if (element.ValueKind != JsonValueKind.Object) { Add(position, "row", "invalid"); continue; }
-                if (element.TryGetProperty("sourceRow", out var source) && source.ValueKind == JsonValueKind.Number
-                    && source.TryGetInt32(out var sourceRow) && sourceRow > 0) { position = sourceRow; }
+                var unparsed = new HashSet<string>(StringComparer.Ordinal);
+                T Read<T>(string field, T fallback, bool required = true) where T : struct
+                {
+                    if (!element.TryGetProperty(field, out var value))
+                    {
+                        if (required) { Add(position, field, "required"); unparsed.Add(field); }
+                        return fallback;
+                    }
+                    try { return value.Deserialize<T>(options); }
+                    catch (JsonException)
+                    {
+                        Add(position, field, "invalid");
+                        unparsed.Add(field);
+                        return fallback;
+                    }
+                }
+                var sourceRow = Read("sourceRow", index, required: false);
+                if (sourceRow > 0) { position = sourceRow; }
                 Schema(element, RowFields, position);
-                foreach (var required in RequiredRowFields)
+                var row = new CostBatchInput(sourceRow, Read("itemId", Guid.Empty),
+                    Read("expectedVersion", 0L), Read("purchaseCost", 0m), Read("freightCost", 0m));
+                rows.Add(row);
+                foreach (var error in CostBatchValidation.CheckRow(row, index))
                 {
-                    if (!element.TryGetProperty(required, out _)) { Add(position, required, "required"); }
+                    if (unparsed.Contains(error.Field)
+                        || (error.Field == "totalCost" && (unparsed.Contains("purchaseCost") || unparsed.Contains("freightCost")))) { continue; }
+                    Add(error.SourceRow, error.Field, error.Code);
                 }
-                try
-                {
-                    var row = element.Deserialize<CostBatchInput>(options)!;
-                    rows.Add(element.TryGetProperty("sourceRow", out _) ? row : row with { SourceRow = index });
-                }
-                catch (JsonException) { Add(position, "row", "invalid"); }
             }
             var accepted = new AcceptCostBatch(batchId, rows);
-            var business = CostBatchValidation.Check(accepted);
-            foreach (var error in business.Errors)
-            {
-                if (errors.Count < 20) { errors.Add(error); }
-            }
-            count += business.ErrorCount;
             return new(count == 0 ? accepted : null, new(count, errors));
         }
         catch (JsonException)

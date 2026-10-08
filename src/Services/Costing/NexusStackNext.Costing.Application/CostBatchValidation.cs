@@ -36,16 +36,31 @@ public sealed record CostBatchValidation(int ErrorCount, IReadOnlyList<CostBatch
         {
             var row = request.Rows[index];
             if (row is null) { Add(index + 1, "row"); continue; }
-            var position = row.SourceRow > 0 ? row.SourceRow : index + 1;
-            if (row.SourceRow <= 0) { Add(position, "sourceRow"); }
-            if (row.ItemId == Guid.Empty) { Add(position, "itemId"); }
-            if (row.ExpectedVersion < 0) { Add(position, "expectedVersion"); }
-            var costValid = CostSheet.IsValidAmount(row.PurchaseCost);
-            var freightValid = CostSheet.IsValidAmount(row.FreightCost);
-            if (!costValid) { Add(position, "purchaseCost"); }
-            if (!freightValid) { Add(position, "freightCost"); }
-            if (costValid && freightValid && !CostSheet.IsValidInput(row.PurchaseCost, row.FreightCost)) { Add(position, "totalCost"); }
+            var rowErrors = CheckRow(row, index + 1);
+            count += rowErrors.Count;
+            errors.AddRange(rowErrors.Take(20 - errors.Count));
         }
         return new(count, errors);
+    }
+
+    /// <summary>校验一行的全部业务字段；HTTP 可与逐字段解析错误合并而不丢失原始行。</summary>
+    /// <param name="row">原始行。</param>
+    /// <param name="fallbackPosition">行号无效时的原始数组位置。</param>
+    /// <returns>全部安全字段错误。</returns>
+    public static IReadOnlyList<CostBatchFieldError> CheckRow(CostBatchInput row, int fallbackPosition)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        var position = row.SourceRow > 0 ? row.SourceRow : fallbackPosition;
+        var errors = new List<CostBatchFieldError>(6);
+        void Add(string field) => errors.Add(new(position, field, "invalid"));
+        if (row.SourceRow <= 0) { Add("sourceRow"); }
+        if (row.ItemId == Guid.Empty) { Add("itemId"); }
+        if (row.ExpectedVersion < 0) { Add("expectedVersion"); }
+        var costValid = CostSheet.IsValidAmount(row.PurchaseCost);
+        var freightValid = CostSheet.IsValidAmount(row.FreightCost);
+        if (!costValid) { Add("purchaseCost"); }
+        if (!freightValid) { Add("freightCost"); }
+        if (costValid && freightValid && !CostSheet.IsValidInput(row.PurchaseCost, row.FreightCost)) { Add("totalCost"); }
+        return errors;
     }
 }

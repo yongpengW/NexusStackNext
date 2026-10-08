@@ -13,6 +13,40 @@ public sealed class CostingBatchHttpTests(CostingDatabaseFixture database) : ICl
     public Task DisposeAsync() => Task.CompletedTask;
 
     [PostgresFact]
+    public async Task MixedFieldErrors_PreserveEveryOriginalRowAndCountAllFieldsWithoutInventingArrayErrors()
+    {
+        await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString);
+        host.Authenticate();
+        var batchId = Guid.NewGuid();
+        using var rejected = await host.Client.PostAsJsonAsync(new Uri("/api/costing/batches", UriKind.Relative), new
+        {
+            batchRequestId = batchId,
+            rows = new[]
+            {
+                new { sourceRow = "27", itemId = "invalid-guid", expectedVersion = "-1", purchaseCost = -1m, freightCost = "invalid-decimal" },
+                new { sourceRow = "28", itemId = Guid.NewGuid().ToString(), expectedVersion = "0", purchaseCost = -1m, freightCost = "20" },
+            },
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        var report = await rejected.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(5, report.GetProperty("errorCount").GetInt32());
+        var errors = report.GetProperty("errors").EnumerateArray().ToArray();
+        Assert.Equal(4, errors.Count(x => x.GetProperty("sourceRow").GetInt32() == 27));
+        Assert.Equal(new[] { "expectedVersion", "freightCost", "itemId", "purchaseCost" },
+            errors.Where(x => x.GetProperty("sourceRow").GetInt32() == 27).Select(x => x.GetProperty("field").GetString()).Order());
+        using var onlyGuid = await host.Client.PostAsJsonAsync(new Uri("/api/costing/batches", UriKind.Relative), new
+        {
+            batchRequestId = batchId,
+            rows = new[] { new { sourceRow = 88, itemId = "invalid-guid", expectedVersion = "0", purchaseCost = 80m, freightCost = 20m } },
+        });
+        var single = await onlyGuid.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, single.GetProperty("errorCount").GetInt32());
+        Assert.Equal("itemId", Assert.Single(single.GetProperty("errors").EnumerateArray()).GetProperty("field").GetString());
+        using var missing = await host.Client.GetAsync(new Uri($"/api/costing/batches/{batchId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+    }
+
+    [PostgresFact]
     public async Task ConcurrentEquivalentRequests_ShareFirstAcceptanceAndChildIdentity_WhileChangedRawContentConflicts()
     {
         await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString);

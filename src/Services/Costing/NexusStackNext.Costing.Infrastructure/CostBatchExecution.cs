@@ -93,11 +93,12 @@ internal sealed partial class CostBatchExecution(CostingDbContext database, Cost
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-request/" + row.TaskId}, 0))", token).ConfigureAwait(false);
             if (await database.Tasks.AnyAsync(x => x.TaskId == row.TaskId, token).ConfigureAwait(false)
-                || await database.ScheduleReceipts.AnyAsync(x => x.OccurrenceId == row.TaskId, token).ConfigureAwait(false))
+                || await database.ScheduleReceipts.AnyAsync(x => x.OccurrenceId == row.TaskId && x.Decision == "Accepted", token).ConfigureAwait(false))
             {
                 // A conflicting namespace is an infrastructure fault, never a row business rejection.
                 throw new InvalidOperationException("成本批次子任务身份已被占用。");
             }
+            // A later schedule may persist a rejection for this reserved identity; it owns no task.
             await database.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-item/" + row.ItemId}, 0))", token).ConfigureAwait(false);
             var id = new CostId(row.ItemId);

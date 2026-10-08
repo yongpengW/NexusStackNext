@@ -83,12 +83,19 @@ public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplate
         Assert.NotNull(contextType);
         var context = Assert.IsAssignableFrom<DbContext>(scope.ServiceProvider.GetRequiredService(contextType));
         var migrations = context.Database.GetMigrations().ToArray();
-        Assert.True(migrations.Length >= 2);
-        Assert.EndsWith("_ConditionalFactRecovery", migrations[^1], StringComparison.Ordinal);
+        var recoveryIndex = Array.FindIndex(migrations, name => name.EndsWith("_ConditionalFactRecovery", StringComparison.Ordinal));
+        Assert.True(recoveryIndex > 0, "恢复协议迁移及其前置迁移必须存在。");
+        var recoverySchema = migrations[..(recoveryIndex + 1)];
         var migrator = context.GetService<IMigrator>();
         // Only this migration window owns the heavy-operation lease. Recovery still races rollback.
         // Acquire before starting the original ten-second race budget; database cleanup occurs after release.
         await using var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true);
+        // Newer empty schemas do not change the migration whose rollback protection is under test.
+        // Hosts have already produced the fact on the current schema; no host commands run in this window.
+        using (var preparationBudget = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            await migrator.MigrateAsync(migrations[recoveryIndex], preparationBudget.Token);
+        }
         await using var control = new NpgsqlConnection(database.ConnectionString);
         await control.OpenAsync();
         await using (var arrange = new NpgsqlCommand($"""
@@ -104,7 +111,7 @@ public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplate
         try
         {
             await WaitForBlockedCommandAsync(control, "advisory", cancellation.Token);
-            rollback = migrator.MigrateAsync(migrations[^2], cancellation.Token);
+            rollback = migrator.MigrateAsync(migrations[recoveryIndex - 1], cancellation.Token);
             await WaitForBlockedCommandAsync(control, "relation", cancellation.Token);
             await ReleaseAsync(control);
             var accepted = await recovering;
@@ -113,7 +120,7 @@ public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplate
             Assert.Equal("P0001", rejected.SqlState);
             Assert.Equal(source + "_fact_recovery_history_exists", rejected.ConstraintName);
             Assert.Equal(accepted.Value, (await delivery.GetRecoveryAsync(request.RequestId)).Value);
-            Assert.Equal(migrations, (await context.Database.GetAppliedMigrationsAsync()).ToArray());
+            Assert.Equal(recoverySchema, (await context.Database.GetAppliedMigrationsAsync()).ToArray());
             var retained = Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue), entry => entry.Id == original.Id);
             Assert.Equal(original.Payload, retained.Payload);
             Assert.Equal(original.OccurredAt, retained.OccurredAt);
@@ -132,6 +139,10 @@ public sealed class FactRecoveryRollbackConcurrencyTests(JourneyDatabaseTemplate
                 catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             }
         }
+        // Reapplying later migrations is separate from the original ten-second race budget.
+        using var upgradeBudget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await migrator.MigrateAsync(cancellationToken: upgradeBudget.Token);
+        Assert.Equal(migrations, (await context.Database.GetAppliedMigrationsAsync()).ToArray());
     }
 
     private static async Task ReleaseAsync(NpgsqlConnection control)
