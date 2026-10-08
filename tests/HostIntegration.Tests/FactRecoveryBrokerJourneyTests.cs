@@ -145,14 +145,17 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 timings.MoveTo(JourneyPhase.SourceCleanup);
             }
             // Memory keeps no durable source receipt; broker-confirmed evidence belongs to the separate central store.
+            timings.MoveTo(JourneyPhase.FixtureStartup);
             await using (var fresh = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false })
             {
                 await using var scope = fresh.Services.CreateAsyncScope();
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 foreach (var (source, expected) in evidence)
                 {
                     Assert.Equal(source + ".delivery_recovery.not_found",
                         (await FactRecoveryProtocolTests.GetPort(scope.ServiceProvider, source).GetRecoveryAsync(expected.RequestId)).Error.Code);
                 }
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
             var settings = AuditBusinessJourneyTests.Settings(broker, prefix);
             settings["Scheduling__Worker__Enabled"] = "false";
@@ -203,6 +206,7 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                     source, expected.PolicyEnvelope, expected.Policy);
                 Assert.True(JsonElement.DeepEquals(originals[source], await WaitForOrdinaryAsync(restored.Client, source, expected.OrdinaryEnvelope)));
             }
+            timings.MoveTo(JourneyPhase.CentralCleanup);
         }
         finally
         {
@@ -384,6 +388,7 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 deadLetter: true, expectedMessageId: ordinary.Id);
             Assert.Equal(ordinaryConflict.Payload, ordinaryRejected.Payload);
             Assert.True(JsonElement.DeepEquals(persistedOrdinary, await WaitForOrdinaryAsync(restored.Client, source, ordinaryEnvelope)));
+            timings.MoveTo(JourneyPhase.CentralCleanup);
         }
         finally
         {
