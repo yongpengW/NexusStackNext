@@ -7,10 +7,12 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -31,7 +33,7 @@ public sealed class GatewayRouteAdminTests : IClassFixture<GatewayRouteAdminApp>
         new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
             issuer: "nexusstack",
             audience: "nexusstack",
-            claims: root ? [new Claim("nexusstack:root", "true")] : [new Claim("sub", "42")],
+            claims: [new Claim("sub", root ? "42" : "43"), new Claim("nexusstack:session", "0")],
             notBefore: DateTime.UtcNow.AddMinutes(-1),
             expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(
@@ -195,6 +197,7 @@ public sealed class GatewayRouteAdminTests : IClassFixture<GatewayRouteAdminApp>
 /// </remarks>
 public sealed class GatewayRouteAdminApp : WebApplicationFactory<GatewayHostMarker>
 {
+    private SessionAuthorityStub? _authority;
     /// <summary>测试签名密钥——够 32 字节。</summary>
     public const string SigningKey = "gateway-test-signing-key-long-enough-for-hs256";
 
@@ -238,6 +241,9 @@ public sealed class GatewayRouteAdminApp : WebApplicationFactory<GatewayHostMark
         Environment.SetEnvironmentVariable("Jwt__SigningKey", SigningKey);
         Environment.SetEnvironmentVariable("Jwt__Issuer", "nexusstack");
         Environment.SetEnvironmentVariable("Jwt__Audience", "nexusstack");
+        _authority = SessionAuthorityStub.StartAsync(SigningKey).GetAwaiter().GetResult();
+        builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        { ["IdentitySession:BaseAddress"] = _authority.Address }));
 
         return base.CreateHost(builder);
     }
@@ -258,5 +264,6 @@ public sealed class GatewayRouteAdminApp : WebApplicationFactory<GatewayHostMark
         }
 
         base.Dispose(disposing);
+        if (disposing && _authority is not null) { _authority.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
     }
 }

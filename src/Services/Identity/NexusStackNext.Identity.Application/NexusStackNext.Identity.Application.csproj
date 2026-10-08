@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../NexusStackNext.Identity.Contracts/NexusStackNext.Identity.Contracts.csproj" />
     <ProjectReference Include="..\NexusStackNext.Identity.Domain\NexusStackNext.Identity.Domain.csproj" />
     <ProjectReference Include="..\..\..\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
   </ItemGroup>

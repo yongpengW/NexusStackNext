@@ -138,6 +138,21 @@ provider 时间与 EF 诊断嵌套，不叠加。Npgsql 的 BEGIN/COMMIT 走内�
 也不证明完整宿主测试或生产请求固定快这么多。ISender 权限热读仍为零命令，
 权威会话读取仍为一次，退出即时拒绝保持。权限冷读投影、生产网关持久日志和并发负载测量尚未实施。
 
+## 当前会话授权的独立读取（#52）
+
+[跨宿主会话撤销](https://github.com/yongpengW/NexusStackNext/issues/52) 将 HTTP 授权的会话读取改为
+独立有界 Npgsql 适配器，避免业务 EF 重试在故障时延长授权等待。此前的结果是历史测量，
+不能把其中的 EF 会话命令数当成现在的观测；公开 `GetSessionVersionQuery` 仍沿原有 EF 查询路径。
+
+探针用仅测试装配的 `ISessionStateReader` 装饰器标识实际读取作用域，按其真实 Npgsql 子 Activity
+单列 `authority_commands/authority_ms`，不读取 SQL、参数或连接标签，也不替换判定结果。
+有效与已撤销 HTTP 请求都必须观测到权威 provider 命令，来源日志仍单独要求非空。
+拒绝路径的 EF 命令可为零，不能用日志的 provider span 冒充会话读取。该检查替换了失去对象的
+“撤销必须有 Identity EF 命令”假设，200/401、持久版本增量、日志及 provider 检查均保留。
+
+此轮没有同边界性能对照，不据新计数宣称生产提速或并发吞吐提升；授权故障与预算见
+[当前会话授权运行说明](current-session-authorization.md)。
+
 新增公共接口回归覆盖两个不同记录同时命中消息与阶段身份、并发交叉冲突、满额重投及重开不变。
 原实现已通过此行为回归，这是保留语义的重构；反向验证把联合身份条件改错，先确认编译成功，
 再确认该回归失败，恢复正确条件后重新验证；另关闭 provider 监听，确认 HTTP 非空探针断言失败。

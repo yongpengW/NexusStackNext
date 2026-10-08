@@ -77,6 +77,7 @@ OptionsValidationException: Jwt:SigningKey 至少需要 32 字节。请在配置
 | `AgileConfig__Tag` | `AgileConfig:Tag` |
 | `Files__StorageRoot` | `Files:StorageRoot` |
 | `Jwt__SigningKey` | `Jwt:SigningKey` |
+| `IdentitySession__BaseAddress` | 网关／Costing／Pricing 固定的 Identity 权威根地址，详见[当前会话授权](../docs/current-session-authorization.md) |
 | `Identity__Root__UserName` | `Identity:Root:UserName` |
 | `Identity__Root__Password` | `Identity:Root:Password` |
 | `ConnectionStrings__Identity` | `ConnectionStrings:Identity`（默认必填） |

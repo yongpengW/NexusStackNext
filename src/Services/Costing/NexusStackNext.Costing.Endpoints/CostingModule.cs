@@ -93,7 +93,7 @@ public static class CostingModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/costing").RequireAuthorization("costing-operator")
-            .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+            .ProducesApiErrors(400, 401, 403, 404, 409, 500, 503);
         group.MapPost("/batches", async (HttpRequest http, IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> json,
             ISender sender, ApiResponses responses, CancellationToken token) =>
         {

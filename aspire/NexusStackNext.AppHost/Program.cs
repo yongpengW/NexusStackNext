@@ -86,6 +86,7 @@ var platform = builder
 
 var gateway = builder
     .AddProject<Projects.NexusStackNext_Gateway>("gateway")
+    .WithEnvironment("IdentitySession__BaseAddress", "http://127.0.0.1:5191/")
     .WithEnvironment("ConnectionStrings__OperationJournal", postgres)
     .WithEnvironment("Gateway__RouteTablePath", "routes.json")
     .WithEndpoint(5190, 5190, "http", isProxied: false)
@@ -103,6 +104,7 @@ if (!string.IsNullOrWhiteSpace(costingDatabase) && string.IsNullOrWhiteSpace(pri
 if (!string.IsNullOrWhiteSpace(pricingDatabase))
 {
     var pricing = builder.AddProject<Projects.NexusStackNext_PricingHost>("pricing")
+        .WithEnvironment("IdentitySession__BaseAddress", "http://127.0.0.1:5191/")
         .WithEnvironment("ConnectionStrings__Pricing", pricingDatabase)
         .WithEnvironment("ConnectionStrings__OperationJournal", pricingDatabase)
         .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", otlp)
@@ -121,6 +123,7 @@ if (!string.IsNullOrWhiteSpace(pricingDatabase))
     if (!string.IsNullOrWhiteSpace(costingDatabase))
     {
         var costing = builder.AddProject<Projects.NexusStackNext_CostingHost>("costing")
+            .WithEnvironment("IdentitySession__BaseAddress", "http://127.0.0.1:5191/")
             .WithEnvironment("ConnectionStrings__Costing", costingDatabase)
             .WithEnvironment("ConnectionStrings__OperationJournal", costingDatabase)
             .WithEnvironment("Costing__Messaging__Enabled", "true")

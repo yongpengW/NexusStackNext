@@ -21,8 +21,8 @@ public interface ICurrentUser
     /// <summary>
     /// 当前用户是不是根管理员。
     ///
-    /// <para>它来自**已认证的声明**（<c>nexusstack:root</c>），不是从数据库现查的：
-    /// 判定要用它，而判定在每个请求上跑。谁有资格成为根管理员，是签发令牌时决定的事。</para>
+    /// <para>它是已验签令牌签发时的提示。请求授权使用 <see cref="ISessionValidator"/>
+    /// 返回的当前权威根身份，不能把这份声明作为故障回退。</para>
     /// </summary>
     bool IsRoot { get; }
 

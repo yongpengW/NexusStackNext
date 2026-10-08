@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
@@ -17,7 +19,7 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
     public async Task ColdAndWarmQueries_ObserveCommittedGrantsAndImmediateSessionRevocationThroughTheGateway()
     {
         await using var database = await databases.CreateAsync();
-        await using var app = new PersistentIdentityApp(database.ConnectionString);
+        await using var app = new MeasuredIdentityApp(database.ConnectionString);
         using var platform = app.CreateClient();
         using var artifacts = new JourneyFileStorage();
         Directory.CreateDirectory(artifacts.Root);
@@ -72,6 +74,7 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             Assert.True(measurement.Commands > 0, "HTTP trace must observe actual Identity database work.");
             Assert.True(measurement.JournalCommands > 0, "HTTP trace must observe actual source journal persistence.");
             Assert.True(measurement.ProviderCommands > 0, "HTTP trace must observe actual database provider execution.");
+            Assert.True(measurement.SessionCommands > 0, "HTTP trace must observe the actual session authority database read.");
         }
         using var logout = await gateway.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
@@ -86,11 +89,27 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             using var denied = await gateway.Client.GetAsync(new Uri("/api/identity/menus", UriKind.Relative));
             Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
             await measurement.CompleteHttpAsync();
-            Assert.True(measurement.Commands > 0, "Revocation measurement must observe the authoritative database.");
+            Assert.True(measurement.SessionCommands > 0, "Revocation measurement must observe the authoritative database.");
             Assert.True(measurement.JournalCommands > 0, "Rejected HTTP requests must still persist source observations.");
             Assert.True(measurement.ProviderCommands > 0, "Rejected HTTP measurements must observe actual database provider execution.");
         }
         Assert.True(timings.Commands > 0, "Query timing must observe actual Identity database work.");
+    }
+
+    private sealed class MeasuredIdentityApp(string connectionString) : PersistentIdentityApp(connectionString)
+    {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.ConfigureTestServices(services =>
+            {
+                var original = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISessionStateReader));
+                Assert.NotNull(original.ImplementationFactory);
+                services.Remove(original);
+                services.AddSingleton<ISessionStateReader>(provider => new IdentityQueryTimings.SessionReader(
+                    (ISessionStateReader)original.ImplementationFactory(provider)));
+            });
+        }
     }
 
     private static async Task<Result<T>> QueryAsync<T>(PersistentIdentityApp app, IQuery<T> query)

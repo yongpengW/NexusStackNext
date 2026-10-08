@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Gateway.Routing;
@@ -18,7 +17,7 @@ public static class GatewayRouteAdmin
     public static WebApplication MapGatewayRouteAdmin(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var admin = app.MapGroup("/gateway/routes").RequireAuthorization(RootOnlyPolicy).ProducesApiErrors(400, 401, 403, 500);
+        var admin = app.MapGroup("/gateway/routes").RequireAuthorization(RootOnlyPolicy).ProducesApiErrors(400, 401, 403, 500, 503);
         admin.MapGet("/{routeId}", (string routeId, GatewayRouteConfiguration configuration, ApiResponses responses) =>
             FindRoute(configuration.Current, routeId) is { } route ? responses.Ok(route) : Failure(MissingRoute(routeId)))
             .Produces<ApiResponse<RouteDefinition>>().ProducesApiErrors(404);
@@ -89,6 +88,6 @@ public static class GatewayAuthorizationPolicies
         ArgumentNullException.ThrowIfNull(options);
         options.AddPolicy(GatewayRouteAdmin.RootOnlyPolicy, policy => policy
             .RequireAuthenticatedUser()
-            .RequireClaim(NexusStackClaims.Root, "true"));
+            .AddRequirements(new CurrentRootSessionRequirement()));
     }
 }

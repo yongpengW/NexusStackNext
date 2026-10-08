@@ -16,7 +16,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     internal string FilesRoot { get; }
 
     private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
-        IReadOnlyDictionary<string, string>? settings)
+        IReadOnlyDictionary<string, string>? settings, Uri? listenAddress)
     {
         Client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         var start = new ProcessStartInfo("dotnet")
@@ -27,7 +27,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
         };
         start.ArgumentList.Add(typeof(PlatformHostMarker).Assembly.Location);
         start.ArgumentList.Add("--urls");
-        start.ArgumentList.Add("http://127.0.0.1:0");
+        start.ArgumentList.Add(listenAddress?.AbsoluteUri ?? "http://127.0.0.1:0");
         start.Environment["Serilog__MinimumLevel__Override__Microsoft.Hosting.Lifetime"] = "Information";
         start.Environment["DOTNET_ENVIRONMENT"] = "Production";
         start.Environment["Identity__Storage__Provider"] = "Postgres";
@@ -61,9 +61,9 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     }
 
     public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null,
-        int cleanupBatchSize = 64, IReadOnlyDictionary<string, string>? settings = null, bool requireReady = true)
+        int cleanupBatchSize = 64, IReadOnlyDictionary<string, string>? settings = null, bool requireReady = true, Uri? listenAddress = null)
     {
-        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize, settings);
+        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize, settings, listenAddress);
         try
         {
             var elapsed = Stopwatch.StartNew();

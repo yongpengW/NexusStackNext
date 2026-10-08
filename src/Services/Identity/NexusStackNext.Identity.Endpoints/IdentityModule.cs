@@ -49,6 +49,9 @@ public static class IdentityModule
         ArgumentNullException.ThrowIfNull(configuration);
 
         ArgumentNullException.ThrowIfNull(environment);
+        var sessionRead = configuration.GetSection("Identity:SessionAuthority").Get<IdentitySessionReadOptions>() ?? new();
+        sessionRead.Validate();
+        services.AddSingleton(sessionRead);
         var capacityRead = configuration.GetSection("Identity:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
         capacityRead.Validate();
         var provider = configuration["Identity:Storage:Provider"];
@@ -117,6 +120,18 @@ public static class IdentityModule
     public static IEndpointRouteBuilder MapIdentityEndpoints(this IEndpointRouteBuilder endpoints)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
+
+        // 只做框架验签；当前会话判定自身不能再调用会话过滤器。
+        endpoints.MapGet("/api/identity/session/v1", async (ICurrentUser caller, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            if (!long.TryParse(caller.UserId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var userId))
+            { return Results.Problem(statusCode: StatusCodes.Status401Unauthorized, title: "需要先认证。"); }
+            var result = await sender.QueryAsync(new GetCurrentSessionQuery(userId, caller.SessionVersion), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value)
+                : Results.Problem(statusCode: result.Error == SessionValidationErrors.Invalid ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable,
+                    title: result.Error.Message, extensions: new Dictionary<string, object?> { ["errorCode"] = result.Error.Code });
+        }).RequireAuthorization().Produces<ApiResponse<CurrentSessionV1>>().ProducesApiErrors(401, 503)
+            .WithMetadata(new OperationLogSuppression("内部权威读取不产生额外操作观察，来源业务请求仍记录授权结果，避免每次授权放大日志。"));
 
         var identity = endpoints.MapGroup("/api/identity").ProducesApiErrors(400, 401, 403, 500, 503);
 

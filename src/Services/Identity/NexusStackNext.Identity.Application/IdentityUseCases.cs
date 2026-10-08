@@ -578,7 +578,8 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddScoped<TokenIssuer>();
 
         AddQuery<GetSessionVersionQuery, long, GetSessionVersionHandler>(services);
-        services.AddScoped<ISessionValidator, GetSessionVersionHandler>();
+        AddQuery<GetCurrentSessionQuery, NexusStackNext.Identity.Contracts.CurrentSessionV1, GetCurrentSessionHandler>(services);
+        services.AddScoped<ISessionValidator, GetCurrentSessionHandler>();
         AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
