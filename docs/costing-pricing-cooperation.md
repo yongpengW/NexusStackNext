@@ -5,6 +5,9 @@ HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符�
 [本轮票据](https://github.com/yongpengW/NexusStackNext/issues/28)。演示公式为 Costing 的采购成本加单位运费，
 以及 Pricing 的单位成本除以一减费率。这些公式不代表 PoS 生产规则。
 
+多对象输入使用[Costing JSON 批次导入](costing-batch-import.md)：末条生效、逐行事务、持久检查点及条件取消，
+导入与子计算、交付及定价分别观察。它不替代后续 Excel 文件适配器。
+
 ## 配置和启动
 
 准备两个独立 PostgreSQL 数据库，分别配置 `ConnectionStrings__Costing`、`ConnectionStrings__Pricing`。
@@ -98,7 +101,9 @@ PUT 仅接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloa
 投递失败：`POST /api/costing/tasks/{id}/delivery/retry`，正文含查询到的 `expectedDeadLetteredAt`，消息 ID 保留。
 计算完成、broker 确认、下游完成是三个状态；Delivered 只表示 broker 确认。
 
-`/health/live` 只查进程；`/health/ready` 查数据库与迁移，启用消息时还查 broker 认证及交换机。
+`/health/live` 只查进程；`/health/ready` 查数据库与迁移。
+Costing 启用消息时的 broker 认证及交换机检查单列 `/health/delivery`，MQ 故障仍可受理与查询本地持久工作。
+Pricing 启用消息时的 broker 检查仍属于其就绪检查；两边日志另有独立诊断。
 它不证明下游完成或死信为空，还需观察投递查询和 broker 指标。当前每个服务配置一个投递循环；
 来源事实的已确认副本有独立保留清理；多实例投递协调、普通业务消息保留及完整运维面板留后续运营能力。
 

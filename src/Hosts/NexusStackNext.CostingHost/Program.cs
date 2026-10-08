@@ -107,11 +107,15 @@ try
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/ready", new HealthCheckOptions
     {
-        Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag),
+        Predicate = static check => !check.Tags.Contains(AuditingDiagnostics.HealthTag) && !check.Tags.Contains(CostingModule.DeliveryHealthTag),
     });
     app.MapHealthChecks("/health/logging", new HealthCheckOptions
     {
         Predicate = static check => check.Tags.Contains(AuditingDiagnostics.HealthTag),
+    });
+    app.MapHealthChecks("/health/delivery", new HealthCheckOptions
+    {
+        Predicate = static check => check.Tags.Contains(CostingModule.DeliveryHealthTag),
     });
     await app.RunAsync();
     return 0;

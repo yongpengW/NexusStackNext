@@ -17,6 +17,28 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
     public Task DisposeAsync() => Task.CompletedTask;
 
     [PostgresFact]
+    public async Task BatchReservedChildIdentity_RejectsScheduledOccupationEvenBeforeTheChildIsRegistered()
+    {
+        await using var app = CreateApplication();
+        await using var scope = app.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var item = Guid.NewGuid();
+        Assert.True((await sender.SendAsync(new UpdateCostInputs(Guid.NewGuid(), item, 0, 80m, 20m))).IsSuccess);
+        var batchId = Guid.NewGuid();
+        Assert.True((await sender.SendAsync(new AcceptCostBatch(batchId, [new(1, Guid.NewGuid(), 0, 10m, 20m)]))).IsSuccess);
+        var child = Assert.Single((await sender.QueryAsync(new ListCostBatchRows(batchId))).Value.Items).TaskId!.Value;
+        var scheduled = Trigger(item) with { EventId = child };
+        Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
+        Assert.True((await sender.QueryAsync(new GetCostCalculation(child))).IsFailure);
+        var lease = (await sender.SendAsync(new ClaimCostBatch())).Value!;
+        Assert.True((await sender.SendAsync(new ExecuteCostBatchSegment(batchId, lease.Epoch))).Value);
+        Assert.Equal("Completed", (await sender.QueryAsync(new GetCostBatch(batchId))).Value.State);
+        Assert.Equal(new CostBatchReference(batchId, 1, 1), (await sender.QueryAsync(new GetCostCalculation(child))).Value.Batch);
+        Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
+        Assert.Equal(new CostBatchReference(batchId, 1, 1), (await sender.QueryAsync(new GetCostCalculation(child))).Value.Batch);
+    }
+
+    [PostgresFact]
     public async Task OccurrenceReplay_CannotChangeRemoveOrBackfillItsExecutionOrigin()
     {
         var id = Guid.NewGuid();

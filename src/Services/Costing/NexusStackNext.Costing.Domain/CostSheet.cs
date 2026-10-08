@@ -31,9 +31,13 @@ public sealed class CostSheet : AuditedAggregateRoot<CostId>
     /// <param name="freightCost">单位运费。</param>
     /// <returns>是否合法。</returns>
     public static bool IsValidInput(decimal cost, decimal freightCost) =>
-        cost is >= 0 and <= 1_000_000_000m && freightCost is >= 0 and <= 1_000_000_000m
-        && cost + freightCost <= 1_000_000_000m
-        && decimal.Round(cost, 4) == cost && decimal.Round(freightCost, 4) == freightCost;
+        IsValidAmount(cost) && IsValidAmount(freightCost) && cost + freightCost <= 1_000_000_000m;
+
+    /// <summary>单个成本金额非负、不超过十亿且最多四位小数。</summary>
+    /// <param name="amount">待验证金额。</param>
+    /// <returns>是否符合成本金额规则。</returns>
+    public static bool IsValidAmount(decimal amount) =>
+        amount is >= 0 and <= 1_000_000_000m && decimal.Round(amount, 4) == amount;
 
     /// <summary>创建成本核算对象。</summary>
     /// <param name="id">调用方提供的标识。</param>

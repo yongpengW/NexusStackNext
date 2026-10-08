@@ -213,8 +213,10 @@ public sealed class BusinessCooperationTests(CostingDatabaseFixture database) : 
                 Assert.Equal(100m, cost.GetProperty("unitCost").GetDecimal());
                 using var live = await costing.Client.GetAsync(Relative("/health/live"));
                 using var ready = await costing.Client.GetAsync(Relative("/health/ready"));
+                using var deliveryHealth = await costing.Client.GetAsync(Relative("/health/delivery"));
                 Assert.Equal(HttpStatusCode.OK, live.StatusCode);
-                Assert.Equal(HttpStatusCode.ServiceUnavailable, ready.StatusCode);
+                Assert.Equal(HttpStatusCode.OK, ready.StatusCode);
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, deliveryHealth.StatusCode);
             }
             await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString, worker: true, settings: settings);
             await using var recovered = await StartCostingAsync(settings);

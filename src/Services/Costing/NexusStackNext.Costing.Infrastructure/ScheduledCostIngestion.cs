@@ -58,7 +58,8 @@ internal sealed class ScheduledCostIngestion(CostingDbContext database, IBackgro
         await database.Database.ExecuteSqlInterpolatedAsync(
             $"SELECT pg_advisory_xact_lock(hashtextextended({"costing-request/" + message.EventId}, 0))", cancellationToken).ConfigureAwait(false);
         string? rejection = null;
-        if (await database.Tasks.AnyAsync(x => x.TaskId == message.EventId, cancellationToken).ConfigureAwait(false))
+        if (await database.Tasks.AnyAsync(x => x.TaskId == message.EventId, cancellationToken).ConfigureAwait(false)
+            || await database.BatchRows.AnyAsync(x => x.TaskId == message.EventId, cancellationToken).ConfigureAwait(false))
         {
             rejection = "costing.schedule_task_conflict";
         }

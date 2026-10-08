@@ -13,6 +13,29 @@ namespace NexusStackNext.Costing.IntegrationTests;
 public sealed class CostingTaskUpgradeTests
 {
     [PostgresFact]
+    public async Task MissingBatchMetadataColumn_FailsReadinessAndOrdinaryStartupWithoutSilentlyMigrating()
+    {
+        foreach (var (table, column) in new[] { ("batches", "Epoch"), ("batch_rows", "SourceRow"), ("batch_attempts", "ErrorCode") })
+        {
+            var database = new CostingDatabaseFixture();
+            await database.InitializeAsync();
+            try
+            {
+                await using (var connection = new NpgsqlConnection(database.ConnectionString))
+                {
+                    await connection.OpenAsync();
+                    await using var damage = new NpgsqlCommand($"ALTER TABLE costing.{table} DROP COLUMN \"{column}\"", connection);
+                    await damage.ExecuteNonQueryAsync();
+                }
+                Assert.False(await CostingDatabase.IsReadyAsync(database.ConnectionString));
+                var startup = await BusinessProcess.RunToExitAsync(BusinessProcess.StartInfo(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString));
+                Assert.Equal(1, startup.ExitCode);
+            }
+            finally { await database.DisposeAsync(); }
+        }
+    }
+
+    [PostgresFact]
     public async Task MissingTaskMetadataColumn_FailsReadinessAndOrdinaryStartup()
     {
         var database = new CostingDatabaseFixture();
@@ -81,6 +104,7 @@ public sealed class CostingTaskUpgradeTests
                 var status = (await sender.QueryAsync(new GetCostCalculation(id))).Value;
                 Assert.Null(status.CreatedAt);
                 Assert.Null(status.MaxLeaseUntil);
+                Assert.Null(status.Batch);
             }
             var legacyPage = (await sender.QueryAsync(new ListCostCalculations())).Value;
             Assert.Equal(new[] { pending, running, failed, expired }, legacyPage.Items.Select(task => task.TaskId));
