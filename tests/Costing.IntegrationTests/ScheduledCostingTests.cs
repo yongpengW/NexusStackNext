@@ -17,6 +17,25 @@ public sealed class ScheduledCostingTests(CostingDatabaseFixture database) : ICl
     public Task DisposeAsync() => Task.CompletedTask;
 
     [PostgresFact]
+    public async Task BatchReservedChildIdentity_RejectsScheduledOccupationEvenBeforeTheChildIsRegistered()
+    {
+        await using var app = CreateApplication();
+        await using var scope = app.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var item = Guid.NewGuid();
+        Assert.True((await sender.SendAsync(new UpdateCostInputs(Guid.NewGuid(), item, 0, 80m, 20m))).IsSuccess);
+        var batchId = Guid.NewGuid();
+        Assert.True((await sender.SendAsync(new AcceptCostBatch(batchId, [new(1, Guid.NewGuid(), 0, 10m, 20m)]))).IsSuccess);
+        var child = Assert.Single((await sender.QueryAsync(new ListCostBatchRows(batchId))).Value.Items).TaskId!.Value;
+        var scheduled = Trigger(item) with { EventId = child };
+        Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
+        Assert.True((await sender.QueryAsync(new GetCostCalculation(child))).IsFailure);
+        Assert.True((await sender.SendAsync(new CancelCostBatch(batchId, 0))).IsSuccess);
+        Assert.True(await Processor(scope).HandleAsync(Envelope(scheduled)));
+        Assert.True((await sender.QueryAsync(new GetCostCalculation(child))).IsFailure);
+    }
+
+    [PostgresFact]
     public async Task OccurrenceReplay_CannotChangeRemoveOrBackfillItsExecutionOrigin()
     {
         var id = Guid.NewGuid();

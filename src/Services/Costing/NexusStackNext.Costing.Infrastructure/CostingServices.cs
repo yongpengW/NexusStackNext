@@ -35,14 +35,18 @@ public static class CostingServices
     /// <param name="services">容器。</param>
     /// <param name="connectionString">所属数据库的连接配置。</param>
     /// <param name="options">有界执行策略。</param>
+    /// <param name="batchOptions">本上下文批次读取与短事务策略。</param>
     /// <returns>容器。</returns>
-    public static IServiceCollection AddCostingPostgres(this IServiceCollection services, string connectionString, CostingTaskOptions? options = null)
+    public static IServiceCollection AddCostingPostgres(this IServiceCollection services, string connectionString, CostingTaskOptions? options = null, CostingBatchOptions? batchOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         var policy = options ?? new CostingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
+        var batchPolicy = batchOptions ?? new CostingBatchOptions();
+        batchPolicy.Validate();
+        services.AddSingleton(batchPolicy);
         services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
         services.AddScoped<CostingCommittedFactInterceptor>();
         services.AddScoped(provider => CostingDatabase.CreateContext(connectionString, provider));
@@ -54,6 +58,17 @@ public static class CostingServices
         services.AddScoped<IQueryHandler<GetCostCalculation, CostCalculationStatus>, CostingCommands>();
         services.AddScoped<IQueryHandler<ListCostCalculations, CostCalculationPage>, CostingTaskQueries>();
         services.AddScoped<IQueryHandler<GetCostSheet, CostSheetView>, CostingCommands>();
+        services.AddScoped<ICommandHandler<AcceptCostBatch, CostBatchStatus>, CostBatchAcceptance>();
+        services.AddScoped<IQueryHandler<GetCostBatch, CostBatchStatus>, CostBatchAcceptance>();
+        services.AddScoped<IQueryHandler<ListCostBatchRows, CostBatchRowPage>, CostBatchAcceptance>();
+        services.AddScoped<IQueryHandler<ListCostBatches, CostBatchPage>, CostBatchQueries>();
+        services.AddScoped<IQueryHandler<ListCostBatchAttempts, CostBatchAttemptPage>, CostBatchQueries>();
+        services.AddScoped<ICommandHandler<ClaimCostBatch, CostBatchLease?>, CostBatchExecution>();
+        services.AddScoped<ICommandHandler<ExecuteCostBatchSegment, bool>, CostBatchExecution>();
+        services.AddScoped<ICommandHandler<FailCostBatch, bool>, CostBatchExecution>();
+        services.AddScoped<ICommandHandler<CancelCostBatch, CostBatchStatus>, CostBatchExecution>();
+        services.AddScoped<ICommandHandler<RetryCostBatch, CostBatchStatus>, CostBatchExecution>();
+        services.AddScoped<ICommandHandler<RenewCostBatch, CostBatchLease>, CostBatchExecution>();
         services.AddScoped<ICommandHandler<ClaimCostingWork, CostingWorkLease?>, CostingExecution>();
         services.AddScoped<ICommandHandler<CompleteCostingWork, bool>, CostingExecution>();
         services.AddScoped<ICommandHandler<FailCostingWork, bool>, CostingExecution>();
@@ -88,9 +103,10 @@ internal sealed class CostingCommands(CostingDbContext database, IExecutionConte
             return existing.Matches(command) ? Result.Success(existing.ToStatus())
                 : Result.Failure<CostCalculationStatus>(new Error("costing.request_conflict", "请求标识已用于不同内容。"));
         }
-        if (await database.ScheduleReceipts.AnyAsync(x => x.OccurrenceId == command.RequestId, cancellationToken).ConfigureAwait(false))
+        if (await database.ScheduleReceipts.AnyAsync(x => x.OccurrenceId == command.RequestId, cancellationToken).ConfigureAwait(false)
+            || await database.BatchRows.AnyAsync(x => x.TaskId == command.RequestId, cancellationToken).ConfigureAwait(false))
         {
-            return Result.Failure<CostCalculationStatus>(new Error("costing.request_conflict", "请求标识已经用于计划触发。"));
+            return Result.Failure<CostCalculationStatus>(new Error("costing.request_conflict", "请求标识已经用于计划或批次。"));
         }
 
         await database.Database.ExecuteSqlInterpolatedAsync(
@@ -143,8 +159,10 @@ internal sealed class CostingCommands(CostingDbContext database, IExecutionConte
     public async Task<Result<CostCalculationStatus>> HandleAsync(GetCostCalculation query, CancellationToken cancellationToken = default)
     {
         var entry = await database.Tasks.AsNoTracking().Include(x => x.History).SingleOrDefaultAsync(x => x.TaskId == query.TaskId, cancellationToken).ConfigureAwait(false);
-        return entry is null ? Result.Failure<CostCalculationStatus>(new Error("costing.not_found", "任务不存在。"))
-            : Result.Success(entry.ToStatus());
+        if (entry is null) { return Result.Failure<CostCalculationStatus>(new Error("costing.not_found", "任务不存在。")); }
+        var batch = entry.Origin == "batch" ? await database.BatchRows.AsNoTracking().Where(x => x.TaskId == entry.TaskId)
+            .Select(x => new CostBatchReference(x.BatchId, x.Sequence, x.SourceRow)).SingleAsync(cancellationToken).ConfigureAwait(false) : null;
+        return Result.Success(entry.ToStatus() with { Batch = batch });
     }
 
     public async Task<Result<CostSheetView>> HandleAsync(GetCostSheet query, CancellationToken cancellationToken = default)

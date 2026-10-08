@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
@@ -27,6 +28,8 @@ namespace NexusStackNext.Costing.Endpoints;
 /// <summary>精简成本核算样板的装配与 HTTP 契约。</summary>
 public static class CostingModule
 {
+    /// <summary>可靠交付依赖的独立诊断；MQ 故障不阻止本地持久受理。</summary>
+    public const string DeliveryHealthTag = "costing-delivery";
     /// <summary>接入自己的数据库与可选后台执行；从不读取平台数据库。</summary>
     /// <param name="services">容器。</param>
     /// <param name="configuration">宿主配置。</param>
@@ -39,7 +42,8 @@ public static class CostingModule
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Costing，使用独立业务数据库。"); }
         var capacityWrite = configuration.GetSection("Costing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
         connection = capacityWrite.ConfigureConnection(connection);
-        services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>());
+        services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>(),
+            configuration.GetSection("Costing:Batches").Get<CostingBatchOptions>());
         var capacityRead = configuration.GetSection("Costing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
         capacityRead.Validate();
         services.AddCostingFactCapacityReader(capacityRead);
@@ -51,7 +55,11 @@ public static class CostingModule
         services.AddSingleton(new CostingConnection(connection));
         services.AddHostedService<CostingStartupCheck>();
         services.AddCostingFactCleanup(configuration.GetSection("Costing:AuditDelivery:Cleanup").Get<CommittedFactCleanupOptions>());
-        if (configuration.GetValue("Costing:Worker:Enabled", true)) { services.AddHostedService<CostingWorker>(); }
+        if (configuration.GetValue("Costing:Worker:Enabled", true))
+        {
+            services.AddHostedService<CostingWorker>();
+            services.AddHostedService<CostBatchWorker>();
+        }
         if (configuration.GetValue("Costing:Messaging:Enabled", false))
         {
             var broker = configuration.GetSection("RabbitMq").Get<RabbitMqOptions>()
@@ -67,7 +75,7 @@ public static class CostingModule
             }
             services.AddHealthChecks().AddAsyncCheck("costing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
-                    ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: ["ready"]);
+                    ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: [DeliveryHealthTag]);
         }
         services.AddHealthChecks().AddAsyncCheck("costing-database", async cancellationToken =>
             await CostingDatabase.IsReadyAsync(connection, cancellationToken).ConfigureAwait(false)
@@ -86,6 +94,57 @@ public static class CostingModule
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/costing").RequireAuthorization("costing-operator")
             .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+        group.MapPost("/batches", async (HttpRequest http, IOptions<Microsoft.AspNetCore.Http.Json.JsonOptions> json,
+            ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var parsed = await CostBatchJson.ReadAsync(http, json.Value.SerializerOptions, token).ConfigureAwait(false);
+            var validation = parsed.Validation;
+            if (validation.ErrorCount != 0)
+            {
+                return Results.Problem(title: "批次原始输入无效。", statusCode: 400, extensions: new Dictionary<string, object?>
+                { ["errorCode"] = "costing.batch.invalid_input", ["errorCount"] = validation.ErrorCount, ["errors"] = validation.Errors });
+            }
+            var result = await sender.SendAsync(parsed.Request!, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
+        }).Accepts<AcceptCostBatch>("application/json").Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(413, 415)
+            .WithMetadata(new OperationDescription("costing.batch.accept", "受理成本批次"));
+        group.MapGet("/batches", async (int? page, int? limit, string? state, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var query = new ListCostBatches(page ?? 1, limit ?? 50, state);
+            var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
+        }).Produces<ApiPage<CostBatchStatus>>();
+        group.MapGet("/batches/{batchId:guid}", async (Guid batchId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetCostBatch(batchId), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CostBatchStatus>>();
+        group.MapGet("/batches/{batchId:guid}/rows", async (Guid batchId, int? page, int? limit, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var query = new ListCostBatchRows(batchId, page ?? 1, limit ?? 50);
+            var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
+        }).Produces<ApiPage<CostBatchRowStatus>>();
+        group.MapGet("/batches/{batchId:guid}/attempts", async (Guid batchId, int? page, int? limit, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var query = new ListCostBatchAttempts(batchId, page ?? 1, limit ?? 50);
+            var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
+        }).Produces<ApiPage<CostingAttempt>>();
+        group.MapPost("/batches/{batchId:guid}/retry", async (Guid batchId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new RetryCostBatch(batchId, request.ExpectedEpoch), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("costing.batch.retry", "重试批次导入",
+                new OperationSubjectRoute("CostBatch", "batchId", OperationSubjectIdKind.Uuid)));
+        group.MapPost("/batches/{batchId:guid}/cancel", async (Guid batchId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new CancelCostBatch(batchId, request.ExpectedEpoch), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).Produces<ApiResponse<CostBatchStatus>>().ProducesApiErrors(415)
+            .WithMetadata(new OperationDescription("costing.batch.cancel", "取消批次导入",
+                new OperationSubjectRoute("CostBatch", "batchId", OperationSubjectIdKind.Uuid)));
         group.MapGet("/audit-capacity", async ([FromKeyedServices("costing")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {
@@ -203,9 +262,9 @@ public static class CostingModule
     private static IResult Failure(Error error) => Results.Problem(title: error.Message,
         statusCode: error.Code switch
         {
-            "costing.not_found" or "costing.delivery_not_found" or "costing.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
+            "costing.batch.not_found" or "costing.not_found" or "costing.delivery_not_found" or "costing.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
             "costing.delivery_recovery.exhausted" or "costing.audit_policy.control_exhausted" or "costing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "costing.delivery_recovery.request_conflict" or "costing.audit_policy.conflict" or "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
+            "costing.batch.retry_conflict" or "costing.batch.cancel_conflict" or "costing.batch.request_conflict" or "costing.delivery_recovery.request_conflict" or "costing.audit_policy.conflict" or "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

@@ -29,6 +29,8 @@ public sealed record GetCostCalculation(Guid TaskId) : IQuery<CostCalculationSta
 /// <param name="InputRevision">待处理的输入版本。</param>
 public sealed record CostCalculationStatus(Guid TaskId, Guid ItemId, string State, long InputRevision)
 {
+    /// <summary>真实批次行来源；既有单项/计划任务为空，不补造历史。</summary>
+    public CostBatchReference? Batch { get; init; }
     /// <summary>受理任务时固定的来源和原发起人；不代表当前执行者。</summary>
     public ExecutionOrigin? ExecutionOrigin { get; init; }
     /// <summary>每次成功领取递增；人工重试也不清零。</summary>
@@ -48,6 +50,12 @@ public sealed record CostCalculationStatus(Guid TaskId, Guid ItemId, string Stat
     /// <summary>每次领取的历史。</summary>
     public IReadOnlyList<CostingAttempt> History { get; init; } = [];
 }
+
+/// <summary>本上下文持久输入行的关联，不代表批次或下游计算完成。</summary>
+/// <param name="BatchId">所属批次。</param>
+/// <param name="Sequence">逻辑行序号。</param>
+/// <param name="SourceRow">原始输入位置。</param>
+public sealed record CostBatchReference(Guid BatchId, int Sequence, int SourceRow);
 
 /// <summary>一次领取的可观察历史。</summary>
 /// <param name="Epoch">领取代次。</param>

@@ -189,7 +189,7 @@ public sealed class AuditBusinessJourneyTests(JourneyDatabaseTemplates databases
         Assert.Equal("Unhealthy", await logging.Content.ReadAsStringAsync());
     }
 
-    private static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, string queue, string eventName)
+    internal static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, string queue, string eventName)
     {
         var factory = new ConnectionFactory { HostName = broker.HostName, Port = broker.Port, UserName = broker.UserName, Password = broker.Password, VirtualHost = broker.VirtualHost };
         await using var connection = await factory.CreateConnectionAsync();

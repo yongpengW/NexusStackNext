@@ -15,6 +15,9 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
     public DbSet<CostCalculationEntry> Tasks => Set<CostCalculationEntry>();
     public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
     public DbSet<ScheduledCostReceiptEntry> ScheduleReceipts => Set<ScheduledCostReceiptEntry>();
+    public DbSet<CostBatchEntry> Batches => Set<CostBatchEntry>();
+    public DbSet<CostBatchRowEntry> BatchRows => Set<CostBatchRowEntry>();
+    public DbSet<CostBatchAttemptEntry> BatchAttempts => Set<CostBatchAttemptEntry>();
 
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
@@ -23,6 +26,7 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
         modelBuilder.ConfigureCostingAuditRecovery();
+        modelBuilder.ConfigureCostBatches();
         var sheet = modelBuilder.Entity<CostSheet>();
         sheet.ToTable("sheets");
         sheet.HasKey(x => x.Id);
@@ -149,6 +153,9 @@ public static class CostingDatabase
             _ = await context.Attempts.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.ScheduleReceipts.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Batches.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.BatchRows.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.BatchAttempts.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

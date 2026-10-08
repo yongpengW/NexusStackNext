@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using NexusStackNext.Costing.Infrastructure;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace NexusStackNext.Costing.Infrastructure.Migrations
 {
     [DbContext(typeof(CostingDbContext))]
-    partial class CostingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261008130716_CostBatchInput")]
+    partial class CostBatchInput
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -274,44 +277,10 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.ToTable("sheets", "costing");
                 });
 
-            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostBatchAttemptEntry", b =>
-                {
-                    b.Property<Guid>("BatchId")
-                        .HasColumnType("uuid");
-
-                    b.Property<long>("Epoch")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTimeOffset?>("FinishedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Outcome")
-                        .IsRequired()
-                        .HasMaxLength(24)
-                        .HasColumnType("character varying(24)");
-
-                    b.Property<DateTimeOffset>("StartedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("BatchId", "Epoch");
-
-                    b.ToTable("batch_attempts", "costing");
-                });
-
             modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostBatchEntry", b =>
                 {
                     b.Property<Guid>("BatchId")
                         .HasColumnType("uuid");
-
-                    b.Property<int>("Attempts")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset>("AvailableAt")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Checkpoint")
                         .HasColumnType("integer");
@@ -327,24 +296,8 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.Property<int>("DuplicateSuperseded")
                         .HasColumnType("integer");
 
-                    b.Property<long>("Epoch")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<string>("ExecutionOrigin")
-                        .HasColumnType("jsonb");
-
                     b.Property<int>("Imported")
                         .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset?>("LeaseUntil")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTimeOffset?>("MaxLeaseUntil")
-                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("Rejected")
                         .HasColumnType("integer");
@@ -363,8 +316,6 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.HasKey("BatchId");
 
                     b.HasIndex("CreatedAt", "BatchId");
-
-                    b.HasIndex("State", "AvailableAt");
 
                     b.ToTable("batches", "costing");
                 });
@@ -618,15 +569,6 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                         .WithMany("History")
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostBatchAttemptEntry", b =>
-                {
-                    b.HasOne("NexusStackNext.Costing.Infrastructure.CostBatchEntry", null)
-                        .WithMany()
-                        .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
