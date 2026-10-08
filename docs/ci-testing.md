@@ -104,6 +104,28 @@ PR、dev/main push 和手动触发均保留，当前没有路径过滤，也没�
 
 ## 初始化复用与构建边界
 
+### 格式门禁依赖包复用（票据135）
+
+测试矩阵将公开 NuGet 包还原到 `runner.temp/nsn-ci-nuget`，成功任务通过
+[`actions/cache@v5`](https://github.com/actions/cache/tree/v5) 保存；最后门禁在完整测试报告通过后
+用相同键恢复这些包。四组仍各有自己的目录，不共享数据库、宿主、`bin/obj` 或测试结果。
+缓存键包含 Linux/架构、`global.json` 与所有解决方案、项目、props、targets 和 NuGet 配置的内容哈希；
+不使用宽泛回退键，不缓存私有配置。命中也必须正常 `dotnet restore`，由当前检出重新生成 assets，
+随后执行完整 `check-format.ps1`，不按命中状态省略任何门禁。
+
+这使用独立 cache action，不开启 setup-dotnet 的 lock-file 缓存模式；当前中央版本及依赖锁策略保持。
+参考 [setup-dotnet 缓存约束](https://github.com/actions/setup-dotnet/tree/v5#caching-nuget-packages)。
+首次没有缓存时正常下载，先完成的成功组可以在同次运行内供最终门禁复用。
+缓存遵循 [GitHub 分支/PR 作用域](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching)，
+不能把 PR 缓存自动视为 dev 后续运行可命中。
+包复用是可选的加速步骤，步骤超时一分钟、segment 下载预算一分钟；服务不可用或未命中仍走强制 restore。
+只有缓存步骤允许 continue-on-error，构建、测试、完整性核验、restore 和格式检查继续失败即拒绝。
+
+验收计入保存、恢复、正常 restore、完整格式与整个 CI 墙钟；缓存命中不等于提速。
+以 PR134 的完整六任务 798 秒、最终 restore 14 秒和格式 53 秒为近期比较样本，
+实际结果见[票据135](https://github.com/yongpengW/NexusStackNext/issues/135)。
+另一项权限真实查询开销分析单独推进，不能因为包缓存完成而认为查询专项已完成。
+
 未接入空结构复用的普通宿主旅程通过 `IdentityJourneyDatabase.MigrateAsync` 在测试进程内执行真实 EF 迁移，
 复用运行时和 EF 模型缓存，省去每条旅程六次进程启动。每条旅程依然独立建库、迁移、释放连接池和删库，
 不共享数据、DbContext 或运行中的宿主，也不以 `EnsureCreated` 替代迁移。
