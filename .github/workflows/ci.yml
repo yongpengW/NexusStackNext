@@ -61,7 +61,6 @@ jobs:
 
     env:
       # Only public NuGet packages are reusable; assets and build/test outputs remain fresh.
-      NUGET_PACKAGES: ${{ runner.temp }}/nsn-ci-nuget
       SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
 
     steps:
@@ -77,6 +76,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+
+      - name: 准备 NuGet 包目录
+        shell: pwsh
+        run: |
+          $packages = Join-Path $env:RUNNER_TEMP 'nsn-ci-nuget'
+          "NUGET_PACKAGES=$packages" >> $env:GITHUB_ENV
 
       - name: 复用 NuGet 依赖包
         uses: actions/cache@v5
@@ -215,7 +220,6 @@ jobs:
     permissions:
       contents: read
     env:
-      NUGET_PACKAGES: ${{ runner.temp }}/nsn-ci-nuget
       SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
     steps:
       - uses: actions/checkout@v5
@@ -240,6 +244,12 @@ jobs:
 
       # A successful test runner can seed this cache even on the first cold PR run.
       # A miss or cache service failure still falls through to the mandatory restore.
+      - name: 准备格式检查包目录
+        shell: pwsh
+        run: |
+          $packages = Join-Path $env:RUNNER_TEMP 'nsn-ci-nuget'
+          "NUGET_PACKAGES=$packages" >> $env:GITHUB_ENV
+
       - name: 复用格式检查依赖包
         uses: actions/cache/restore@v5
         timeout-minutes: 1
