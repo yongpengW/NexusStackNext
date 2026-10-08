@@ -62,7 +62,7 @@ public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, IC
             ?? new AuthorizationRequirement(AuthorizationMode.DenyAll);
 
         var isAuthenticated = currentUser.UserId is not null;
-        var isRoot = currentUser.IsRoot;
+        var isRoot = false;
 
         // **撤销检查排在权限之前。** 一个已被撤销的令牌不该继续走后面的判定——
         // 它连"这个身份现在还算不算数"都没过。
@@ -70,10 +70,14 @@ public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, IC
         {
             // 版本对不上就是"这个访问令牌已被撤销"——**包括令牌里根本没有版本声明**，
             // 那是 fail-closed：认不出来的身份不放行。
-            if (!await sessions.IsCurrentAsync(currentUser.UserId!, currentUser.SessionVersion, http.RequestAborted).ConfigureAwait(false))
+            var session = await sessions.ValidateAsync(currentUser.UserId!, currentUser.SessionVersion, http.RequestAborted).ConfigureAwait(false);
+            if (session.IsFailure)
             {
-                return Unauthorized();
+                return session.Error == SessionValidationErrors.Invalid ? Unauthorized()
+                    : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: SessionValidationErrors.Unavailable.Message,
+                        extensions: new Dictionary<string, object?> { ["errorCode"] = SessionValidationErrors.Unavailable.Code });
             }
+            isRoot = session.Value.IsRoot;
         }
 
         if (requirement.Mode == AuthorizationMode.PermissionKey && isAuthenticated && !isRoot)

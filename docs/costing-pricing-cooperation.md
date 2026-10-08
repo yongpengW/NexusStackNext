@@ -13,6 +13,8 @@ HTTP 中的 Int64（ID、version、epoch、size 等）均返回十进制字符�
 准备两个独立 PostgreSQL 数据库，分别配置 `ConnectionStrings__Costing`、`ConnectionStrings__Pricing`。
 配置放在被忽略的 `env/*.dev` 或部署环境中，凭据不进入命令参数。两个宿主和网关使用相同的
 `Jwt__SigningKey`、`Jwt__Issuer`、`Jwt__Audience`；Issuer / Audience 默认采用 `nexusstack`。
+两个业务宿主还须配置 `IdentitySession__BaseAddress` 指向平台宿主，如本机 `http://127.0.0.1:5191/`；
+每次受保护请求都查询当前会话，登出后旧令牌不能访问。超时、TLS 和故障返回见[当前会话授权](current-session-authorization.md)。
 
 先显式迁移；普通启动只检查，不自动建表：
 

@@ -14,6 +14,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
+using NexusStackNext.IntegrationSupport;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -174,7 +176,7 @@ public sealed class GatewayResilienceTests
         new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
             issuer: "nexusstack",
             audience: "nexusstack",
-            claims: root ? [new Claim("sub", subject), new Claim("nexusstack:root", "true")] : [new Claim("sub", subject)],
+            claims: root ? [new Claim("sub", subject), new Claim("nexusstack:root", "true"), new Claim("nexusstack:session", "0")] : [new Claim("sub", subject), new Claim("nexusstack:session", "0")],
             notBefore: DateTime.UtcNow.AddMinutes(-1),
             expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(
@@ -202,6 +204,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
 {
     private readonly string _directory;
     private bool _deleteConfiguration = true;
+    private SessionAuthorityStub? _authority;
 
     public GatewayHttpApp(params string[] addresses)
     {
@@ -231,6 +234,9 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
     public string RouteTablePath => Path.Combine(_directory, "routes.json");
     public string SigningKey { get; init; } = GatewayRouteAdminApp.SigningKey;
     public int RateLimitPermitLimit { get; init; } = 2;
+    public string? SessionAuthorityAddress { get; init; }
+    public string SessionAuthorityTimeout { get; init; } = "00:00:03";
+    public int SessionAuthorityConcurrency { get; init; } = 16;
 
     public void UseRoutes(IEnumerable<RouteDefinition> routes)
     {
@@ -254,6 +260,11 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        if (SessionAuthorityAddress is null)
+        { _authority = SessionAuthorityStub.StartAsync(string.IsNullOrEmpty(SigningKey) ? GatewayRouteAdminApp.SigningKey : SigningKey).GetAwaiter().GetResult(); }
+        builder.UseSetting("IdentitySession:BaseAddress", SessionAuthorityAddress ?? _authority!.Address);
+        builder.UseSetting("IdentitySession:Timeout", SessionAuthorityTimeout);
+        builder.UseSetting("IdentitySession:MaxConcurrency", SessionAuthorityConcurrency.ToString(System.Globalization.CultureInfo.InvariantCulture));
         builder.UseEnvironment("Testing");
         builder.UseSetting("OperationJournal:Storage:Provider", "Memory");
         builder.UseSetting("Gateway:RouteTablePath", RouteTablePath);
@@ -268,6 +279,7 @@ internal sealed class GatewayHttpApp : WebApplicationFactory<GatewayHostMarker>
     public override async ValueTask DisposeAsync()
     {
         await base.DisposeAsync();
+        if (_authority is not null) { await _authority.DisposeAsync(); }
         if (_deleteConfiguration && Directory.Exists(_directory))
         {
             Directory.Delete(_directory, recursive: true);

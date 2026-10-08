@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.TestSupport;
 using Xunit;
 
 namespace NexusStackNext.IntegrationSupport;
@@ -15,6 +16,7 @@ internal sealed class BusinessProcess : IAsyncDisposable
     private readonly Task<string> _output;
     private readonly Task<string> _error;
     private readonly ListeningAddress _listening = new();
+    private SessionAuthorityStub? _authority;
     private BusinessProcess(Process process)
     {
         _process = process;
@@ -48,9 +50,17 @@ internal sealed class BusinessProcess : IAsyncDisposable
 
     private static async Task<BusinessProcess> StartHttpAsync(ProcessStartInfo start)
     {
+        SessionAuthorityStub? authority = null;
+        if (start.Environment["IdentitySession__BaseAddress"] == "http://127.0.0.1:1/")
+        {
+            authority = await SessionAuthorityStub.StartAsync(start.Environment["Jwt__SigningKey"]!);
+            start.Environment["IdentitySession__BaseAddress"] = authority.Address;
+        }
         start.Environment["ASPNETCORE_URLS"] = "http://127.0.0.1:0";
         start.Environment["Serilog__MinimumLevel__Override__Microsoft.Hosting.Lifetime"] = "Information";
-        var app = new BusinessProcess(Process.Start(start)!);
+        BusinessProcess app;
+        try { app = new BusinessProcess(Process.Start(start)!) { _authority = authority }; }
+        catch { if (authority is not null) { await authority.DisposeAsync(); } throw; }
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -85,7 +95,7 @@ internal sealed class BusinessProcess : IAsyncDisposable
 
     public void Authenticate(bool root = true)
     {
-        var claims = new List<Claim> { new("sub", "test-operator") };
+        var claims = new List<Claim> { new("sub", root ? "test-operator" : "test-reader"), new(NexusStackClaims.Session, "0") };
         if (root) { claims.Add(new Claim(NexusStackClaims.Root, "true")); }
         var token = new JwtSecurityToken("nexusstack", "nexusstack", claims, DateTime.UtcNow.AddSeconds(-1), DateTime.UtcNow.AddMinutes(5),
             new SigningCredentials(new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(SigningKey)), SecurityAlgorithms.HmacSha256));
@@ -98,6 +108,7 @@ internal sealed class BusinessProcess : IAsyncDisposable
         start.ArgumentList.Add(assembly);
         start.Environment[$"ConnectionStrings__{context}"] = connectionString;
         start.Environment["Jwt__SigningKey"] = SigningKey;
+        start.Environment["IdentitySession__BaseAddress"] = "http://127.0.0.1:1/";
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Testing";
         start.Environment["OperationJournal__Storage__Provider"] = "Memory";
         start.Environment["AgileConfig__AppId"] = string.Empty;
@@ -107,10 +118,16 @@ internal sealed class BusinessProcess : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         Client.Dispose();
-        if (!_process.HasExited) { _process.Kill(entireProcessTree: true); }
-        await _process.WaitForExitAsync();
+        await CrashAsync();
         await Task.WhenAll(_output, _error);
         _process.Dispose();
+        if (_authority is not null) { await _authority.DisposeAsync(); }
+    }
+
+    public async Task CrashAsync()
+    {
+        if (!_process.HasExited) { _process.Kill(entireProcessTree: true); }
+        await _process.WaitForExitAsync();
     }
 
     public static async Task<(int ExitCode, string Output)> RunToExitAsync(ProcessStartInfo start)

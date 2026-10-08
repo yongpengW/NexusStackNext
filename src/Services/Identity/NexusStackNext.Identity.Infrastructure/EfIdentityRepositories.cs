@@ -209,6 +209,8 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
                 .AddInterceptors(provider.GetRequiredService<IdentityCommittedFactInterceptor>()));
 
         services.AddScoped<IUserRepository, EfUserRepository>();
+        services.AddSingleton<ISessionStateReader>(provider => new PostgresSessionStateReader(connectionString,
+            provider.GetService<IdentitySessionReadOptions>() ?? new()));
         services.AddScoped<IRoleRepository, EfRoleRepository>();
         services.AddScoped<IApiResourceRepository, EfApiResourceRepository>();
         services.AddScoped<IMenuTreeRepository, EfMenuTreeRepository>();

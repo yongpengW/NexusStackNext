@@ -88,6 +88,7 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
 }
 builder.Services.AddOpenApi();
 builder.Services.AddApiResponseContract();
+builder.Services.AddIdentitySessionAuthority(builder.Configuration);
 
 // 可达性探测：**两个消费者**共用它——就绪检查与实时推送。
 // 一个消费者时它只是一段代码；两个之后，"探测后端是否可达"才成为一道真的缝。
@@ -153,6 +154,7 @@ else
                 IssuerSigningKey = new SymmetricSecurityKey(
                     System.Text.Encoding.UTF8.GetBytes(jwt.SigningKey)),
                 ValidateLifetime = true,
+                ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
                 ClockSkew = TimeSpan.FromSeconds(30),
             };
         });

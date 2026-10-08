@@ -144,6 +144,7 @@ public sealed class ScheduledCostBusinessJourneyTests(JourneyDatabaseTemplates d
             settings["Pricing__Messaging__Enabled"] = "true";
             settings["Pricing__Messaging__ConsumerName"] = priced.ConsumerName;
             await using var platform = await PlatformHostProcess.StartAsync(platformDatabase.ConnectionString, "schedule-root-password", settings: settings);
+            settings["IdentitySession__BaseAddress"] = platform.Client.BaseAddress!.AbsoluteUri;
             await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString, worker: true, settings: settings);
             var itemId = Guid.NewGuid();
             JsonElement costBefore;
@@ -153,7 +154,7 @@ public sealed class ScheduledCostBusinessJourneyTests(JourneyDatabaseTemplates d
             {
                 offlineCosting = initial.Client.BaseAddress!;
                 await WriteRoutesAsync(routes, platform.Client.BaseAddress!, offlineCosting, pricing.Client.BaseAddress!);
-                await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes);
+                await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
                 await HttpInt64OpenApiTests.AssertHostDocumentsAsync(platform.Client, initial.Client, pricing.Client, gateway.Client);
                 await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "journey-root", "schedule-root-password");
                 using var submitted = await gateway.Client.PostAsJsonAsync(Relative("/api/costing/cost"),
@@ -165,7 +166,7 @@ public sealed class ScheduledCostBusinessJourneyTests(JourneyDatabaseTemplates d
             }
 
             Guid occurrenceId;
-            await using (var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes))
+            await using (var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings))
             {
                 await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "journey-root", "schedule-root-password");
                 if (calendar)
@@ -208,7 +209,7 @@ public sealed class ScheduledCostBusinessJourneyTests(JourneyDatabaseTemplates d
 
             await using var restarted = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", costingDatabase.ConnectionString, worker: true, settings: settings);
             await WriteRoutesAsync(routes, platform.Client.BaseAddress!, restarted.Client.BaseAddress!, pricing.Client.BaseAddress!);
-            await using var recoveredGateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes);
+            await using var recoveredGateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
             await PlatformSettingsAccessTests.LoginAsync(recoveredGateway.Client, "journey-root", "schedule-root-password");
             var receipt = await WaitAsync(recoveredGateway.Client, $"/api/costing/schedule-receipts/{occurrenceId}", data => data.GetProperty("decision").GetString() == "Accepted");
             Assert.Equal(occurrenceId, receipt.GetProperty("taskId").GetGuid());

@@ -84,7 +84,7 @@ public static class PricingModule
     {
         ArgumentNullException.ThrowIfNull(endpoints);
         var group = endpoints.MapGroup("/api/pricing").RequireAuthorization("pricing-operator")
-            .ProducesApiErrors(400, 401, 403, 404, 409, 500);
+            .ProducesApiErrors(400, 401, 403, 404, 409, 500, 503);
         group.MapGet("/audit-capacity", async ([FromKeyedServices("pricing")] ICommittedFactCapacityPolicyStore policies,
             ApiResponses responses, CancellationToken token) =>
         {

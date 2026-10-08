@@ -1,8 +1,13 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.Gateway.Routing;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.Ids;
@@ -13,6 +18,63 @@ namespace NexusStackNext.HostIntegration.Tests;
 [Collection(JourneyDatabaseDefinition.Name)]
 public sealed class PlatformSettingsAccessTests(JourneyDatabaseTemplates databases)
 {
+    [Fact]
+    public async Task RootClaim_DoesNotOverrideTheCurrentUserState_AndMissingOrDisabledUsersAreRejected()
+    {
+        await using var app = new PlatformAppWithRootAccount();
+        using var client = app.CreateClient();
+        using var registered = await client.PostAsJsonAsync(new Uri("/api/identity/users", UriKind.Relative), new { userName = "ordinary-session", password = "ordinary-session-test-password" });
+        Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
+        var userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").ReadHttpInt64();
+        await LoginAsync(client, "ordinary-session", "ordinary-session-test-password");
+        var original = new JwtSecurityTokenHandler().ReadJwtToken(client.DefaultRequestHeaders.Authorization!.Parameter);
+        var claims = original.Claims.Where(claim => claim.Type is not ("iss" or "aud" or "exp" or "nbf" or "iat" or NexusStackClaims.Root)).Append(new Claim(NexusStackClaims.Root, "true")).ToArray();
+        var key = new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes("integration-test-signing-key-long-enough-for-hs256")), SecurityAlgorithms.HmacSha256);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(
+            new JwtSecurityToken("nexusstack", "nexusstack", claims, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(5), key)));
+        using var current = await client.GetAsync(new Uri("/api/identity/session/v1", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+        Assert.False((await current.Content.ReadApiDataAsync()).GetProperty("isRoot").GetBoolean());
+        using var denied = await client.PutAsJsonAsync(new Uri("/api/platform/settings/session.probe", UriKind.Relative), new { value = "forged-root" });
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        // Account-disable management is a separate ticket; arrange state through the existing owned repository.
+        await using (var scope = app.Services.CreateAsyncScope())
+        {
+            var user = await scope.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(userId));
+            Assert.NotNull(user);
+            Assert.True(user.Disable(DateTimeOffset.UtcNow).IsSuccess);
+            await scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync();
+        }
+        using var disabled = await client.GetAsync(new Uri("/api/identity/session/v1", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, disabled.StatusCode);
+        var missing = claims.Where(claim => claim.Type != "sub").Append(new Claim("sub", "9223372036854775806"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", new JwtSecurityTokenHandler().WriteToken(
+            new JwtSecurityToken("nexusstack", "nexusstack", missing, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(5), key)));
+        using var absent = await client.GetAsync(new Uri("/api/identity/session/v1", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, absent.StatusCode);
+    }
+
+    [Fact]
+    public async Task CurrentSessionDecision_UsesTheAuthenticatedSubjectAndRejectsTheSameTokenAfterLogout()
+    {
+        await using var app = new PlatformAppWithRootAccount();
+        using var client = app.CreateClient();
+        using var anonymous = await client.GetAsync(new Uri("/api/identity/session/v1", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
+        await LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        using var accepted = await client.GetAsync(new Uri("/api/identity/session/v1?userId=123&isRoot=false", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        var decision = await accepted.Content.ReadApiDataAsync();
+        Assert.Equal(1, decision.GetProperty("contractVersion").GetInt32());
+        Assert.True(decision.GetProperty("isRoot").GetBoolean());
+        Assert.NotEqual("123", decision.GetProperty("subject").GetString());
+        Assert.Equal(4, decision.EnumerateObject().Count());
+        using var logout = await client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
+        Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+        using var revoked = await client.GetAsync(new Uri("/api/identity/session/v1", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+    }
+
     [Theory]
     [InlineData("routes.json")]
     [InlineData("routes.pricing.json")]
@@ -51,10 +113,12 @@ public sealed class PlatformSettingsAccessTests(JourneyDatabaseTemplates databas
         await database.SetAvailableAsync(false);
         try
         {
+            var started = System.Diagnostics.Stopwatch.StartNew();
             using var unavailable = await client.GetAsync(new Uri("/api/platform/settings/mail.sender", UriKind.Relative));
-            Assert.Equal(HttpStatusCode.InternalServerError, unavailable.StatusCode);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+            Assert.True(started.Elapsed < TimeSpan.FromSeconds(5), "Session authority exceeded its finite request budget.");
             var problem = await unavailable.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("http.500", problem.GetProperty("errorCode").GetString());
+            Assert.Equal("identity.session.unavailable", problem.GetProperty("errorCode").GetString());
             Assert.False((await unavailable.Content.ReadAsStringAsync()).Contains(database.ConnectionString, StringComparison.Ordinal));
         }
         finally

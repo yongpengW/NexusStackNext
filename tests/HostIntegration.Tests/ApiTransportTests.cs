@@ -97,7 +97,7 @@ public sealed class ApiTransportTests
         HttpInt64OpenApiTests.AssertOutput(document.GetProperty("components").GetProperty("schemas")
             .GetProperty("EdgeProblem").GetProperty("properties").GetProperty("timestamp"), nullable: false);
 
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("nonroot"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("test-reader"));
         using var denied = await client.GetAsync(new Uri("/gateway/routes/probe", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         Assert.Equal("http.403", (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errorCode").GetString());

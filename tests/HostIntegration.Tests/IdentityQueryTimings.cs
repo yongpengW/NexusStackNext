@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
+using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Infrastructure.Persistence;
 using Xunit.Abstractions;
 
@@ -12,6 +14,7 @@ namespace NexusStackNext.HostIntegration.Tests;
 internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
     IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
 {
+    private const string SessionReadActivity = "identity-session-authority-read";
     private readonly List<IDisposable> _subscriptions = [];
     private readonly ConcurrentDictionary<ActivityTraceId, Measurement> _measurements = new();
     private IDisposable? _listeners;
@@ -31,7 +34,11 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
             {
                 if (!_measurements.TryGetValue(activity.TraceId, out var measurement)) { return; }
                 if (activity.Source.Name == "Microsoft.AspNetCore") { measurement.ServerCompleted(activity.Duration); }
-                else if (activity.OperationName == "postgresql") { measurement.ProviderCommand(activity.Duration); }
+                else if (activity.OperationName == "postgresql")
+                {
+                    measurement.ProviderCommand(activity.Duration);
+                    if (activity.Parent?.OperationName == SessionReadActivity) { measurement.SessionCommand(activity.Duration); }
+                }
             },
         };
         ActivitySource.AddActivityListener(_requests);
@@ -82,6 +89,19 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
     public void OnCompleted() { }
     public void OnError(Exception error) { }
 
+    // A test-only decorator of the public reader port identifies its real provider child span.
+    // It does not inspect SQL, connection tags or parameters, and does not change the decision.
+    internal sealed class SessionReader(ISessionStateReader inner) : ISessionStateReader, IDisposable
+    {
+        public async Task<Result<SessionState?>> ReadAsync(long userId, CancellationToken cancellationToken = default)
+        {
+            using var activity = new Activity(SessionReadActivity).SetIdFormat(ActivityIdFormat.W3C).Start();
+            return await inner.ReadAsync(userId, cancellationToken);
+        }
+
+        public void Dispose() { if (inner is IDisposable disposable) { disposable.Dispose(); } }
+    }
+
     public void Dispose()
     {
         _listeners?.Dispose();
@@ -108,6 +128,8 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
         private long _journalTransactionTicks;
         private long _providerCommands;
         private long _providerTicks;
+        private long _sessionCommands;
+        private long _sessionTicks;
         private readonly TaskCompletionSource<TimeSpan> _server = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TimeSpan _serverDuration;
 
@@ -115,6 +137,13 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
         internal long Commands => Interlocked.Read(ref _commands);
         internal long JournalCommands => Interlocked.Read(ref _journalCommands);
         internal long ProviderCommands => Interlocked.Read(ref _providerCommands);
+        internal long SessionCommands => Interlocked.Read(ref _sessionCommands);
+
+        internal void SessionCommand(TimeSpan duration)
+        {
+            Interlocked.Increment(ref _sessionCommands);
+            Interlocked.Add(ref _sessionTicks, duration.Ticks);
+        }
 
         internal void ProviderCommand(TimeSpan duration)
         {
@@ -161,7 +190,7 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
             owner._measurements.TryRemove(TraceId, out _);
             _activity.Dispose();
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"QUERY_TIMING phase={phase} total_ms={_watch.Elapsed.TotalMilliseconds:F1} commands={Interlocked.Read(ref _commands)} sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _commandTicks)).TotalMilliseconds:F1} connections={Interlocked.Read(ref _connections)} connection_ms={TimeSpan.FromTicks(Interlocked.Read(ref _connectionTicks)).TotalMilliseconds:F1} server_ms={_serverDuration.TotalMilliseconds:F1} journal_commands={Interlocked.Read(ref _journalCommands)} journal_sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTicks)).TotalMilliseconds:F1} journal_transactions={Interlocked.Read(ref _journalTransactions)} journal_transaction_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTransactionTicks)).TotalMilliseconds:F1} provider_commands={Interlocked.Read(ref _providerCommands)} provider_ms={TimeSpan.FromTicks(Interlocked.Read(ref _providerTicks)).TotalMilliseconds:F1}"));
+                $"QUERY_TIMING phase={phase} total_ms={_watch.Elapsed.TotalMilliseconds:F1} commands={Interlocked.Read(ref _commands)} sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _commandTicks)).TotalMilliseconds:F1} connections={Interlocked.Read(ref _connections)} connection_ms={TimeSpan.FromTicks(Interlocked.Read(ref _connectionTicks)).TotalMilliseconds:F1} server_ms={_serverDuration.TotalMilliseconds:F1} journal_commands={Interlocked.Read(ref _journalCommands)} journal_sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTicks)).TotalMilliseconds:F1} journal_transactions={Interlocked.Read(ref _journalTransactions)} journal_transaction_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTransactionTicks)).TotalMilliseconds:F1} provider_commands={Interlocked.Read(ref _providerCommands)} provider_ms={TimeSpan.FromTicks(Interlocked.Read(ref _providerTicks)).TotalMilliseconds:F1} authority_commands={Interlocked.Read(ref _sessionCommands)} authority_ms={TimeSpan.FromTicks(Interlocked.Read(ref _sessionTicks)).TotalMilliseconds:F1}"));
         }
     }
 }

@@ -1,11 +1,8 @@
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application.Events;
@@ -36,7 +33,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         }
         await using var platform = new PlatformApp { SchedulingWorkerEnabled = false };
         await InspectAsync(platform, "platform");
-        await using var costing = new BusinessApp<CostingHostMarker>("Costing", database.ConnectionString);
+        await using var costing = new BusinessHostApp<CostingHostMarker>("Costing", database.ConnectionString);
         var costingRecords = await InspectAsync(costing, "costing");
         Assert.Contains(costingRecords, record => record.Metadata?.Action == "costing.cost.update");
         Assert.Contains(costingRecords, record => record.Metadata?.Action == "costing.task.retry"
@@ -54,7 +51,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             Assert.Equal(2, records.Length);
             Assert.All(records, record => Assert.Equal("rejected", record.Outcome));
         }
-        await using var pricing = new BusinessApp<PricingHostMarker>("Pricing", database.ConnectionString);
+        await using var pricing = new BusinessHostApp<PricingHostMarker>("Pricing", database.ConnectionString);
         var pricingRecords = await InspectAsync(pricing, "pricing");
         Assert.Contains(pricingRecords, record => record.Metadata?.Action == "pricing.fee.update");
         Assert.Contains(pricingRecords, record => record.Metadata?.Action == "pricing.task.retry"
@@ -155,25 +152,4 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             _ => "inventory",
         })))), UriKind.Relative);
 
-    private sealed class BusinessApp<T>(string context, string connection) : WebApplicationFactory<T> where T : class
-    {
-        protected override IHost CreateHost(IHostBuilder builder)
-        {
-            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                [$"ConnectionStrings:{context}"] = connection,
-                [$"{context}:Worker:Enabled"] = "false",
-                [$"{context}:Messaging:Enabled"] = "false",
-                ["OperationJournal:Storage:Provider"] = "Memory",
-                ["AgileConfig:AppId"] = string.Empty,
-                ["RabbitMQ:HostName"] = string.Empty,
-                ["Jwt:SigningKey"] = BusinessProcess.SigningKey,
-                ["Jwt:Issuer"] = "nexusstack",
-                ["Jwt:Audience"] = "nexusstack",
-            }));
-            return base.CreateHost(builder);
-        }
-
-        protected override void ConfigureWebHost(IWebHostBuilder builder) => builder.UseEnvironment("Testing");
-    }
 }

@@ -17,8 +17,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../TestSupport/TestSupport.csproj" />
     <ProjectReference Include="../../src/BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!--
       xunit 是**公开依赖**，不是 PrivateAssets：PostgresFactAttribute 继承 FactAttribute，
       消费方必须看得见 xunit 的类型。这个工程本来就是测试装置，不是产品代码。

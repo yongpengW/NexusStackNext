@@ -76,6 +76,9 @@
   **绝不** join Platform 的表。
 - **Gateway → 所有上下文**：唯一入口。网关做身份**认证**（验签），各上下文做**授权**——
   两件事分开，每加一个上下文都不用改网关的授权逻辑。这条**已实现并测过**。
+- **Identity → Costing / Pricing / Gateway 管理面**：当前会话判定包含有效性与权威根身份。
+  独立宿主每次授权通过固定 HTTP 契约取得结论，平台模块由 Identity 本机适配器供给；
+  登出后的新授权拒绝旧版本，已经接受的后台工作继续。见 [ADR-0027](docs/adr/0027-current-session-authority.md)。
 - **不变量**：跨上下文引用是**被测试禁止**的（`Contexts_MustNotReferenceOtherContexts`，
   两层都查：编译产物 + `csproj`），且**八条不变量全部反向验证过**。
 

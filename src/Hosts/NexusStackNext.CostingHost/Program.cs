@@ -50,8 +50,7 @@ try
     builder.AddNexusStackAgileConfig();
     builder.AddNexusStackServiceDefaults();
     builder.Services.AddNexusStackApplication();
-    builder.Services.AddHttpContextAccessor();
-    builder.Services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
+    builder.Services.AddIdentitySessionAuthority(builder.Configuration);
     builder.Services.AddCostingModule(builder.Configuration);
     builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "costing");
     var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
@@ -92,7 +91,7 @@ try
     });
     // 样板只向已认证的根操作者开放；后续业务角色必须由本上下文定义。
     builder.Services.AddAuthorizationBuilder().AddPolicy("costing-operator", policy =>
-        policy.RequireAuthenticatedUser().RequireClaim(NexusStackClaims.Root, "true"));
+        policy.RequireAuthenticatedUser().AddRequirements(new CurrentRootSessionRequirement()));
     var app = builder.Build();
     app.UseRouting();
     app.UseCorrelationId();
@@ -122,6 +121,6 @@ try
 }
 catch (Exception)
 {
-    Console.Error.WriteLine("Costing startup failed; check ConnectionStrings:Costing, migrate-costing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt and Costing:Tasks configuration.");
+    Console.Error.WriteLine("Costing startup failed; check ConnectionStrings:Costing, migrate-costing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt, IdentitySession and Costing:Tasks configuration.");
     return 1;
 }
