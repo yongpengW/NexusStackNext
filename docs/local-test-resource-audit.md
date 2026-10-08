@@ -122,7 +122,7 @@ AuditInvestigationIndexTests与OperationObservationPersistenceTests的实际迁�
 | 新增普通整类 | 项数 | 所属资源与保留边界 |
 |---|---:|---|
 | OperationJournalCleanupTests | 16 | 每例journal复制库、provider/clock/行锁/故障触发器；真实HTTP宿主动态端口。中央Auditing仍在本例库实际执行迁移CLI，受单许可保护；清理和取消预算不变。该CLI用于准备中央存储，没有删除CLI断言。 |
-| OperationJournalPersistenceTests | 3 | 每例journal复制库、provider与行锁；真实等待证明和取消预算保留，TransactionScope属于本例。provider重开不是OS进程重启。 |
+| OperationJournalPersistenceTests | 4 | 每例journal复制库、provider与行锁；真实等待证明和取消预算保留，TransactionScope属于本例。#139 新增交叉身份冲突，两个并发调用仅使用本例库，低于既有三次重复追加的并发；不扩大类并行声明。provider重开不是OS进程重启。 |
 | PricingMessageOperationTests | 3 | Pricing-only新库与实际迁移受单许可；自己的provider/消息/触发器/advisory锁640066，整类串行；失败及取消后重投与provider重开保留，不添加journal schema。 |
 | PlatformFactCapacityTests | 3 | 前两项Platform-only新库实际迁移受单许可；第三项平台复制库。故障、配额、清理与触发器只改本例库。 |
 | SchedulingFactAtomicityTests | 2 | 自有Memory存储或平台复制库、serializer/provider/clock与故障触发器；计划决定与发生原子性断言不变。 |

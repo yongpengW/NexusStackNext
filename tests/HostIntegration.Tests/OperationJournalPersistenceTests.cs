@@ -116,6 +116,41 @@ public sealed class OperationJournalPersistenceTests(JourneyDatabaseTemplates da
     }
 
     [PostgresFact]
+    public async Task CrossedMessageAndPhaseIdentities_AreRejectedWithoutChangingEitherRecordOrFullCapacity()
+    {
+        await using var database = await databases.CreateAsync("journal");
+        var first = Started();
+        var second = Started();
+        await using (var app = CreateApplication(database.ConnectionString, new() { MaxRecords = 2 }))
+        {
+            await using var scope = app.CreateAsyncScope();
+            var journal = scope.ServiceProvider.GetRequiredService<IOperationJournal>();
+            Assert.True((await journal.AppendAsync(first)).IsSuccess);
+            Assert.True((await journal.AppendAsync(second)).IsSuccess);
+            var crossed = new[] { second with { EventId = first.EventId }, first with { EventId = second.EventId } };
+            var rejected = await Task.WhenAll(crossed.Select(async observation =>
+            {
+                await using var write = app.CreateAsyncScope();
+                return await write.ServiceProvider.GetRequiredService<IOperationJournal>().AppendAsync(observation);
+            }));
+            Assert.All(rejected, result => Assert.Equal("operation_journal.identity_conflict", result.Error.Code));
+            Assert.Equal("operation_journal.identity_conflict", (await journal.AppendAsync(first with { EventId = Guid.NewGuid() })).Error.Code);
+            Assert.True((await journal.AppendAsync(first)).IsSuccess);
+            Assert.True((await journal.AppendAsync(second)).IsSuccess);
+        }
+        await using var reopened = CreateApplication(database.ConnectionString, new() { MaxRecords = 2 });
+        await using var read = reopened.CreateAsyncScope();
+        var pending = await read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey)
+            .ReadPendingAsync(10, DateTimeOffset.MaxValue);
+        Assert.Equal(2, pending.Count);
+        var serializer = new SystemTextJsonIntegrationEventSerializer();
+        var observations = pending.Select(item => serializer.Deserialize<OperationObservedV1>(item.Payload)).ToArray();
+        Assert.Contains(first, observations);
+        Assert.Contains(second, observations);
+        Assert.Equal("operation_journal.capacity_exceeded", (await read.ServiceProvider.GetRequiredService<IOperationJournal>().AppendAsync(Started())).Error.Code);
+    }
+
+    [PostgresFact]
     public async Task AmbientBusinessTransactionRollback_DoesNotRollBackTheIndependentJournal()
     {
         await using var database = await databases.CreateAsync("journal");

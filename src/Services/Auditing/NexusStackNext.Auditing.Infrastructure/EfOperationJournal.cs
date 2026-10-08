@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using NexusStackNext.Auditing.Application;
 using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
@@ -7,6 +8,7 @@ using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
+using Npgsql;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
@@ -161,20 +163,37 @@ internal sealed class EfOperationJournal(IDbContextFactory<OperationJournalDbCon
         {
             context.ChangeTracker.Clear();
             await using var transaction = await context.Database.BeginTransactionAsync(token).ConfigureAwait(false);
-            await context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({"operation-journal-message/" + record.Id}, 0))", token).ConfigureAwait(false);
-            await context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({"operation-journal-phase/" + observation.Source + "/" + observation.OperationId + "/" + observation.Phase}, 0))", token).ConfigureAwait(false);
-            var existing = await context.Outbox.AsNoTracking().SingleOrDefaultAsync(item => item.Id == record.Id, token).ConfigureAwait(false);
-            if (existing is not null)
+            // The batch keeps message -> phase acquisition order and the existing transaction.
+            await using (var locks = new NpgsqlBatch((NpgsqlConnection)context.Database.GetDbConnection(),
+                (NpgsqlTransaction)transaction.GetDbTransaction()))
             {
-                return existing.EventName == record.EventName && existing.Payload == record.Payload
+                if (context.Database.GetCommandTimeout() is { } timeout) { locks.Timeout = timeout; }
+                foreach (var key in new[]
+                {
+                    "operation-journal-message/" + record.Id,
+                    "operation-journal-phase/" + observation.Source + "/" + observation.OperationId + "/" + observation.Phase,
+                })
+                {
+                    var command = new NpgsqlBatchCommand("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))");
+                    command.Parameters.Add(new NpgsqlParameter<string> { TypedValue = key });
+                    locks.BatchCommands.Add(command);
+                }
+                await locks.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+            // Both unique identities can match different rows. Only the message match carries payload.
+            var existing = await context.Outbox.AsNoTracking().Where(item => item.Id == record.Id ||
+                (EF.Property<string>(item, OperationJournalDbContext.SourceProperty) == observation.Source
+                    && EF.Property<Guid>(item, OperationJournalDbContext.OperationIdProperty) == observation.OperationId
+                    && EF.Property<string>(item, OperationJournalDbContext.PhaseProperty) == observation.Phase))
+                .Select(item => new { item.Id, item.EventName, Payload = item.Id == record.Id ? item.Payload : null })
+                .ToArrayAsync(token).ConfigureAwait(false);
+            var sameMessage = existing.FirstOrDefault(item => item.Id == record.Id);
+            if (sameMessage is not null)
+            {
+                return sameMessage.EventName == record.EventName && sameMessage.Payload == record.Payload
                     ? Result.Success() : Result.Failure(OperationJournalErrors.IdentityConflict);
             }
-            if (await context.Outbox.AnyAsync(item =>
-                EF.Property<string>(item, OperationJournalDbContext.SourceProperty) == observation.Source
-                && EF.Property<Guid>(item, OperationJournalDbContext.OperationIdProperty) == observation.OperationId
-                && EF.Property<string>(item, OperationJournalDbContext.PhaseProperty) == observation.Phase, token).ConfigureAwait(false))
+            if (existing.Length != 0)
             {
                 return Result.Failure(OperationJournalErrors.IdentityConflict);
             }
