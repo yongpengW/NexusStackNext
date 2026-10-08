@@ -134,6 +134,14 @@ public sealed class UserLifecyclePersistenceTests(JourneyDatabaseTemplates datab
         await using var locked = await barrier.BeginTransactionAsync();
         await using (var command = new NpgsqlCommand("SELECT \"Id\" FROM identity.users WHERE \"Id\" = @id FOR UPDATE", barrier, locked))
         { command.Parameters.AddWithValue("id", target); await command.ExecuteScalarAsync(); }
+        // pg_stat_activity 在显式事务中可能沿用首次快照；独立自动提交观察者每轮取新状态。
+        await using var observation = new NpgsqlConnection(database.ConnectionString);
+        await observation.OpenAsync();
+        await using (var initial = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> @barrier", observation))
+        {
+            initial.Parameters.AddWithValue("barrier", barrier.ProcessID);
+            Assert.Equal(0L, (long)(await initial.ExecuteScalarAsync())!);
+        }
         var first = root.PostAsJsonAsync(Path($"/api/identity/users/{target}/password"), new { expectedVersion = 1, newPassword = "first-admin-password" });
         var second = delegated.PostAsJsonAsync(Path($"/api/identity/users/{target}/password"), new { expectedVersion = 1, newPassword = "second-admin-password" });
         try
@@ -141,7 +149,9 @@ public sealed class UserLifecyclePersistenceTests(JourneyDatabaseTemplates datab
             using var waiting = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             while (true)
             {
-                await using var probe = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> @barrier", barrier, locked);
+                Assert.False(first.IsCompleted, "First rotation ended before both writes reached the lock.");
+                Assert.False(second.IsCompleted, "Second rotation ended before both writes reached the lock.");
+                await using var probe = new NpgsqlCommand("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> @barrier", observation);
                 probe.Parameters.AddWithValue("barrier", barrier.ProcessID);
                 if ((long)(await probe.ExecuteScalarAsync(waiting.Token))! >= 2) { break; }
                 await Task.Delay(20, waiting.Token);
