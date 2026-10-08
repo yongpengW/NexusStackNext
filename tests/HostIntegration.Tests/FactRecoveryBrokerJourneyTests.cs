@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
@@ -13,19 +14,24 @@ using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Costing.Infrastructure;
 using NexusStackNext.CostingHost;
 using NexusStackNext.Files.Contracts;
+using NexusStackNext.Files.Infrastructure;
 using NexusStackNext.Identity.Contracts;
+using NexusStackNext.Identity.Infrastructure;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Platform.Contracts;
+using NexusStackNext.Platform.Infrastructure;
 using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
 using NexusStackNext.Scheduling.Contracts;
+using NexusStackNext.Scheduling.Infrastructure;
 using NexusStackNext.TestSupport;
+using Xunit.Abstractions;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
 [Collection(JourneyDatabaseDefinition.Name)]
-public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates databases)
+public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates databases, ITestOutputHelper output)
 {
     [AuditBrokerFact]
     public Task Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts()
@@ -54,7 +60,10 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
     [AuditBrokerFact]
     public async Task FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart()
     {
+        using var timings = new JourneyPhaseTimings(output);
+        timings.MoveTo(JourneyPhase.DatabasePreparation);
         await using var database = await databases.CreateAsync();
+        timings.MoveTo(JourneyPhase.BrokerTopology);
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-memory-recovery", ClientName = prefix };
         string[] sources = ["platform", "identity", "files", "scheduling"];
@@ -70,6 +79,7 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
         try
         {
             Assert.True((await new RabbitMqTopologyBootstrapper(broker).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
+            timings.MoveTo(JourneyPhase.FixtureStartup);
             await using (var factory = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false })
             await using (var producer = factory.WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, config) =>
                 config.AddInMemoryCollection(new Dictionary<string, string?>
@@ -80,6 +90,7 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 }))))
             {
                 using var client = producer.CreateClient();
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 await PlatformSettingsAccessTests.LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
                 await using var scope = producer.Services.CreateAsyncScope();
                 await using var offline = new RabbitMqEventBus(broker with { HostName = "127.0.0.1", Port = 1 });
@@ -131,22 +142,28 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                     Assert.Equal(ordinary.Payload, ordinaryEnvelope.Payload);
                     evidence.Add(source, (adjusted.Request, policyEnvelope, ordinaryEnvelope, request.RequestId));
                 }
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
             // Memory keeps no durable source receipt; broker-confirmed evidence belongs to the separate central store.
+            timings.MoveTo(JourneyPhase.FixtureStartup);
             await using (var fresh = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false })
             {
                 await using var scope = fresh.Services.CreateAsyncScope();
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 foreach (var (source, expected) in evidence)
                 {
                     Assert.Equal(source + ".delivery_recovery.not_found",
                         (await FactRecoveryProtocolTests.GetPort(scope.ServiceProvider, source).GetRecoveryAsync(expected.RequestId)).Error.Code);
                 }
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
             var settings = AuditBusinessJourneyTests.Settings(broker, prefix);
             settings["Scheduling__Worker__Enabled"] = "false";
             var originals = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            timings.MoveTo(JourneyPhase.CentralStartup);
             await using (var central = await PlatformHostProcess.StartAsync(database.ConnectionString, RootPassword, settings: settings))
             {
+                timings.MoveTo(JourneyPhase.CentralAssertions);
                 await PlatformSettingsAccessTests.LoginAsync(central.Client, "journey-root", RootPassword);
                 foreach (var (source, expected) in evidence)
                 {
@@ -155,9 +172,12 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                         source, expected.PolicyEnvelope, expected.Policy);
                     originals.Add(source, await WaitForOrdinaryAsync(central.Client, source, expected.OrdinaryEnvelope));
                 }
+                timings.MoveTo(JourneyPhase.CentralCleanup);
                 await central.CrashAsync();
             }
+            timings.MoveTo(JourneyPhase.CentralStartup);
             await using var restored = await PlatformHostProcess.StartAsync(database.ConnectionString, RootPassword, settings: settings);
+            timings.MoveTo(JourneyPhase.CentralAssertions);
             await PlatformSettingsAccessTests.LoginAsync(restored.Client, "journey-root", RootPassword);
             await using var redelivery = new RabbitMqEventBus(broker);
             foreach (var (source, expected) in evidence)
@@ -186,23 +206,29 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                     source, expected.PolicyEnvelope, expected.Policy);
                 Assert.True(JsonElement.DeepEquals(originals[source], await WaitForOrdinaryAsync(restored.Client, source, expected.OrdinaryEnvelope)));
             }
+            timings.MoveTo(JourneyPhase.CentralCleanup);
         }
         finally
         {
+            timings.MoveTo(JourneyPhase.BrokerCleanup);
             try { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
             finally
             {
                 Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())), storage.Parent!.FullName);
                 Assert.False(storage.Attributes.HasFlag(FileAttributes.ReparsePoint));
                 storage.Delete(recursive: true);
+                timings.MoveTo(JourneyPhase.RemainingCleanup);
             }
         }
     }
 
     private async Task VerifyAsync(string source)
     {
+        using var timings = new JourneyPhaseTimings(output);
+        timings.MoveTo(JourneyPhase.DatabasePreparation);
         await using var database = await databases.CreateAsync(source);
         await using var centralDatabase = await databases.CreateAsync();
+        timings.MoveTo(JourneyPhase.BrokerTopology);
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-recovery", ClientName = prefix };
         var topic = source + ".fact-capacity-policy-changed.v1";
@@ -219,24 +245,25 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
         try
         {
             Assert.True((await new RabbitMqTopologyBootstrapper(broker).ApplyAsync(RabbitTopologyPlanner.Plan(topology))).IsSuccess);
-            await using var costing = source == "costing" ? TaskOperationTests.CreateCostingApp(database.ConnectionString, null) : null;
-            await using var pricing = source == "pricing" ? TaskOperationTests.CreatePricingApp(database.ConnectionString, null) : null;
-            await using var platform = source is "costing" or "pricing" ? null
-                : new PersistentIdentityApp(database.ConnectionString, schedulingWorkerEnabled: false);
-            var services = costing?.Services ?? pricing?.Services ?? platform!.Services;
-            await using var scope = services.CreateAsyncScope();
+            timings.MoveTo(JourneyPhase.FixtureStartup);
+            // These ports only observe owned storage; the source and central HTTP hosts below remain real processes.
+            await using var observer = CreateObservationServices(source, database.ConnectionString);
+            await using var scope = observer.CreateAsyncScope();
             var outbox = FactRecoveryProtocolTests.GetOutbox(scope.ServiceProvider, source);
             var delivery = FactRecoveryProtocolTests.GetPort(scope.ServiceProvider, source);
             FactCapacityPolicyRequest policy;
             OutboxEntry original;
             OutboxEntry ordinary;
             DateTimeOffset stoppedAt;
+            timings.MoveTo(JourneyPhase.SourceStartup);
             await using (var first = await SourceProcess.StartAsync(source, database.ConnectionString, storage.FullName))
             {
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 var adjusted = await FactCapacityPolicyBrokerJourneyTests.AdjustAsync(first.Client, source);
                 policy = adjusted.Request;
-                original = Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue), entry => entry.Id == adjusted.EventId);
-                var previous = (await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue)).Select(entry => entry.Id).ToHashSet();
+                var beforeCommit = await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue);
+                original = Assert.Single(beforeCommit, entry => entry.Id == adjusted.EventId);
+                var previous = beforeCommit.Select(entry => entry.Id).ToHashSet();
                 await CommitOrdinaryAsync(first.Client, source);
                 // Files emits two lifecycle facts; this journey follows the created fact, without claiming both were recovered.
                 ordinary = (await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue))
@@ -249,29 +276,36 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 Assert.Equal("DeadLettered", (await delivery.GetAsync(original.Id)).Value.State);
                 Assert.Equal("DeadLettered", (await delivery.GetAsync(ordinary.Id)).Value.State);
                 Assert.Empty(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue));
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
             var request = new FactDeliveryRecoveryRequest(Guid.NewGuid(), original.Id, stoppedAt, 0, "dependency-restored");
             var ordinaryRequest = request with { RequestId = Guid.NewGuid(), MessageId = ordinary.Id };
             JsonElement receipt;
             JsonElement ordinaryReceipt;
+            timings.MoveTo(JourneyPhase.SourceStartup);
             await using (var recovering = await SourceProcess.StartAsync(source, database.ConnectionString, storage.FullName))
             {
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 receipt = await RecoverAsync(recovering.Client, source, request);
                 ordinaryReceipt = await RecoverAsync(recovering.Client, source, ordinaryRequest);
                 Assert.Equal("Pending", (await delivery.GetAsync(original.Id)).Value.State);
-                var retained = Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue), entry => entry.Id == original.Id);
+                var pending = await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue);
+                var retained = Assert.Single(pending, entry => entry.Id == original.Id);
                 Assert.Equal(original.Payload, retained.Payload);
                 Assert.Equal(original.EventName, retained.EventName);
                 Assert.Equal(original.OccurredAt, retained.OccurredAt);
                 Assert.Equal(1, retained.RetryRevision);
-                var retainedOrdinary = Assert.Single(await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue), entry => entry.Id == ordinary.Id);
+                var retainedOrdinary = Assert.Single(pending, entry => entry.Id == ordinary.Id);
                 Assert.Equal(ordinary.Payload, retainedOrdinary.Payload);
                 Assert.Equal(ordinary.EventName, retainedOrdinary.EventName);
                 Assert.Equal(ordinary.OccurredAt, retainedOrdinary.OccurredAt);
                 Assert.Equal(1, retainedOrdinary.RetryRevision);
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
+            timings.MoveTo(JourneyPhase.SourceStartup);
             await using (var restarted = await SourceProcess.StartAsync(source, database.ConnectionString, storage.FullName))
             {
+                timings.MoveTo(JourneyPhase.SourceAssertions);
                 Assert.True(JsonElement.DeepEquals(receipt, await RecoverAsync(restarted.Client, source, request)));
                 Assert.True(JsonElement.DeepEquals(ordinaryReceipt, await RecoverAsync(restarted.Client, source, ordinaryRequest)));
                 await using var bus = new RabbitMqEventBus(broker);
@@ -302,7 +336,9 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 Assert.Equal("Delivered", (await delivery.GetAsync(ordinary.Id)).Value.State);
                 Assert.False(await outbox.MarkDeadLetteredAsync(original.Id, "late-after-confirmation", stoppedAt, 2));
                 Assert.True(JsonElement.DeepEquals(receipt, await RecoverAsync(restarted.Client, source, request)));
+                timings.MoveTo(JourneyPhase.SourceCleanup);
             }
+            timings.MoveTo(JourneyPhase.BrokerReceive);
             var envelope = await FactCapacityPolicyBrokerJourneyTests.ReadEnvelopeAsync(broker, tap, expectedMessageId: original.Id);
             Assert.Equal(original.Payload, envelope.Payload);
             Assert.Equal(original.EventName, envelope.EventName);
@@ -314,15 +350,20 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
             var settings = AuditBusinessJourneyTests.Settings(broker, prefix);
             settings["Scheduling__Worker__Enabled"] = "false";
             JsonElement persistedOrdinary;
+            timings.MoveTo(JourneyPhase.CentralStartup);
             await using (var central = await PlatformHostProcess.StartAsync(centralDatabase.ConnectionString, RootPassword, settings: settings))
             {
+                timings.MoveTo(JourneyPhase.CentralAssertions);
                 await PlatformSettingsAccessTests.LoginAsync(central.Client, "journey-root", RootPassword);
                 var page = await FactCapacityPolicyBrokerJourneyTests.WaitForPolicyCountAsync(central.Client, source, 1);
                 FactCapacityPolicyBrokerJourneyTests.AssertEvidence(Assert.Single(page.GetProperty("data").EnumerateArray()).GetProperty("fact"), source, envelope, policy);
                 persistedOrdinary = await WaitForOrdinaryAsync(central.Client, source, ordinaryEnvelope);
+                timings.MoveTo(JourneyPhase.CentralCleanup);
                 await central.CrashAsync();
             }
+            timings.MoveTo(JourneyPhase.CentralStartup);
             await using var restored = await PlatformHostProcess.StartAsync(centralDatabase.ConnectionString, RootPassword, settings: settings);
+            timings.MoveTo(JourneyPhase.CentralAssertions);
             await PlatformSettingsAccessTests.LoginAsync(restored.Client, "journey-root", RootPassword);
             await using var redelivery = new RabbitMqEventBus(broker);
             Assert.True(JsonElement.DeepEquals(persistedOrdinary, await WaitForOrdinaryAsync(restored.Client, source, ordinaryEnvelope)));
@@ -347,15 +388,18 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
                 deadLetter: true, expectedMessageId: ordinary.Id);
             Assert.Equal(ordinaryConflict.Payload, ordinaryRejected.Payload);
             Assert.True(JsonElement.DeepEquals(persistedOrdinary, await WaitForOrdinaryAsync(restored.Client, source, ordinaryEnvelope)));
+            timings.MoveTo(JourneyPhase.CentralCleanup);
         }
         finally
         {
+            timings.MoveTo(JourneyPhase.BrokerCleanup);
             try { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
             finally
             {
                 Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())), storage.Parent!.FullName);
                 Assert.False(storage.Attributes.HasFlag(FileAttributes.ReparsePoint));
                 storage.Delete(recursive: true);
+                timings.MoveTo(JourneyPhase.RemainingCleanup);
             }
         }
     }
@@ -472,6 +516,26 @@ public sealed class FactRecoveryBrokerJourneyTests(JourneyDatabaseTemplates data
             }
             return result;
         }
+    }
+
+    private static ServiceProvider CreateObservationServices(string source, string connection)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddNexusStackApplication();
+        services.AddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
+        services.AddSingleton<IIntegrationEventMapper, NoIntegrationEventsMapper>();
+        switch (source)
+        {
+            case "platform": services.AddPlatformPostgresStorage(connection); break;
+            case "identity": services.AddIdentityEntityFrameworkStorage(connection); break;
+            case "files": services.AddFilesPostgresMetadata(connection); break;
+            case "scheduling": services.AddSchedulingPostgresStorage(connection); break;
+            case "costing": services.AddCostingPostgres(connection); break;
+            case "pricing": services.AddPricingPostgres(connection); break;
+            default: throw new ArgumentOutOfRangeException(nameof(source));
+        }
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
     }
 
     private sealed class SourceProcess(IAsyncDisposable host, HttpClient client) : IAsyncDisposable
