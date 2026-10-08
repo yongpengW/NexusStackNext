@@ -277,6 +277,7 @@ public sealed class IdentityPersistenceJourneyTests(JourneyDatabaseTemplates dat
 
 internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
 {
+    internal const string SigningKey = "integration-test-signing-key-long-enough-for-hs256";
     private readonly JourneyFileStorage _files = new();
     private readonly string? _filesRoot;
     private readonly string _connectionString;
@@ -351,7 +352,7 @@ internal class PersistentIdentityApp : WebApplicationFactory<PlatformHostMarker>
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(
             new Dictionary<string, string?>(StringComparer.Ordinal)
             {
-                ["Jwt:SigningKey"] = "integration-test-signing-key-long-enough-for-hs256",
+                ["Jwt:SigningKey"] = SigningKey,
                 ["Identity:Root:UserName"] = _rootPassword is null ? null : "journey-root",
                 ["Identity:Root:Password"] = _rootPassword,
             }));
