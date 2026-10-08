@@ -51,7 +51,16 @@ function New-CiTestPlan([object[]]$Inventory) {
     Assert-TestInventory $Inventory
     $weights = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-test-weights.json') -Raw | ConvertFrom-Json -AsHashtable
     $partitions = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'ci-test-partitions.json') -Raw | ConvertFrom-Json -AsHashtable
+    if ($weights -isnot [Collections.IDictionary] -or $weights.Count -eq 0) { throw 'Empty or invalid weight declaration.' }
+    foreach ($key in $weights.Keys) {
+        $value = $weights[$key]
+        if ($key -cnotmatch '^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$' -or
+            $value -isnot [ValueType] -or $value -is [bool] -or -not [double]::IsFinite([double]$value) -or [double]$value -le 0) {
+            throw 'Invalid measured test weight.'
+        }
+    }
     $hostTests = @($Inventory | Where-Object Project -EQ 'HostIntegration.Tests')
+    $otherProjects = @($Inventory | Where-Object Project -NE 'HostIntegration.Tests' | Group-Object Project)
     if ($partitions -isnot [Collections.IDictionary] -or $partitions.Count -eq 0) { throw 'Empty or invalid partition declaration.' }
     foreach ($class in $partitions.Keys) {
         $methods = $partitions[$class]
@@ -77,14 +86,18 @@ function New-CiTestPlan([object[]]$Inventory) {
             [pscustomobject]@{ Name = $_.Name; Tests = $_.Group; Weight = $(if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $_.Count * 5.0 }) }
         }
     } | Sort-Object @{ Expression = 'Weight'; Descending = $true }, Name -Culture en-US -CaseSensitive)
-    if ($groups.Count -lt 3 -or $hostTests.Count -eq $Inventory.Count) { throw 'Expected three host groups and at least one other project.' }
-    $loads = @(0.0, 0.0, 0.0)
+    if ($groups.Count -lt 4 -or $otherProjects.Count -eq 0) { throw 'Expected four host groups and at least one other project.' }
+    # Other projects remain on shard zero; reserve their cost before assigning host journeys.
+    $otherCost = ($otherProjects | ForEach-Object {
+        if ($weights.ContainsKey($_.Name)) { [double]$weights[$_.Name] } else { $_.Count * 5.0 }
+    } | Measure-Object -Sum).Sum
+    $loads = @([double]$otherCost, 0.0, 0.0, 0.0)
     $assignments = @{}
     foreach ($group in $groups) {
         $index = 0
-        for ($candidate = 1; $candidate -lt 3; $candidate++) { if ($loads[$candidate] -lt $loads[$index]) { $index = $candidate } }
+        for ($candidate = 1; $candidate -lt 4; $candidate++) { if ($loads[$candidate] -lt $loads[$index]) { $index = $candidate } }
         $loads[$index] += $group.Weight
-        foreach ($test in $group.Tests) { $assignments[$test.Id] = $index + 1 }
+        foreach ($test in $group.Tests) { $assignments[$test.Id] = $index }
     }
     foreach ($test in ($Inventory | Sort-Object Id -Culture en-US -CaseSensitive)) {
         [pscustomobject]@{ Project = $test.Project; Method = $test.Method; Id = $test.Id; Shard = $(if ($assignments.ContainsKey($test.Id)) { $assignments[$test.Id] } else { 0 }) }

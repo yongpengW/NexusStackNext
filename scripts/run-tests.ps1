@@ -256,7 +256,7 @@ foreach ($project in $testProjects) {
     if ($Filter) {
         $dotnetArgs += @('--filter', $Filter)
     }
-    if ($CiShard -gt 0) {
+    if ($CiShard -ge 0) {
         # Exact method matching keeps theory cases together without substring overlaps.
         $methods = @($selected | Where-Object Project -EQ $name | Select-Object -ExpandProperty Method -Unique)
         $dotnetArgs += @('--filter', (($methods | ForEach-Object { 'FullyQualifiedName=' + $_ }) -join '|'))

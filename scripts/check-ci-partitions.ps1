@@ -38,6 +38,10 @@ $outputPath = Join-Path $scratch 'plan.json'
 & pwsh -NoProfile -File $tool -Action Plan -InputPath $inputPath -OutputPath $outputPath
 if ($LASTEXITCODE -ne 0) { throw 'Partition probe planning failed.' }
 $plan = @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json)
+if (@($plan | Where-Object Project -CEQ 'HostIntegration.Tests' | Select-Object -ExpandProperty Shard -Unique).Count -ne 4 -or
+    @($plan | Where-Object Project -CNE 'HostIntegration.Tests' | Where-Object Shard -NE 0).Count -ne 0) {
+    throw 'All four isolated shards must share host journeys while other projects remain on shard zero.'
+}
 foreach ($class in @('FactRecoveryBrokerJourneyTests', 'FilesPersistenceJourneyTests', 'ScheduledCostBusinessJourneyTests')) {
     if (@($plan | Where-Object Method -Like "*.$class.*" | Select-Object -ExpandProperty Shard -Unique).Count -lt 2) {
         throw "Large journey class still blocks one shard: $class"
@@ -57,7 +61,7 @@ $originalPlan = ConvertTo-Json -InputObject $plan -Depth 10 -Compress
 Write-Inventory @($inventory | Sort-Object Id -Descending)
 Invoke-Plan $tool $true
 if ((ConvertTo-Json -InputObject @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json) -Depth 10 -Compress) -cne $originalPlan) { throw 'Partition depends on input order.' }
-if ($plan.Count -ne 28 -or @($plan.Id | Select-Object -Unique).Count -ne 28 -or @($plan | Where-Object Shard -EQ 0).Count -ne 1 -or
+if ($plan.Count -ne 28 -or @($plan.Id | Select-Object -Unique).Count -ne 28 -or @($plan | Where-Object Project -CNE 'HostIntegration.Tests' | Where-Object Shard -EQ 0).Count -ne 1 -or
     @($plan | Where-Object Method -Like 'Example.AlphaTests.*' | Select-Object -ExpandProperty Shard -Unique).Count -ne 1) { throw 'Method partition lost a case or split an undeclared class.' }
 
 # The same method represents three Theory cases, including future parameters.
@@ -72,7 +76,7 @@ Invoke-Plan $tool $true
 $expandedPlan = @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json)
 if ($expandedPlan.Count -ne 31 -or @($expandedPlan | Where-Object Method -CEQ $theoryMethod).Count -ne 3 -or
     @($expandedPlan | Where-Object Method -CEQ $theoryMethod | Select-Object -ExpandProperty Shard -Unique).Count -ne 1 -or
-    @($expandedPlan | Where-Object Id -CEQ ('3' * 64) | Where-Object Shard -In 1, 2, 3).Count -ne 1) { throw 'Theory parameters split or a new method disappeared.' }
+    @($expandedPlan | Where-Object Id -CEQ ('3' * 64) | Where-Object Shard -In 0, 1, 2, 3).Count -ne 1) { throw 'Theory parameters split or a new method disappeared.' }
 Write-Output 'PASS: deterministic complete plan, undeclared classes intact, Theory cases together, future method included.'
 
 # Mutate a disposable copy of the public CLI; the repository policy is never changed by a probe.
@@ -106,6 +110,38 @@ foreach ($mutation in @('empty', 'invalid-root', 'empty-class', 'unknown-class',
 [IO.File]::WriteAllText($policyPath, $originalPolicy, [Text.UTF8Encoding]::new($false))
 Invoke-Plan $copyTool $true
 Write-Output 'PASS: invalid, stale or empty declarations rejected; restored policy accepted.'
+
+$weightPath = Join-Path $scratch 'ci-test-weights.json'
+$originalWeights = Get-Content -LiteralPath $weightPath -Raw
+foreach ($mutation in @('empty', 'invalid-root', 'invalid-key', 'zero', 'negative', 'string', 'boolean')) {
+    $weights = $originalWeights | ConvertFrom-Json -AsHashtable
+    switch ($mutation) {
+        'empty' { $weights = @{} }
+        'invalid-root' { $weights = @('invalid') }
+        'invalid-key' { $weights['invalid key'] = 1.0 }
+        'zero' { $weights['Unit.Tests'] = 0 }
+        'negative' { $weights['Unit.Tests'] = -1 }
+        'string' { $weights['Unit.Tests'] = '1' }
+        'boolean' { $weights['Unit.Tests'] = $true }
+    }
+    [IO.File]::WriteAllText($weightPath, (ConvertTo-Json -InputObject $weights -Depth 10), [Text.UTF8Encoding]::new($false))
+    Invoke-Plan $copyTool $false
+}
+$weights = $originalWeights | ConvertFrom-Json -AsHashtable
+$weights['Unit.Tests'] = 1000000.0
+[IO.File]::WriteAllText($weightPath, (ConvertTo-Json -InputObject $weights -Depth 10), [Text.UTF8Encoding]::new($false))
+Invoke-Plan $copyTool $true
+$reservedPlan = @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json)
+if (@($reservedPlan | Where-Object Project -CEQ 'HostIntegration.Tests' | Where-Object Shard -EQ 0).Count -ne 0 -or
+    @($reservedPlan | Where-Object Project -CNE 'HostIntegration.Tests' | Where-Object Shard -EQ 0).Count -ne 1) {
+    throw 'Planner ignored the measured cost of other projects on shard zero.'
+}
+[IO.File]::WriteAllText($weightPath, $originalWeights, [Text.UTF8Encoding]::new($false))
+Invoke-Plan $copyTool $true
+if ((ConvertTo-Json -InputObject @(Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json) -Depth 10 -Compress) -cne $originalPlan) {
+    throw 'Restored weights did not restore the original deterministic plan.'
+}
+Write-Output 'PASS: invalid weights rejected, other project cost reserved, restored weights recover the plan.'
 
 $resolvedScratch = [IO.Path]::GetFullPath($scratch)
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar

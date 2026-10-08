@@ -1,31 +1,31 @@
 {
   "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests": {
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Costing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 16.908,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Files_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.652,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart": 11.297,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Identity_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.676,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.635,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Pricing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 16.889,
-    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Scheduling_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.326
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Costing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 15.809,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Files_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 21.903,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.FourMemorySources_RecoverBothFactKinds_AndCentralEvidenceSurvivesProducerDisposalAndCentralRestart": 10.956,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Identity_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.151,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Platform_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 20.846,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Pricing_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 9.773,
+    "NexusStackNext.HostIntegration.Tests.FactRecoveryBrokerJourneyTests.Scheduling_StoppedFactsRecoverThroughRealBroker_AndSurviveBothProcessRestarts": 22.096
   },
   "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests": {
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.AcceptedDeletion_ResumesAfterStorageRecoveryAndProcessRestart": 9.278,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ConcurrentDeletes_BothObserveDurableDeletion": 5.108,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor": 1.891,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FilesDatabaseOutage_ChangesReadiness_WithoutStoppingIdentity_AndRecovers": 9.159,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FirstCleanupAttempt_IsNotStarvedByDueFailingRetries": 8.759,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ProcessDiesDuringCommit_RecoveryKeepsBytesForAnyCommittedMetadata": 8.916,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.Recovery_PreservesLiveUpload_AndRemovesInterruptedUploadAfterRestart": 10.286,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.RejectedMetadataCommit_LeavesNoPublishedFile_AndRecoversOrphanBytes": 6.35,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ReplacedStorageDirectory_DoesNotFalselyConfirmDeletion": 14.778,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnmigratedFilesDatabase_RefusesStartup_UntilIndependentMigrationRuns": 8.335,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnremovableOrphan_DoesNotBlockOtherOrphanRecovery": 8.005,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnwritableOrphanProtection_DoesNotBlockOtherOrphanRecovery": 7.281,
-    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UploadedPrivateFile_RemainsOwnedAndDownloadable_AfterProcessRestart": 9.407
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.AcceptedDeletion_ResumesAfterStorageRecoveryAndProcessRestart": 8.364,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ConcurrentDeletes_BothObserveDurableDeletion": 2.587,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FileAudit_SoftDeletionPreservesCreationAndRecordsTheDeletingActor": 0.749,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FilesDatabaseOutage_ChangesReadiness_WithoutStoppingIdentity_AndRecovers": 7.475,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.FirstCleanupAttempt_IsNotStarvedByDueFailingRetries": 8.254,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ProcessDiesDuringCommit_RecoveryKeepsBytesForAnyCommittedMetadata": 8.323,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.Recovery_PreservesLiveUpload_AndRemovesInterruptedUploadAfterRestart": 10.527,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.RejectedMetadataCommit_LeavesNoPublishedFile_AndRecoversOrphanBytes": 4.097,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.ReplacedStorageDirectory_DoesNotFalselyConfirmDeletion": 7.189,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnmigratedFilesDatabase_RefusesStartup_UntilIndependentMigrationRuns": 2.447,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnremovableOrphan_DoesNotBlockOtherOrphanRecovery": 3.853,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UnwritableOrphanProtection_DoesNotBlockOtherOrphanRecovery": 6.05,
+    "NexusStackNext.HostIntegration.Tests.FilesPersistenceJourneyTests.UploadedPrivateFile_RemainsOwnedAndDownloadable_AfterProcessRestart": 8.32
   },
   "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests": {
-    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.CostingCrashBeforeReceiptCommit_RollsBackTaskAndInbox_AndRedeliveryRecovers": 14.615,
-    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.GatewayCalendar_SurvivesCostingOutageAndCreatorLogout_ThenCompletesThroughPricing": 31.794,
-    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.GatewaySchedule_SurvivesCostingOutageAndCreatorLogout_ThenCompletesWithoutInventingBusinessVersions": 27.499
+    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.CostingCrashBeforeReceiptCommit_RollsBackTaskAndInbox_AndRedeliveryRecovers": 13.666,
+    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.GatewayCalendar_SurvivesCostingOutageAndCreatorLogout_ThenCompletesThroughPricing": 30.678,
+    "NexusStackNext.HostIntegration.Tests.ScheduledCostBusinessJourneyTests.GatewaySchedule_SurvivesCostingOutageAndCreatorLogout_ThenCompletesWithoutInventingBusinessVersions": 21.212
   }
 }
