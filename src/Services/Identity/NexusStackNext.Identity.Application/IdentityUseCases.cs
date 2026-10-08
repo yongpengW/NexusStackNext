@@ -502,7 +502,7 @@ public sealed class SeedRootAccountHandler(
             return Result.Failure<bool>(userName.Error);
         }
 
-        // **存在就跳过，绝不重置口令。** 播种每次启动都会跑；而"第二次启动把一个人已经改过的
+        // **内建根账号存在就跳过，普通账号占名就拒绝，绝不重置口令。** 播种每次启动都会跑；而"第二次启动把一个人已经改过的
         // 根账号口令重置回配置里那个值"是没人预期、事后也查不出来的行为。
         // 返回值说明这一次到底做了什么（true = 新建），日志与测试都用它，而不是靠猜。
         var existing = await users.FindByUserNameAsync(userName.Value, cancellationToken).ConfigureAwait(false);

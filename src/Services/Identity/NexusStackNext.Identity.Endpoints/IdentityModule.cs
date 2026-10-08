@@ -104,7 +104,7 @@ public static class IdentityModule
         // 用例处理器与"存储是哪种"无关，所以注册在存储之后、且不随之切换。
         services.AddIdentityUseCases();
 
-        // **根账号播种**（票据 71 的决定）：每次启动跑一次，已有同名账号则跳过。
+        // **根账号播种**：每次启动跑一次，已有内建根账号则跳过；普通账号占名时拒绝启动。
         // 它在这里注册而不是在各宿主里：这是 Identity 自己的引导，五个宿主不该各写一遍。
         services.AddHostedService<RootAccountSeeder>();
 
@@ -467,14 +467,14 @@ public static class IdentityModule
         return endpoints;
     }
 
+    private static bool TrySubject(ICurrentUser current, out long userId)
+        => long.TryParse(current.UserId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out userId) && userId > 0;
+
     /// <summary>
     /// 本模块自己的错误码 → 状态码映射。
     /// <para>与 Platform（全 400）、Files（not_found 404）、Scheduling（not_found 404）**故意不同**：
     /// 这里还区分 409 冲突——用户名/角色编码被占用不是"请求错了"，是"状态冲突"。</para>
     /// </summary>
-    private static bool TrySubject(ICurrentUser current, out long userId)
-        => long.TryParse(current.UserId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out userId) && userId > 0;
-
     private static IResult Failure(Error error) => Results.Problem(
         statusCode: error.Code switch
         {
