@@ -51,8 +51,9 @@ public sealed class CostingBatchHttpTests(CostingDatabaseFixture database) : ICl
     {
         await using var host = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", database.ConnectionString);
         host.Authenticate();
-        var batchId = Guid.NewGuid();
-        var item = Guid.NewGuid();
+        // Keep identities containing the original amount digits to catch accidental text replacement.
+        var batchId = Guid.Parse("c83b3c60-630d-4a5f-a126-fb58c6000080");
+        var item = Guid.Parse("b675b6fb-a580-4e14-9f10-2d6622860080");
         var canonical = $$"""{"batchRequestId":"{{batchId}}","rows":[{"itemId":"{{item}}","expectedVersion":"0","purchaseCost":80,"freightCost":20}]}""";
         var equivalent = $$"""{"rows":[{"freightCost":20.0000,"purchaseCost":8e1,"expectedVersion":0,"itemId":"{{item}}"}],"batchRequestId":"{{batchId}}"}""";
         using var firstBody = new StringContent(canonical, Encoding.UTF8, "application/json");
@@ -67,8 +68,11 @@ public sealed class CostingBatchHttpTests(CostingDatabaseFixture database) : ICl
             (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").GetRawText());
         var rows = (await host.Client.GetFromJsonAsync<JsonElement>(new Uri($"/api/costing/batches/{batchId}/rows", UriKind.Relative))).GetProperty("data");
         Assert.NotEqual(Guid.Empty, Assert.Single(rows.EnumerateArray()).GetProperty("taskId").GetGuid());
-        using var changedBody = new StringContent(canonical.Replace("80", "81", StringComparison.Ordinal), Encoding.UTF8, "application/json");
-        using var changed = await host.Client.PostAsync(new Uri("/api/costing/batches", UriKind.Relative), changedBody);
+        using var changed = await host.Client.PostAsJsonAsync(new Uri("/api/costing/batches", UriKind.Relative), new
+        {
+            batchRequestId = batchId,
+            rows = new[] { new { itemId = item, expectedVersion = "0", purchaseCost = 81m, freightCost = 20m } },
+        });
         Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
     }
 
