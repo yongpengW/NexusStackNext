@@ -9,4 +9,12 @@ function Get-TestConsoleCase([string]$Line) {
     [pscustomobject]@{ Method = $match.Groups['method'].Value; Outcome = $outcome }
 }
 
-Export-ModuleMember -Function Get-TestConsoleCase
+function Get-TestContentionEvidence([string]$Output) {
+    # Only a closed schema is public. No arbitrary error codes, messages, IDs or payloads.
+    $pattern = '^NSN_CONTENTION (recovery busy=(True|False) unavailable=(True|False) succeeded=(True|False)|cleanup busy=(True|False) canceled=(True|False)|pricing phase=(initial|cost_refusal|fee_refusal|missing_task|recovered) status=[1-5][0-9]{2})$'
+    foreach ($line in ($Output -split '\r?\n')) {
+        if ($line -cmatch $pattern) { $line }
+    }
+}
+
+Export-ModuleMember -Function Get-TestConsoleCase, Get-TestContentionEvidence
