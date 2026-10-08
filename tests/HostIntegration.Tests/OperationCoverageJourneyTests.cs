@@ -106,7 +106,7 @@ public sealed class OperationCoverageJourneyTests(JourneyDatabaseTemplates datab
                 Assert.NotEqual(JsonValueKind.Null, item.GetProperty("finishedAt").ValueKind);
             });
             gateway.Authenticate(root: false);
-            await RejectedAsync("/api/costing/cost", new { }, HttpStatusCode.Forbidden);
+            await RejectedAsync("/api/costing/cost", new { }, HttpStatusCode.Forbidden, "test-reader");
             gateway.Authenticate();
             await RejectedAsync("/api/costing/cost", new { requestId = Guid.NewGuid(), itemId = Guid.NewGuid(), purchaseCost = -1m, freightCost = 0m }, HttpStatusCode.BadRequest);
             await OperationJournalGatewayTests.SetJournalStorageAvailableAsync(source.ConnectionString, available: false);
@@ -141,7 +141,7 @@ public sealed class OperationCoverageJourneyTests(JourneyDatabaseTemplates datab
                 }
             }
 
-            async Task RejectedAsync(string path, object body, HttpStatusCode expected)
+            async Task RejectedAsync(string path, object body, HttpStatusCode expected, string actor = "test-operator")
             {
                 var rejectedTrace = Guid.NewGuid().ToString("N");
                 using var rejectedRequest = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };
@@ -153,7 +153,7 @@ public sealed class OperationCoverageJourneyTests(JourneyDatabaseTemplates datab
                 {
                     Assert.Equal("rejected", item.GetProperty("outcome").GetString());
                     Assert.Equal((int)expected, item.GetProperty("statusCode").GetInt32());
-                    Assert.Equal("test-operator", item.GetProperty("actorId").GetString());
+                    Assert.Equal(actor, item.GetProperty("actorId").GetString());
                     Assert.DoesNotContain("forged-actor", item.GetRawText(), StringComparison.Ordinal);
                 });
             }

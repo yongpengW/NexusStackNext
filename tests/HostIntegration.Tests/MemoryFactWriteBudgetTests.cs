@@ -292,7 +292,7 @@ public sealed class MemoryFactWriteBudgetTests
             using var response = await request.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
             var error = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("audit_capacity.busy", error.GetProperty("errorCode").GetString());
+            Assert.Equal("identity.session.unavailable", error.GetProperty("errorCode").GetString());
             Assert.Equal(503, error.GetProperty("code").GetInt32());
             Assert.False(string.IsNullOrWhiteSpace(error.GetProperty("traceId").GetString()));
         }

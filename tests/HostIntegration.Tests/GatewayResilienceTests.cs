@@ -175,7 +175,7 @@ public sealed class GatewayResilienceTests
         new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(
             issuer: "nexusstack",
             audience: "nexusstack",
-            claims: root ? [new Claim("sub", subject), new Claim("nexusstack:root", "true"), new Claim("nexusstack:session", "0")] : [new Claim("sub", subject)],
+            claims: root ? [new Claim("sub", subject), new Claim("nexusstack:root", "true"), new Claim("nexusstack:session", "0")] : [new Claim("sub", subject), new Claim("nexusstack:session", "0")],
             notBefore: DateTime.UtcNow.AddMinutes(-1),
             expires: DateTime.UtcNow.AddMinutes(10),
             signingCredentials: new SigningCredentials(

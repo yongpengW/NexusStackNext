@@ -151,8 +151,8 @@ public sealed class OperationGatewaySemanticsTests
         await using var scope = gateway.Services.CreateAsyncScope();
         var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
         await CheckAsync("/secure", HttpStatusCode.Unauthorized, "rejected", "proxy");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("verified-operator"));
-        await CheckAsync("/gateway/routes/secure", HttpStatusCode.Forbidden, "rejected", "endpoint", HttpMethod.Put, "verified-operator");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GatewayResilienceTests.Token("test-reader"));
+        await CheckAsync("/gateway/routes/secure", HttpStatusCode.Forbidden, "rejected", "endpoint", HttpMethod.Put, "test-reader");
         client.DefaultRequestHeaders.Authorization = null;
         await CheckAsync("/failed", HttpStatusCode.InternalServerError, "failed", "proxy");
         await CheckAsync("/aborted", HttpStatusCode.BadGateway, "failed", "proxy");
