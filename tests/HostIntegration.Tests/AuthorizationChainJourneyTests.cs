@@ -149,7 +149,7 @@ public sealed class AuthorizationChainJourneyTests(PlatformAppWithRootAccount ap
         Assert.False(string.IsNullOrWhiteSpace(token));
 
         // 再来一次也一样——而且不会因为"多播了一次"而出现第二个同名账号
-        // （用户名唯一由仓储回答，`SeedRootAccountHandler` 在存在时直接返回 false）。
+        // （`SeedRootAccountHandler` 对已有内置用户返回 false；普通用户占名时明确拒绝）。
         var again = await LoginAsync(client, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
         Assert.False(string.IsNullOrWhiteSpace(again));
     }

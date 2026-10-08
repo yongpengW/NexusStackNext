@@ -183,6 +183,7 @@ public static class IdentityInfrastructureServiceCollectionExtensions
         services.AddKeyedSingleton<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey,
             (provider, _) => new IdentityMemoryOutbox(provider.GetRequiredService<IdentityMemoryState>()));
         services.AddScoped<IUserRepository>(provider => new InMemoryUserRepository(provider.GetRequiredService<IdentityMemorySession>()));
+        services.AddScoped<IUserDirectory, MemoryUserDirectory>();
         services.AddScoped<IRoleRepository>(provider => new InMemoryRoleRepository(provider.GetRequiredService<IdentityMemorySession>()));
         services.AddScoped<IApiResourceRepository>(provider => new InMemoryApiResourceRepository(provider.GetRequiredService<IdentityMemorySession>()));
         services.AddScoped<IRefreshTokenRepository>(provider => new InMemoryRefreshTokenRepository(provider.GetRequiredService<IdentityMemorySession>()));
@@ -210,13 +211,14 @@ public sealed class InMemoryUnitOfWork : IIdentityUnitOfWork
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => _session.SaveAsync(cancellationToken);
 
     /// <inheritdoc />
-    public Task<TResult> ExecuteInTransactionAsync<TResult>(
+    public async Task<TResult> ExecuteInTransactionAsync<TResult>(
         Func<CancellationToken, Task<TResult>> operation,
         Func<TResult, bool>? shouldCommit = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operation);
 
-        return _session.ExecuteAsync(operation, shouldCommit, cancellationToken);
+        try { return await _session.ExecuteAsync(operation, shouldCommit, cancellationToken).ConfigureAwait(false); }
+        catch (IdentityMemoryConflictException) { throw new IdentityWriteConflictException(); }
     }
 }

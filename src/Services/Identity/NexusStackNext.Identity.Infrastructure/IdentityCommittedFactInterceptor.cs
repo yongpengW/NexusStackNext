@@ -49,9 +49,11 @@ internal sealed class IdentityCommittedFactInterceptor(IClock clock, IIntegratio
                 changes.Add(new("user", entry.Entity.Id.Value, entry.Entity.Version,
                     assignment.State == EntityState.Added ? "role-assigned" : "role-revoked", new("role", assignment.Entity.Value)));
             }
+            // 启用也会清除失败计数和锁定；只有启用状态未改变时，这些重置才证明同时间戳登录。
             if (entry.Property(user => user.LastLoginAt).IsModified
-                || entry.Entity.FailedLoginCount < entry.Property(user => user.FailedLoginCount).OriginalValue
-                || (entry.Entity.LockedUntil is null && entry.Property(user => user.LockedUntil).OriginalValue is not null))
+                || (!entry.Property(user => user.IsEnabled).IsModified
+                    && (entry.Entity.FailedLoginCount < entry.Property(user => user.FailedLoginCount).OriginalValue
+                        || (entry.Entity.LockedUntil is null && entry.Property(user => user.LockedUntil).OriginalValue is not null))))
             {
                 changes.Add(new("user", entry.Entity.Id.Value, entry.Entity.Version, "login-succeeded"));
             }

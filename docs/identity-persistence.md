@@ -11,6 +11,7 @@ Auditing 与 Scheduling 的迁移和运行约定分别见 [持久审计](committ
 宿主也可从配置中心的 `ConnectionStrings:Identity` 读取；迁移命令仅从环境读取，不依赖配置中心。
 JWT 密钥与根账号仍按 [环境配置](../env/README.md) 提供。
 会话授权从当前主库最小状态独立读取，不走业务 EF 重试；预算、固定跨宿主地址及故障返回见[当前会话授权](current-session-authorization.md)。
+用户查询、启停、本人轮换、管理重置与根账号恢复约定见[用户生命周期](user-lifecycle.md)。
 
 ```powershell
 # 本机读取 env/platform.dev；先迁移，再启动。

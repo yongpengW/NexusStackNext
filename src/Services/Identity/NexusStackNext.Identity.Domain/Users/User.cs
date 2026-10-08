@@ -189,6 +189,7 @@ public sealed class User : AuditedAggregateRoot<UserId>
             return Result.Failure(IdentityErrors.PasswordUnchanged());
         }
 
+        SessionVersion = checked(SessionVersion + 1);
         PasswordHash = newPasswordHash;
         Raise(new UserPasswordChanged(Id, changedAt));
         return Changed();
@@ -225,6 +226,7 @@ public sealed class User : AuditedAggregateRoot<UserId>
             return Result.Success();
         }
 
+        SessionVersion = checked(SessionVersion + 1);
         IsEnabled = false;
         Raise(new UserDisabled(Id, at));
         return Changed();

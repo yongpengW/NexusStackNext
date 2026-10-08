@@ -139,6 +139,51 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
     }
 
     [PostgresFact]
+    public async Task EnableAfterFailedLogins_DoesNotInventSuccessfulLogin()
+    {
+        foreach (var failures in new[] { 1, 5 })
+        {
+            await fixture.ResetAsync();
+            await using var provider = IdentityTestHost.Build(fixture.Database.ConnectionString);
+            var created = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+                .SendAsync(new CreateUserCommand("enable-audit-user", "a-strong-password")));
+            Assert.True(created.IsSuccess);
+            Assert.True((await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+                .SendAsync(new LoginCommand("enable-audit-user", "a-strong-password")))).IsSuccess);
+            for (var attempt = 0; attempt < failures; attempt++)
+            {
+                Assert.True((await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+                    .SendAsync(new LoginCommand("enable-audit-user", "wrong-password")))).IsFailure);
+            }
+            await using var beforeScope = provider.CreateAsyncScope();
+            var before = await beforeScope.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+            Assert.NotNull(before);
+            Assert.Equal(failures, before.FailedLoginCount);
+            Assert.Equal(failures == 5, before.LockedUntil is not null);
+            Assert.NotNull(before.LastLoginAt);
+            Assert.True((await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+                .SendAsync(new SetUserEnabledCommand(created.Value, before.Version, false)))).IsSuccess);
+            Assert.True((await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+                .SendAsync(new SetUserEnabledCommand(created.Value, before.Version + 1, true)))).IsSuccess);
+            await using var read = provider.CreateAsyncScope();
+            var enabled = await read.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+            Assert.NotNull(enabled);
+            Assert.True(enabled.IsEnabled);
+            Assert.Equal(0, enabled.FailedLoginCount);
+            Assert.Null(enabled.LockedUntil);
+            Assert.Equal(before.LastLoginAt, enabled.LastLoginAt);
+            Assert.Equal(failures + 4, enabled.Version);
+            var serializer = read.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+            var pending = await read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)
+                .ReadPendingAsync(100, DateTimeOffset.UtcNow);
+            var facts = pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload))
+                .Where(fact => fact.SubjectType == "user").OrderBy(fact => fact.Version).ThenBy(fact => fact.Operation, StringComparer.Ordinal).ToArray();
+            var rejected = Enumerable.Range(1, failures).Select(attempt => attempt == 5 ? "login-locked" : "login-failed");
+            Assert.Equal(new[] { "created", "login-succeeded" }.Concat(rejected).Concat(["disabled", "sessions-revoked", "enabled"]), facts.Select(fact => fact.Operation));
+        }
+    }
+
+    [PostgresFact]
     public async Task SuccessfulLoginAtTheSameTimestamp_RecordsTheCommittedFailureReset()
     {
         await fixture.ResetAsync();
@@ -426,10 +471,11 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
         var serializer = read.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
         var pending = await read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)
             .ReadPendingAsync(100, DateTimeOffset.UtcNow);
-        var facts = pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload)).OrderBy(fact => fact.Version).ToArray();
-        Assert.Equal(new[] { "created", "contact-changed", "contact-changed", "password-changed", "disabled", "enabled", "role-assigned", "role-revoked" },
+        var facts = pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload))
+            .OrderBy(fact => fact.Version).ThenBy(fact => fact.Operation, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "created", "contact-changed", "contact-changed", "password-changed", "sessions-revoked", "disabled", "sessions-revoked", "enabled", "role-assigned", "role-revoked" },
             facts.Select(fact => fact.Operation));
-        Assert.Equal(new long[] { 1, 2, 3, 4, 5, 6, 7, 8 }, facts.Select(fact => fact.Version));
+        Assert.Equal(new long[] { 1, 2, 3, 4, 4, 5, 5, 6, 7, 8 }, facts.Select(fact => fact.Version));
         Assert.All(facts, fact => Assert.Equal("user", fact.SubjectType));
         Assert.Equal(new IdentitySubjectReference("role", 701), facts[^2].RelatedSubject);
         Assert.Equal(new IdentitySubjectReference("role", 701), facts[^1].RelatedSubject);

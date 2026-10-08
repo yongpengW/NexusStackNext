@@ -158,6 +158,12 @@ public sealed class TokenIssuer(
             return Result.Failure<TokenPair>(IdentityErrors.UserNotFound());
         }
 
+        // 禁用保持既有的稳定诊断；启用之后仍由版本拒绝此前的凭据。
+        if (!user.IsEnabled)
+        {
+            return Result.Failure<TokenPair>(IdentityErrors.UserDisabled());
+        }
+
         // 先拒绝旧代凭据；反复重放旧令牌不能撤销后来重新登录取得的新会话。
         if (stored.SessionVersion != user.SessionVersion)
         {
@@ -181,12 +187,6 @@ public sealed class TokenIssuer(
         {
             // 已不可用时 Consume 只返回领域错误，不修改状态。
             return Result.Failure<TokenPair>(stored.Consume(now).Error);
-        }
-
-        // 被禁用的账号不该靠刷新令牌续命——否则"禁用"只对下一次登录生效。
-        if (!user.IsEnabled)
-        {
-            return Result.Failure<TokenPair>(IdentityErrors.UserDisabled());
         }
 
         // 签名配置、哈希和有效期先验证完；内存适配器也不能在签发失败时消耗旧令牌。

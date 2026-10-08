@@ -205,6 +205,72 @@ public sealed class MemoryIdentityTransactionTests
         Assert.Equal(4, (await FactsAsync(outbox)).Length);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(5)]
+    public async Task EnableAfterFailedLogins_DoesNotInventSuccessfulLogin(int failures)
+    {
+        await using var app = new PlatformApp { SchedulingWorkerEnabled = false };
+        await using var setup = app.Services.CreateAsyncScope();
+        var sender = setup.ServiceProvider.GetRequiredService<ISender>();
+        var created = await sender.SendAsync(new CreateUserCommand("enable-audit-user", "a-strong-password"));
+        Assert.True(created.IsSuccess);
+        Assert.True((await sender.SendAsync(new LoginCommand("enable-audit-user", "a-strong-password"))).IsSuccess);
+        for (var attempt = 0; attempt < failures; attempt++)
+        {
+            Assert.True((await sender.SendAsync(new LoginCommand("enable-audit-user", "wrong-password"))).IsFailure);
+        }
+        var before = await setup.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+        Assert.NotNull(before);
+        Assert.Equal(failures, before.FailedLoginCount);
+        Assert.Equal(failures == 5, before.LockedUntil is not null);
+        var lastLogin = before.LastLoginAt;
+        var version = before.Version;
+        Assert.NotNull(lastLogin);
+        Assert.True((await sender.SendAsync(new SetUserEnabledCommand(created.Value, version, false))).IsSuccess);
+        Assert.True((await sender.SendAsync(new SetUserEnabledCommand(created.Value, version + 1, true))).IsSuccess);
+        await using var read = app.Services.CreateAsyncScope();
+        var enabled = await read.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+        Assert.NotNull(enabled);
+        Assert.True(enabled.IsEnabled);
+        Assert.Equal(0, enabled.FailedLoginCount);
+        Assert.Null(enabled.LockedUntil);
+        Assert.Equal(lastLogin, enabled.LastLoginAt);
+        Assert.Equal(failures + 4, enabled.Version);
+        var facts = (await FactsAsync(read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)))
+            .Where(fact => fact.SubjectType == "user").OrderBy(fact => fact.Version).ThenBy(fact => fact.Operation, StringComparer.Ordinal).ToArray();
+        var rejected = Enumerable.Range(1, failures).Select(attempt => attempt == 5 ? "login-locked" : "login-failed");
+        Assert.Equal(new[] { "created", "login-succeeded" }.Concat(rejected).Concat(["disabled", "sessions-revoked", "enabled"]), facts.Select(fact => fact.Operation));
+    }
+
+    [Fact]
+    public async Task SuccessfulLoginAtTheSameTimestamp_RecordsTheCommittedFailureReset()
+    {
+        await using var app = new PlatformApp { SchedulingWorkerEnabled = false };
+        await using var setup = app.Services.CreateAsyncScope();
+        var created = await setup.ServiceProvider.GetRequiredService<ISender>().SendAsync(new CreateUserCommand("same-time-memory", "a-strong-password"));
+        Assert.True(created.IsSuccess);
+        var at = new DateTimeOffset(2026, 10, 3, 1, 0, 0, TimeSpan.Zero);
+        for (var step = 0; step < 3; step++)
+        {
+            await using var change = app.Services.CreateAsyncScope();
+            var user = await change.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+            Assert.NotNull(user);
+            if (step == 1) { user.RecordFailedLogin(at, LockoutPolicy.Default); }
+            else { user.RecordSuccessfulLogin(at); }
+            await change.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>().SaveChangesAsync();
+        }
+        await using var read = app.Services.CreateAsyncScope();
+        var reloaded = await read.ServiceProvider.GetRequiredService<IUserRepository>().FindAsync(new UserId(created.Value));
+        Assert.NotNull(reloaded);
+        Assert.Equal(0, reloaded.FailedLoginCount);
+        Assert.Equal(at, reloaded.LastLoginAt);
+        var facts = (await FactsAsync(read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)))
+            .OrderBy(fact => fact.Version).ToArray();
+        Assert.Equal(new[] { "created", "login-succeeded", "login-failed", "login-succeeded" }, facts.Select(fact => fact.Operation));
+        Assert.Equal(new long[] { 1, 2, 3, 4 }, facts.Select(fact => fact.Version));
+    }
+
     [Fact]
     public async Task SecurityRejection_CommitsItsFact_WhileFactFailureRollsBackAndAllowsRetry()
     {

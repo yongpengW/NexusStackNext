@@ -42,8 +42,10 @@ internal sealed class IdentityMemoryFacts(IClock clock, IIntegrationEventSeriali
             foreach (var role in (old?.RoleIds ?? []).Except(user.RoleIds)) { UserFact("role-revoked", new("role", role.Value)); }
             if (old is null) { continue; }
             if (user.FailedLoginCount > old.FailedLoginCount) { UserFact(user.LockedUntil != old.LockedUntil ? "login-locked" : "login-failed"); }
-            if (user.LastLoginAt != old.LastLoginAt || user.FailedLoginCount < old.FailedLoginCount
-                || (user.LockedUntil is null && old.LockedUntil is not null)) { UserFact("login-succeeded"); }
+            // 启用也会清除失败计数和锁定；只有启用状态未改变时，这些重置才证明同时间戳登录。
+            if (user.LastLoginAt != old.LastLoginAt
+                || (user.IsEnabled == old.IsEnabled && (user.FailedLoginCount < old.FailedLoginCount
+                    || (user.LockedUntil is null && old.LockedUntil is not null)))) { UserFact("login-succeeded"); }
             if (user.SessionVersion != old.SessionVersion) { UserFact("sessions-revoked"); }
             if (user.Email != old.Email || user.Phone != old.Phone) { UserFact("contact-changed"); }
             if (user.PasswordHash != old.PasswordHash) { UserFact("password-changed"); }

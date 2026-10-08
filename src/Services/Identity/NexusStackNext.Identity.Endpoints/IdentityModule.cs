@@ -104,7 +104,7 @@ public static class IdentityModule
         // 用例处理器与"存储是哪种"无关，所以注册在存储之后、且不随之切换。
         services.AddIdentityUseCases();
 
-        // **根账号播种**（票据 71 的决定）：每次启动跑一次，已有同名账号则跳过。
+        // **根账号播种**：每次启动跑一次，已有内建根账号则跳过；普通账号占名时拒绝启动。
         // 它在这里注册而不是在各宿主里：这是 Identity 自己的引导，五个宿主不该各写一遍。
         services.AddHostedService<RootAccountSeeder>();
 
@@ -273,6 +273,54 @@ public static class IdentityModule
 
         // ---------- 用户 ----------
 
+        identity.MapPost("/me/password", async (OwnPasswordRequest request, ICurrentUser current, ISender sender, CancellationToken token) =>
+        {
+            if (!TrySubject(current, out var userId) || current.SessionVersion is not { } version) { return Results.Unauthorized(); }
+            var result = await sender.SendAsync(new ChangeOwnPasswordCommand(userId, version, request.ExpectedVersion, request.OldPassword, request.NewPassword), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequireAuthenticated().Produces(204).ProducesApiErrors(409, 415)
+            .WithMetadata(new OperationDescription("identity.user.password-change", "本人轮换口令"));
+
+        identity.MapPost("/users/{userId:long}/password", async (long userId, ResetPasswordRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new ResetUserPasswordCommand(userId, request.ExpectedVersion, request.NewPassword), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/users/{userId}/password", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.user.password-reset", "管理者重置口令"));
+
+        identity.MapPost("/users/{userId:long}/disable", async (long userId, UserVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new SetUserEnabledCommand(userId, request.ExpectedVersion, false), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/users/{userId}/disable", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.user.disable", "禁用用户并撤销会话"));
+
+        identity.MapPost("/users/{userId:long}/enable", async (long userId, UserVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new SetUserEnabledCommand(userId, request.ExpectedVersion, true), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/users/{userId}/enable", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.user.enable", "启用用户"));
+
+        identity.MapGet("/users", async (long? afterUserId, int? limit, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetUsersQuery(afterUserId ?? 0, limit ?? 50), token);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/identity/users", "GET").Produces<ApiResponse<UserPage>>();
+
+        identity.MapGet("/users/{userId:long}", async (long userId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetUserQuery(userId), token);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/identity/users/{userId}", "GET").Produces<ApiResponse<UserView>>().ProducesApiErrors(404);
+
+        identity.MapGet("/me", async (ICurrentUser current, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            if (!TrySubject(current, out var userId)) { return Results.Unauthorized(); }
+            var result = await sender.QueryAsync(new GetUserQuery(userId), token);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequireAuthenticated().Produces<ApiResponse<UserView>>();
+
         identity.MapPost("/users", async (ApiResponses responses,
             CreateUserRequest request,
             ISender sender,
@@ -419,6 +467,9 @@ public static class IdentityModule
         return endpoints;
     }
 
+    private static bool TrySubject(ICurrentUser current, out long userId)
+        => long.TryParse(current.UserId, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out userId) && userId > 0;
+
     /// <summary>
     /// 本模块自己的错误码 → 状态码映射。
     /// <para>与 Platform（全 400）、Files（not_found 404）、Scheduling（not_found 404）**故意不同**：
@@ -433,6 +484,8 @@ public static class IdentityModule
             "identity.delivery_recovery.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
+            "identity.user.conflict" => StatusCodes.Status409Conflict,
+            "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
@@ -455,6 +508,10 @@ internal sealed record RefreshRequest(string RefreshToken);
 /// <param name="UserName">用户名。</param>
 /// <param name="Password">明文口令——<b>只在这一次调用里存在</b>，进领域前已被换成哈希。</param>
 internal sealed record CreateUserRequest(string UserName, string Password);
+
+internal sealed record UserVersionRequest([property: JsonRequired] long ExpectedVersion);
+internal sealed record OwnPasswordRequest([property: JsonRequired] long ExpectedVersion, string OldPassword, string NewPassword);
+internal sealed record ResetPasswordRequest([property: JsonRequired] long ExpectedVersion, string NewPassword);
 
 internal sealed record RetryIdentityAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt,
     [property: JsonRequired] long ExpectedRetryRevision, string Reason);

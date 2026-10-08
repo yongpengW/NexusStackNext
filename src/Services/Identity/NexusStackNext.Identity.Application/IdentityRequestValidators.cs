@@ -27,18 +27,25 @@ public sealed class CreateUserCommandValidator : IRequestValidator<CreateUserCom
     public Result Validate(CreateUserCommand request)
     {
         ArgumentNullException.ThrowIfNull(request);
+        return UserPasswordPolicy.Validate(request.Password);
+    }
+}
 
-        if (string.IsNullOrWhiteSpace(request.Password))
+internal static class UserPasswordPolicy
+{
+    internal static Result Validate(string password)
+    {
+        if (string.IsNullOrWhiteSpace(password))
         {
             return Result.Failure(new Error("identity.password.empty", "口令不能为空。"));
         }
 
         // 长度而不是"复杂度规则"。复杂度规则（大小写+数字+符号）会把用户推向
         // `Passw0rd!` 这类可预测的形状，而长度是唯一一条被反复验证有效的约束。
-        return request.Password.Length < MinimumPasswordLength
+        return password.Length < CreateUserCommandValidator.MinimumPasswordLength
             ? Result.Failure(new Error(
                 "identity.password.too_short",
-                $"口令长度不得少于 {MinimumPasswordLength} 个字符。"))
+                $"口令长度不得少于 {CreateUserCommandValidator.MinimumPasswordLength} 个字符。"))
             : Result.Success();
     }
 }
