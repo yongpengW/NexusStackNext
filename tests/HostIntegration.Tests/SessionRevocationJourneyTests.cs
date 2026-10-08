@@ -26,6 +26,13 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
 {
     [PostgresFact]
     public async Task SameRootToken_AfterLogout_IsRejectedByTheEdgeAndDirectBusinessHosts()
+        => await RootRevocationAcrossConsumersAsync(false);
+
+    [PostgresFact]
+    public async Task Root_password_rotation_revokes_all_consumers_and_survives_restart_without_seed_overwrite()
+        => await RootRevocationAcrossConsumersAsync(true);
+
+    private async Task RootRevocationAcrossConsumersAsync(bool rotatePassword)
     {
         await using var identity = await databases.CreateAsync();
         await using var costs = await databases.CreateAsync("costing");
@@ -51,7 +58,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             }
             await File.WriteAllTextAsync(routes, table.ToJsonString());
             await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
-            await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "journey-root", "session-root-test-password");
+            var initialTokens = await UserLifecycleHttpTests.LoginAsync(gateway.Client, "journey-root", "session-root-test-password");
             costing.Client.DefaultRequestHeaders.Authorization = gateway.Client.DefaultRequestHeaders.Authorization;
             pricing.Client.DefaultRequestHeaders.Authorization = gateway.Client.DefaultRequestHeaders.Authorization;
             var checks = new[]
@@ -68,8 +75,10 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                 using var before = await client.GetAsync(new Uri(path, UriKind.Relative));
                 Assert.Equal(HttpStatusCode.OK, before.StatusCode);
             }
-            using var logout = await gateway.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
-            Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+            await RevokeRootAsync(gateway.Client, rotatePassword);
+            using var oldRefresh = await gateway.Client.PostAsJsonAsync(new Uri("/api/identity/refresh", UriKind.Relative),
+                new { refreshToken = initialTokens.GetProperty("refreshToken").GetString() });
+            Assert.Equal(HttpStatusCode.BadRequest, oldRefresh.StatusCode);
             foreach (var (client, path) in checks)
             {
                 using var after = await client.GetAsync(new Uri(path, UriKind.Relative));
@@ -92,7 +101,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                 Assert.Equal(HttpStatusCode.Unauthorized, stillRevoked.StatusCode);
             }
             using var login = await gateway.Client.PostAsJsonAsync(new Uri("/api/identity/login", UriKind.Relative),
-                new { userName = "journey-root", password = "session-root-test-password" });
+                new { userName = "journey-root", password = rotatePassword ? "session-root-rotated-password" : "session-root-test-password" });
             Assert.Equal(HttpStatusCode.OK, login.StatusCode);
             var tokens = await login.Content.ReadApiDataAsync();
             var accessToken = tokens.GetProperty("accessToken").GetString()!;
@@ -172,6 +181,13 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
 
     [AuditBrokerFact]
     public async Task AlreadyAuthorizedCostCommit_MayFinishAfterLogout_AndItsTaskCompletesThroughPricingWithoutBearer()
+        => await AcceptedTaskAfterRevocationAsync(false);
+
+    [AuditBrokerFact]
+    public async Task Accepted_cost_task_survives_root_password_rotation_and_worker_restart_through_pricing()
+        => await AcceptedTaskAfterRevocationAsync(true);
+
+    private async Task AcceptedTaskAfterRevocationAsync(bool rotatePassword)
     {
         await using var identity = await databases.CreateAsync();
         await using var costs = await databases.CreateAsync("costing");
@@ -214,8 +230,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                     if ((bool)(await probe.ExecuteScalarAsync(wait.Token))!) { break; }
                     await Task.Delay(20, wait.Token);
                 }
-                using var logout = await platform.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
-                Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+                await RevokeRootAsync(platform.Client, rotatePassword);
             }
             finally { await locked.RollbackAsync(); }
             using var accepted = await commit;
@@ -229,7 +244,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             }
             await costing.CrashAsync();
             await using var worker = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", costs.ConnectionString, worker: true, settings: settings);
-            await PlatformSettingsAccessTests.LoginAsync(platform.Client, "journey-root", "session-root-test-password");
+            await PlatformSettingsAccessTests.LoginAsync(platform.Client, "journey-root", rotatePassword ? "session-root-rotated-password" : "session-root-test-password");
             worker.Client.DefaultRequestHeaders.Authorization = platform.Client.DefaultRequestHeaders.Authorization;
             pricing.Client.DefaultRequestHeaders.Authorization = platform.Client.DefaultRequestHeaders.Authorization;
             using var completed = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -252,6 +267,22 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             Assert.Equal("Succeeded", state);
         }
         finally { await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology); }
+    }
+
+    private static async Task RevokeRootAsync(HttpClient client, bool rotatePassword)
+    {
+        if (!rotatePassword)
+        {
+            using var logout = await client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
+            Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
+            return;
+        }
+        using var me = await client.GetAsync(new Uri("/api/identity/me", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, me.StatusCode);
+        var version = (await me.Content.ReadApiDataAsync()).GetProperty("version").ReadHttpInt64();
+        using var rotated = await client.PostAsJsonAsync(new Uri("/api/identity/me/password", UriKind.Relative),
+            new { expectedVersion = version, oldPassword = "session-root-test-password", newPassword = "session-root-rotated-password" });
+        Assert.Equal(HttpStatusCode.NoContent, rotated.StatusCode);
     }
 
     private static string InvalidToken(string current, string kind)

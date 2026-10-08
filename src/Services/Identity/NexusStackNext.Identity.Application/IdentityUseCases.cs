@@ -99,7 +99,7 @@ public sealed record GetMenusQuery : IQuery<IReadOnlyList<MenuView>>;
 public sealed record MenuView(long MenuId, long? ParentMenuId, string Title, string Path, int SortOrder, int Depth);
 
 /// <summary>
-/// 确保存在一个内置根账号。<b>幂等</b>：已经有同名账号时什么都不做。
+/// 确保存在一个内置根账号。已有内置用户时幂等跳过；普通用户占名时稳定拒绝。
 /// </summary>
 /// <param name="UserName">用户名。</param>
 /// <param name="Password">明文口令——与 <see cref="CreateUserCommand"/> 一样，只在这一次调用里存在。</param>
@@ -505,9 +505,11 @@ public sealed class SeedRootAccountHandler(
         // **存在就跳过，绝不重置口令。** 播种每次启动都会跑；而"第二次启动把一个人已经改过的
         // 根账号口令重置回配置里那个值"是没人预期、事后也查不出来的行为。
         // 返回值说明这一次到底做了什么（true = 新建），日志与测试都用它，而不是靠猜。
-        if (await users.UserNameExistsAsync(userName.Value, cancellationToken).ConfigureAwait(false))
+        var existing = await users.FindByUserNameAsync(userName.Value, cancellationToken).ConfigureAwait(false);
+        if (existing is not null)
         {
-            return Result.Success(false);
+            return existing.IsBuiltIn ? Result.Success(false)
+                : Result.Failure<bool>(new("identity.root.name_collision", "根账号配置名已被普通用户占用。请修正配置，不能提升已有用户。"));
         }
 
         var passwordHash = PasswordHash.Create(hasher.Hash(command.Password));
@@ -571,6 +573,11 @@ public static class IdentityUseCaseServiceCollectionExtensions
         AddCommand<LoginCommand, LoginOutcome, LoginHandler>(services);
         AddCommand<RefreshTokenCommand, TokenPair, RefreshTokenHandler>(services);
         AddCommand<LogoutCommand, LogoutHandler>(services);
+        AddCommand<SetUserEnabledCommand, SetUserEnabledHandler>(services);
+        AddCommand<ChangeOwnPasswordCommand, ChangeOwnPasswordHandler>(services);
+        AddCommand<ResetUserPasswordCommand, ResetUserPasswordHandler>(services);
+        AddQuery<GetUsersQuery, UserPage, GetUsersHandler>(services);
+        AddQuery<GetUserQuery, UserView, GetUserHandler>(services);
 
         services.AddScoped<IdentityCommandTransaction>();
 
@@ -608,6 +615,8 @@ public static class IdentityUseCaseServiceCollectionExtensions
         //
         // 分发器在**开启事务之前**调用它们：一条不合法的请求不该占用一个数据库连接。
         services.AddSingleton<IRequestValidator<CreateUserCommand>, CreateUserCommandValidator>();
+        services.AddSingleton<IRequestValidator<IExpectedUserVersion>, ExpectedUserVersionValidator>();
+        services.AddSingleton<IRequestValidator<INewUserPassword>, NewUserPasswordValidator>();
 
         // 一个校验器覆盖所有带标识的请求——靠的是 IRequestValidator<in TRequest> 的逆变。
         services.AddSingleton<IRequestValidator<IIdentifiedRequest>, IdentifiedRequestValidator>();

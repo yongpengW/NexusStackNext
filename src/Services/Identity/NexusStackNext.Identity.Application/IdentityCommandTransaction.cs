@@ -97,6 +97,7 @@ internal sealed class IdentityCommandHandler<TCommand>(
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
         catch (IdentityAuditCapacityException error) { return Result.Failure(error.Reason); }
         catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
+        catch (IdentityWriteConflictException) when (command is IExpectedUserVersion) { return Result.Failure(UserLifecycleErrors.Conflict); }
     }
 }
 
@@ -110,5 +111,6 @@ internal sealed class IdentityCommandHandler<TCommand, TResult>(
         try { return await transaction.ExecuteAsync(token => handler.HandleAsync(command, token), cancellationToken).ConfigureAwait(false); }
         catch (IdentityAuditCapacityException error) { return Result.Failure<TResult>(error.Reason); }
         catch (CommittedFactCapacityBusyException) { return Result.Failure<TResult>(CommittedFactCapacityBusyException.Reason); }
+        catch (IdentityWriteConflictException) when (command is IExpectedUserVersion) { return Result.Failure<TResult>(UserLifecycleErrors.Conflict); }
     }
 }

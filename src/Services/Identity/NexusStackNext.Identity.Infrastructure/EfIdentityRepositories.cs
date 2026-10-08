@@ -209,6 +209,7 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
                 .AddInterceptors(provider.GetRequiredService<IdentityCommittedFactInterceptor>()));
 
         services.AddScoped<IUserRepository, EfUserRepository>();
+        services.AddScoped<IUserDirectory, EfUserDirectory>();
         services.AddSingleton<ISessionStateReader>(provider => new PostgresSessionStateReader(connectionString,
             provider.GetService<IdentitySessionReadOptions>() ?? new()));
         services.AddScoped<IRoleRepository, EfRoleRepository>();
@@ -235,4 +236,13 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
 /// <summary>把通用 EF 事务实现绑定到 Identity 的工作单元端口。</summary>
 /// <param name="context">Identity 的上下文。</param>
 public sealed class EfIdentityUnitOfWork(IdentityDbContext context)
-    : EfUnitOfWork<IdentityDbContext>(context), IIdentityUnitOfWork;
+    : EfUnitOfWork<IdentityDbContext>(context), IIdentityUnitOfWork
+{
+    /// <inheritdoc />
+    public new async Task<TResult> ExecuteInTransactionAsync<TResult>(Func<CancellationToken, Task<TResult>> operation,
+        Func<TResult, bool>? shouldCommit = null, CancellationToken cancellationToken = default)
+    {
+        try { return await base.ExecuteInTransactionAsync(operation, shouldCommit, cancellationToken).ConfigureAwait(false); }
+        catch (DbUpdateConcurrencyException) { throw new IdentityWriteConflictException(); }
+    }
+}

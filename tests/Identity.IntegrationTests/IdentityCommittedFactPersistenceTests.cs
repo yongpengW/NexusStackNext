@@ -426,10 +426,11 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
         var serializer = read.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
         var pending = await read.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)
             .ReadPendingAsync(100, DateTimeOffset.UtcNow);
-        var facts = pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload)).OrderBy(fact => fact.Version).ToArray();
-        Assert.Equal(new[] { "created", "contact-changed", "contact-changed", "password-changed", "disabled", "enabled", "role-assigned", "role-revoked" },
+        var facts = pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload))
+            .OrderBy(fact => fact.Version).ThenBy(fact => fact.Operation, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "created", "contact-changed", "contact-changed", "password-changed", "sessions-revoked", "disabled", "sessions-revoked", "enabled", "role-assigned", "role-revoked" },
             facts.Select(fact => fact.Operation));
-        Assert.Equal(new long[] { 1, 2, 3, 4, 5, 6, 7, 8 }, facts.Select(fact => fact.Version));
+        Assert.Equal(new long[] { 1, 2, 3, 4, 4, 5, 5, 6, 7, 8 }, facts.Select(fact => fact.Version));
         Assert.All(facts, fact => Assert.Equal("user", fact.SubjectType));
         Assert.Equal(new IdentitySubjectReference("role", 701), facts[^2].RelatedSubject);
         Assert.Equal(new IdentitySubjectReference("role", 701), facts[^1].RelatedSubject);
