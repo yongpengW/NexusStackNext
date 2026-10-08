@@ -1,8 +1,12 @@
+using System.Diagnostics;
+
 namespace NexusStackNext.HostIntegration.Tests;
 
 // One controller owns the workload; its workers serialize expensive database preparation.
 internal static class JourneyDatabaseOperation
 {
+    internal const string PermitWaitSourceName = "NexusStackNext.Tests.DatabasePermit";
+    private static readonly ActivitySource PermitWait = new(PermitWaitSourceName);
     internal static async Task RunAsync(Func<Task> operation, CancellationToken cancellationToken = default)
     {
         await using var lease = await EnterAsync(preparation: true, cancellationToken: cancellationToken);
@@ -19,6 +23,7 @@ internal static class JourneyDatabaseOperation
     {
         var path = Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_DDL_GUARD");
         if (string.IsNullOrEmpty(path)) { return null; }
+        using var waiting = PermitWait.StartActivity("acquire");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromMinutes(3));
         while (true)

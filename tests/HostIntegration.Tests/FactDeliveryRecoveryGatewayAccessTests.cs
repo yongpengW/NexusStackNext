@@ -10,11 +10,12 @@ using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.TestSupport;
+using Xunit.Abstractions;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
 [Collection(JourneyDatabaseDefinition.Name)]
-public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTemplates databases)
+public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTemplates databases, ITestOutputHelper output)
 {
     [Theory]
     [InlineData("platform", "routes.pricing.json")]
@@ -83,31 +84,37 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
     public Task PlatformMemory_DefaultRoutes_RequireIndependentCurrentPermissionsAndValidRootSession()
         => VerifyMemoryAsync("platform", "routes.json");
 
-    private static async Task VerifyMemoryAsync(string source, string configurationFile)
+    private async Task VerifyMemoryAsync(string source, string configurationFile)
     {
+        using var timings = new JourneyPhaseTimings(output);
+        timings.MoveTo(JourneyPhase.HostStartup);
         await using var platform = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
         platform.UseKestrel(0);
         using var root = platform.CreateClient();
-        await VerifyAsync(root, platform.Services, source, configurationFile, PlatformAppWithRootAccount.RootUserName);
+        await VerifyAsync(root, platform.Services, source, configurationFile, PlatformAppWithRootAccount.RootUserName, timings);
     }
 
     private async Task VerifyPostgresAsync(string source, string configurationFile)
     {
+        using var timings = new JourneyPhaseTimings(output);
+        timings.MoveTo(JourneyPhase.DatabasePreparation);
         await using var database = await databases.CreateAsync();
+        timings.MoveTo(JourneyPhase.HostStartup);
         await using var platform = new PersistentIdentityApp(database.ConnectionString, PlatformAppWithRootAccount.RootPassword,
             schedulingWorkerEnabled: false);
         using var root = platform.CreateClient();
-        await VerifyAsync(root, platform.Services, source, configurationFile, "journey-root");
+        await VerifyAsync(root, platform.Services, source, configurationFile, "journey-root", timings);
     }
 
     private static async Task VerifyAsync(HttpClient root, IServiceProvider services, string source, string configurationFile,
-        string rootUserName)
+        string rootUserName, JourneyPhaseTimings timings)
     {
         await using var gateway = new GatewayHttpApp(root.BaseAddress!.AbsoluteUri)
         { SigningKey = "integration-test-signing-key-long-enough-for-hs256" };
         var routes = GatewayRouteTable.FromJson(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, configurationFile))).Value;
         gateway.UseRoutes(routes.Routes.Select(route => route with { ClusterId = "backend", RateLimitPolicy = null }));
         using var user = gateway.CreateClient();
+        timings.MoveTo(JourneyPhase.PermissionPreparation);
         await PlatformSettingsAccessTests.LoginAsync(root, rootUserName, PlatformAppWithRootAccount.RootPassword);
         var account = await CreateAsync(root, "/api/identity/users", new { userName = "recovery-reader", password = "recovery-reader-password" });
         var userId = account.GetProperty("userId").ReadHttpInt64();
@@ -127,6 +134,7 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
         using var assign = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode);
 
+        timings.MoveTo(JourneyPhase.FactPreparation);
         await using var scope = services.CreateAsyncScope();
         var policies = scope.ServiceProvider.GetRequiredKeyedService<ICommittedFactCapacityPolicyStore>(source);
         var current = (await policies.ReadPolicyAsync()).Value;
@@ -154,6 +162,7 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
             source = "forged-source",
             recoveredAt = DateTimeOffset.MaxValue,
         };
+        timings.MoveTo(JourneyPhase.RecoveryAssertions);
         await AssertReadsAsync(user, readPaths, HttpStatusCode.Unauthorized);
         using var anonymous = await user.PostAsJsonAsync(retryPath, request);
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
@@ -203,16 +212,15 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
         Assert.Equal(receipt.GetRawText(), (await replay.Content.ReadApiDataAsync()).GetRawText());
         using var restoreRead = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{readMenuId}", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, restoreRead.StatusCode);
-        await AssertReadsAsync(user, readPaths, HttpStatusCode.OK);
-        using var found = await user.GetAsync(new Uri(readPaths[3], UriKind.Relative));
-        Assert.Equal(receipt.GetRawText(), (await found.Content.ReadApiDataAsync()).GetRawText());
-        using var capacity = await user.GetAsync(new Uri(readPaths[2], UriKind.Relative));
-        Assert.Equal("1", (await capacity.Content.ReadApiDataAsync()).GetProperty("capacity").GetProperty("retainedRecords").GetString());
+        var visible = await ReadGrantedEvidenceAsync(user, readPaths[..2], readPaths[2], readPaths[3]);
+        Assert.Equal(receipt.GetRawText(), visible.Receipt.GetRawText());
+        Assert.Equal("1", visible.Capacity.GetProperty("capacity").GetProperty("retainedRecords").GetString());
 
         await RevokeAsync(services, roleId, writeMenuId);
         using var revokedReplay = await user.PostAsJsonAsync(retryPath, request);
         Assert.Equal(HttpStatusCode.Forbidden, revokedReplay.StatusCode);
         await AssertReadsAsync(user, readPaths, HttpStatusCode.OK);
+        timings.MoveTo(JourneyPhase.SessionAssertions);
         using var logout = await user.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
         await AssertReadsAsync(user, readPaths, HttpStatusCode.Unauthorized);
@@ -227,6 +235,7 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
         await AssertReadsAsync(edgeRoot, readPaths, HttpStatusCode.Unauthorized);
         using var invalidRootReplay = await edgeRoot.PostAsJsonAsync(retryPath, request);
         Assert.Equal(HttpStatusCode.Unauthorized, invalidRootReplay.StatusCode);
+        timings.MoveTo(JourneyPhase.RemainingCleanup);
     }
 
     private static async Task RevokeAsync(IServiceProvider services, long roleId, long menuId)
@@ -246,6 +255,17 @@ public sealed class FactDeliveryRecoveryGatewayAccessTests(JourneyDatabaseTempla
             using var response = await client.GetAsync(new Uri(path, UriKind.Relative));
             Assert.Equal(expected, response.StatusCode);
         }
+    }
+
+    private static async Task<(JsonElement Capacity, JsonElement Receipt)> ReadGrantedEvidenceAsync(
+        HttpClient client, IEnumerable<string> otherPaths, string capacityPath, string receiptPath)
+    {
+        await AssertReadsAsync(client, otherPaths, HttpStatusCode.OK);
+        using var capacity = await client.GetAsync(new Uri(capacityPath, UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, capacity.StatusCode);
+        using var receipt = await client.GetAsync(new Uri(receiptPath, UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, receipt.StatusCode);
+        return (await capacity.Content.ReadApiDataAsync(), await receipt.Content.ReadApiDataAsync());
     }
 
     private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
