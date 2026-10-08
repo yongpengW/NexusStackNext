@@ -8,7 +8,7 @@ using Xunit.Abstractions;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-// Observe only the current query's Identity and journal contexts. Never publish SQL or event payloads.
+// Observe the current trace's EF contexts and provider spans. Never publish SQL or event payloads.
 internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
     IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
 {
@@ -25,11 +25,13 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
     {
         _requests = new ActivityListener
         {
-            ShouldListenTo = source => source.Name == "Microsoft.AspNetCore",
+            ShouldListenTo = source => source.Name is "Microsoft.AspNetCore" or "Npgsql",
             Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.PropagationData,
             ActivityStopped = activity =>
             {
-                if (_measurements.TryGetValue(activity.TraceId, out var measurement)) { measurement.ServerCompleted(activity.Duration); }
+                if (!_measurements.TryGetValue(activity.TraceId, out var measurement)) { return; }
+                if (activity.Source.Name == "Microsoft.AspNetCore") { measurement.ServerCompleted(activity.Duration); }
+                else if (activity.OperationName == "postgresql") { measurement.ProviderCommand(activity.Duration); }
             },
         };
         ActivitySource.AddActivityListener(_requests);
@@ -104,12 +106,21 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
         private long _journalTicks;
         private long _journalTransactions;
         private long _journalTransactionTicks;
+        private long _providerCommands;
+        private long _providerTicks;
         private readonly TaskCompletionSource<TimeSpan> _server = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private TimeSpan _serverDuration;
 
         internal ActivityTraceId TraceId => _activity.TraceId;
         internal long Commands => Interlocked.Read(ref _commands);
         internal long JournalCommands => Interlocked.Read(ref _journalCommands);
+        internal long ProviderCommands => Interlocked.Read(ref _providerCommands);
+
+        internal void ProviderCommand(TimeSpan duration)
+        {
+            Interlocked.Increment(ref _providerCommands);
+            Interlocked.Add(ref _providerTicks, duration.Ticks);
+        }
 
         internal void ServerCompleted(TimeSpan duration) => _server.TrySetResult(duration);
 
@@ -150,7 +161,7 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
             owner._measurements.TryRemove(TraceId, out _);
             _activity.Dispose();
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"QUERY_TIMING phase={phase} total_ms={_watch.Elapsed.TotalMilliseconds:F1} commands={Interlocked.Read(ref _commands)} sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _commandTicks)).TotalMilliseconds:F1} connections={Interlocked.Read(ref _connections)} connection_ms={TimeSpan.FromTicks(Interlocked.Read(ref _connectionTicks)).TotalMilliseconds:F1} server_ms={_serverDuration.TotalMilliseconds:F1} journal_commands={Interlocked.Read(ref _journalCommands)} journal_sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTicks)).TotalMilliseconds:F1} journal_transactions={Interlocked.Read(ref _journalTransactions)} journal_transaction_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTransactionTicks)).TotalMilliseconds:F1}"));
+                $"QUERY_TIMING phase={phase} total_ms={_watch.Elapsed.TotalMilliseconds:F1} commands={Interlocked.Read(ref _commands)} sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _commandTicks)).TotalMilliseconds:F1} connections={Interlocked.Read(ref _connections)} connection_ms={TimeSpan.FromTicks(Interlocked.Read(ref _connectionTicks)).TotalMilliseconds:F1} server_ms={_serverDuration.TotalMilliseconds:F1} journal_commands={Interlocked.Read(ref _journalCommands)} journal_sql_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTicks)).TotalMilliseconds:F1} journal_transactions={Interlocked.Read(ref _journalTransactions)} journal_transaction_ms={TimeSpan.FromTicks(Interlocked.Read(ref _journalTransactionTicks)).TotalMilliseconds:F1} provider_commands={Interlocked.Read(ref _providerCommands)} provider_ms={TimeSpan.FromTicks(Interlocked.Read(ref _providerTicks)).TotalMilliseconds:F1}"));
         }
     }
 }

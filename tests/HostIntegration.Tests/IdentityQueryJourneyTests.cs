@@ -71,6 +71,7 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             await measurement.CompleteHttpAsync();
             Assert.True(measurement.Commands > 0, "HTTP trace must observe actual Identity database work.");
             Assert.True(measurement.JournalCommands > 0, "HTTP trace must observe actual source journal persistence.");
+            Assert.True(measurement.ProviderCommands > 0, "HTTP trace must observe actual database provider execution.");
         }
         using var logout = await gateway.Client.PostAsync(new Uri("/api/identity/logout", UriKind.Relative), null);
         Assert.Equal(HttpStatusCode.NoContent, logout.StatusCode);
@@ -87,6 +88,7 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             await measurement.CompleteHttpAsync();
             Assert.True(measurement.Commands > 0, "Revocation measurement must observe the authoritative database.");
             Assert.True(measurement.JournalCommands > 0, "Rejected HTTP requests must still persist source observations.");
+            Assert.True(measurement.ProviderCommands > 0, "Rejected HTTP measurements must observe actual database provider execution.");
         }
         Assert.True(timings.Commands > 0, "Query timing must observe actual Identity database work.");
     }
