@@ -111,7 +111,9 @@ public sealed class UserLifecyclePersistenceTests(JourneyDatabaseTemplates datab
     public async Task Two_authorized_administrators_racing_on_one_user_commit_one_rotation_and_return_conflict()
     {
         await using var database = await databases.CreateAsync();
-        await using var app = new PersistentIdentityApp(database.ConnectionString, "lifecycle-root-password", schedulingWorkerEnabled: false);
+        // 写者在首次统计观察后才建连接，避免池复用掩盖旧快照漏掉新后端的故障。
+        var freshConnections = new NpgsqlConnectionStringBuilder(database.ConnectionString) { Pooling = false }.ConnectionString;
+        await using var app = new PersistentIdentityApp(freshConnections, "lifecycle-root-password", schedulingWorkerEnabled: false);
         using var root = app.CreateClient();
         using var delegated = app.CreateClient();
         await UserLifecycleHttpTests.LoginAsync(root, "journey-root", "lifecycle-root-password");
