@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.TestSupport;
 using Xunit;
 
 namespace NexusStackNext.IntegrationSupport;

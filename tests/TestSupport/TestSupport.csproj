@@ -13,6 +13,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <ProjectReference Include="..\..\src\BuildingBlocks\BuildingBlocks.Application\BuildingBlocks.Application.csproj" />
     <ProjectReference Include="../../src/Services/Identity/NexusStackNext.Identity.Application/NexusStackNext.Identity.Application.csproj" />
     <ProjectReference Include="../../src/Services/Files/NexusStackNext.Files.Domain/NexusStackNext.Files.Domain.csproj" />

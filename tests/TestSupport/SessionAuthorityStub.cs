@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.BuildingBlocks.Application.Security;
 
-namespace NexusStackNext.IntegrationSupport;
+namespace NexusStackNext.TestSupport;
 
 // External HTTP fixture for tests of business behavior. Revocation journeys use real Identity instead.
 internal sealed class SessionAuthorityStub(WebApplication app) : IAsyncDisposable

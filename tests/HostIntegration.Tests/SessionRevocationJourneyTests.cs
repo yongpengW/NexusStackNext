@@ -16,6 +16,7 @@ using NexusStackNext.CostingHost;
 using NexusStackNext.Gateway;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.PricingHost;
+using NexusStackNext.TestSupport;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;

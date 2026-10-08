@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Http;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 

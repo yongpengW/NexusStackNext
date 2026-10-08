@@ -15,6 +15,7 @@ using Microsoft.IdentityModel.Tokens;
 using NexusStackNext.Gateway;
 using NexusStackNext.Gateway.Routing;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
