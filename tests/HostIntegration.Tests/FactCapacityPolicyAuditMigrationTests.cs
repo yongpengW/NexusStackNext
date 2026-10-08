@@ -66,7 +66,8 @@ public sealed class FactCapacityPolicyAuditMigrationTests(JourneyDatabaseTemplat
         await using var upgradedScope = upgraded.Services.CreateAsyncScope();
         var restored = upgradedScope.ServiceProvider.GetRequiredService<AuditIngestion>();
         foreach (var fact in facts) { Assert.Equal(IngestionOutcome.Duplicate, (await restored.IngestAsync(fact)).Value); }
-        using var legacyQuery = await queryClient.GetAsync(new Uri("/api/auditing/entries?source=platform&subjectType=global-setting&subjectId=legacy-policy-compatible", UriKind.Relative));
+        // Fingerprint fixtures have fixed timestamps; query their historical window explicitly.
+        using var legacyQuery = await queryClient.GetAsync(new Uri("/api/auditing/entries?source=platform&subjectType=global-setting&subjectId=legacy-policy-compatible&from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, legacyQuery.StatusCode);
         var legacyRows = (await legacyQuery.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("data").EnumerateArray().ToArray();
         Assert.Equal(4, legacyRows.Length);
