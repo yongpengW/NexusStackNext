@@ -59,6 +59,11 @@ jobs:
     permissions:
       contents: read
 
+    env:
+      # Only public NuGet packages are reusable; assets and build/test outputs remain fresh.
+      NUGET_PACKAGES: ${{ runner.temp }}/nsn-ci-nuget
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+
     steps:
       # Node 24 的首个大版本（v4 系列跑在 Node 20 上，runner 已在强制升到 24 并给出弃用提示）。
       # v5 之后的破坏性变更只涉及 `pull_request_target` 的检出安全性，本仓不用那个触发器。
@@ -72,6 +77,14 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+
+      - name: 复用 NuGet 依赖包
+        uses: actions/cache@v5
+        timeout-minutes: 1
+        continue-on-error: true
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nsn-nuget-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/*.slnx', '**/*.csproj', '**/*.props', '**/*.targets', '**/NuGet.Config', '**/nuget.config') }}
 
       - name: 还原
         run: dotnet restore NexusStackNext.slnx
@@ -201,6 +214,9 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      NUGET_PACKAGES: ${{ runner.temp }}/nsn-ci-nuget
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
     steps:
       - uses: actions/checkout@v5
       - name: 确认前置任务全部成功
@@ -221,6 +237,16 @@ jobs:
       - name: 核对全部测试完整执行
         shell: pwsh
         run: ./scripts/ci-test-tools.ps1 -Action Verify -InputPath (Join-Path $env:RUNNER_TEMP 'nsn-ci-reports') -Revision $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -Attempt $env:GITHUB_RUN_ATTEMPT
+
+      # A successful test runner can seed this cache even on the first cold PR run.
+      # A miss or cache service failure still falls through to the mandatory restore.
+      - name: 复用格式检查依赖包
+        uses: actions/cache/restore@v5
+        timeout-minutes: 1
+        continue-on-error: true
+        with:
+          path: ${{ env.NUGET_PACKAGES }}
+          key: nsn-nuget-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('global.json', '**/*.slnx', '**/*.csproj', '**/*.props', '**/*.targets', '**/NuGet.Config', '**/nuget.config') }}
 
       - name: 还原格式检查所需依赖
         run: dotnet restore NexusStackNext.slnx
