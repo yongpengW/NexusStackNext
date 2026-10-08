@@ -9,7 +9,7 @@ using StackExchange.Redis;
 
 namespace NexusStackNext.Pricing.IntegrationTests;
 
-public sealed partial class PricingCacheTests(PricingDatabaseFixture database) : IClassFixture<PricingDatabaseFixture>, IAsyncLifetime
+public sealed partial class PricingCacheTests(PricingDatabaseFixture database, Xunit.Abstractions.ITestOutputHelper output) : IClassFixture<PricingDatabaseFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => database.ResetAsync();
     public Task DisposeAsync() => Task.CompletedTask;

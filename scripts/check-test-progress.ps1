@@ -27,7 +27,13 @@ while (-not (Test-Path -LiteralPath $env:NSN_PROGRESS_RELEASE)) {
 $directoryIndex = [array]::IndexOf($args, '--results-directory')
 $passed = if ($outcome -eq 'Passed') { 1 } else { 0 }
 $failed = 1 - $passed
-$xml = '<TestRun><Results><UnitTestResult testName="Probe.Journey(private-argument-sentinel)" outcome="' + $outcome + '" /></Results><ResultSummary><Counters total="1" executed="1" passed="' + $passed + '" failed="' + $failed + '" notExecuted="0" /></ResultSummary></TestRun>'
+$evidence = 'NSN_CONTENTION recovery busy=False unavailable=True succeeded=False&#10;' +
+    'NSN_CONTENTION cleanup busy=False canceled=True&#10;' +
+    'NSN_CONTENTION pricing phase=recovered status=500&#10;' +
+    'NSN_CONTENTION pricing phase=recovered status=999&#10;' +
+    'NSN_CONTENTION recovery busy=False unavailable=True succeeded=False private-argument-sentinel&#10;' +
+    'NSN_CONTENTION pricing phase=private-argument-sentinel status=500'
+$xml = '<TestRun><Results><UnitTestResult testName="Probe.Journey(private-argument-sentinel)" outcome="' + $outcome + '"><Output><ErrorInfo><Message>private-argument-sentinel</Message></ErrorInfo><StdOut>' + $evidence + '</StdOut></Output></UnitTestResult></Results><ResultSummary><Counters total="1" executed="1" passed="' + $passed + '" failed="' + $failed + '" notExecuted="0" /></ResultSummary></TestRun>'
 [IO.File]::WriteAllText((Join-Path $args[$directoryIndex + 1] 'Probe.Tests.trx'), $xml)
 if ($outcome -eq 'Failed') {
     Write-Output 'Failed! - Failed: 1, Passed: 0, Skipped: 0, Total: 1'
@@ -112,6 +118,14 @@ foreach ($mode in @('pass', 'pass-zh', 'fail', 'fail-zh')) {
         $output = ($lines -join "`n") + $tail.GetAwaiter().GetResult() + $errors.GetAwaiter().GetResult()
         if ($output.Contains('private-argument-sentinel') -or ($expected -eq 'Passed' -and $process.ExitCode -ne 0) -or
             ($expected -eq 'Failed' -and $process.ExitCode -eq 0)) { throw 'Runner result propagation or parameter redaction failed.' }
+        if ($expected -eq 'Failed') {
+            foreach ($evidence in @('NSN_CONTENTION recovery busy=False unavailable=True succeeded=False',
+                    'NSN_CONTENTION cleanup busy=False canceled=True', 'NSN_CONTENTION pricing phase=recovered status=500')) {
+                if (-not $output.Contains($evidence)) { throw 'Contention failure evidence did not reach the actual runner output.' }
+            }
+            if ($output.Contains('status=999')) { throw 'Unvalidated contention fields escaped the private report.' }
+        }
+        elseif ($output.Contains('NSN_CONTENTION')) { throw 'Passing private evidence should not be emitted as a failure diagnostic.' }
         $guard = Get-Content -LiteralPath (Join-Path $temporary 'nexusstack-run-tests.lock') -Raw | ConvertFrom-Json
         if ($guard.State -ne 'idle') { throw 'Returned external workload did not release ownership.' }
         Write-Output "PASS: $mode progress and private evidence arrive before completion, with parameters withheld and exit/ownership preserved"

@@ -338,6 +338,9 @@ foreach ($project in $testProjects) {
                     $locations = [regex]::Matches([string] $failure.Output.ErrorInfo.StackTrace, '[\w.-]+\.cs:line \d+') |
                         ForEach-Object { $_.Value } | Select-Object -Unique
                     foreach ($location in $locations) { Write-Host "    $location" }
+                    foreach ($evidence in (Get-TestContentionEvidence ([string]$failure.Output.StdOut) | Select-Object -Unique)) {
+                        Write-Host "    $evidence"
+                    }
                 }
             }
             catch {

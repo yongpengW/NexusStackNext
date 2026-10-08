@@ -26,19 +26,23 @@ public sealed partial class PricingCacheTests
         {
             first.Authenticate();
             using var accepted = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), original);
+            output.WriteLine("NSN_CONTENTION pricing phase=initial status={0}", (int)accepted.StatusCode);
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             await WaitForInvalidationsDrainedAsync(item);
             before = await WaitForCachedQuoteAsync(first, item, control.GetDatabase(), key, quote => quote.Cost == 80m);
             await using var capacityLock = await PostgresFactCapacityLock.AcquireAsync(database.ConnectionString, "pricing");
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
             using var rejected = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), change, deadline.Token);
+            output.WriteLine("NSN_CONTENTION pricing phase=cost_refusal status={0}", (int)rejected.StatusCode);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, rejected.StatusCode);
             Assert.Equal("audit_capacity.busy", (await rejected.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errorCode").GetString());
             using var rejectedFee = await first.Client.PostAsJsonAsync(new Uri("/api/pricing/fee", UriKind.Relative),
                 new UpdatePricingFee(Guid.NewGuid(), item, 1, 0.3m), deadline.Token);
+            output.WriteLine("NSN_CONTENTION pricing phase=fee_refusal status={0}", (int)rejectedFee.StatusCode);
             Assert.Equal(HttpStatusCode.ServiceUnavailable, rejectedFee.StatusCode);
             Assert.Equal("audit_capacity.busy", (await rejectedFee.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errorCode").GetString());
             using var missing = await first.Client.GetAsync(new Uri($"/api/pricing/tasks/{change.RequestId}", UriKind.Relative));
+            output.WriteLine("NSN_CONTENTION pricing phase=missing_task status={0}", (int)missing.StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
             await capacityLock.ReleaseAsync();
         }
@@ -53,6 +57,7 @@ public sealed partial class PricingCacheTests
         }
         finally { await database.SetAvailableAsync(true); }
         using var recovered = await restarted.Client.PostAsJsonAsync(new Uri("/api/pricing/cost", UriKind.Relative), change);
+        output.WriteLine("NSN_CONTENTION pricing phase=recovered status={0}", (int)recovered.StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, recovered.StatusCode);
         var current = await WaitForCachedQuoteAsync(restarted, item, control.GetDatabase(), key, quote => quote.Cost == 96m);
         Assert.Equal(2, current.Version);

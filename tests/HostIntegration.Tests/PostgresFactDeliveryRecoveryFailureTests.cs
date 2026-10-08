@@ -18,7 +18,7 @@ using Npgsql;
 namespace NexusStackNext.HostIntegration.Tests;
 
 [Collection(JourneyDatabaseDefinition.Name)]
-public sealed class PostgresFactDeliveryRecoveryFailureTests(JourneyDatabaseTemplates databases)
+public sealed class PostgresFactDeliveryRecoveryFailureTests(JourneyDatabaseTemplates databases, Xunit.Abstractions.ITestOutputHelper output)
 {
     [PostgresFact]
     public async Task ReceiptAndLedgerWriteFailures_PreserveTheirRealMeaning_AndLeaveNoPartialRecovery()
@@ -235,11 +235,30 @@ public sealed class PostgresFactDeliveryRecoveryFailureTests(JourneyDatabaseTemp
     }
 
     [PostgresFact]
-    public async Task OwnedRecoveryLedgerContention_ReturnsBusyWithoutChangingTheStoppedFact_AndAllowsOriginalRetry()
+    public Task OwnedRecoveryLedgerContention_ReturnsBusyWithoutChangingTheStoppedFact_AndAllowsOriginalRetry()
+        => VerifyRecoveryContentionAsync(TimeSpan.Zero);
+
+    [PostgresFact]
+    public Task DelayedDatabaseReply_LedgerContentionReturnsBusyWithoutChangingTheStoppedFact_AndAllowsOriginalRetry()
+        => VerifyRecoveryContentionAsync(TimeSpan.FromMilliseconds(600));
+
+    [PostgresFact]
+    public Task DelayedDatabaseReply_RecoveryCleanupReturnsBusyWithoutChangingTheStoppedFact_AndAllowsOriginalRetry()
+        => VerifyRecoveryContentionAsync(TimeSpan.FromMilliseconds(600), cleanup: true);
+
+    private async Task VerifyRecoveryContentionAsync(TimeSpan replyDelay, bool cleanup = false)
     {
         await using var database = await databases.CreateAsync();
         var now = new DateTimeOffset(2026, 10, 5, 0, 0, 0, TimeSpan.Zero);
-        await using var host = CreateModule(database.ConnectionString, now);
+        var connectionOptions = new NpgsqlConnectionStringBuilder(database.ConnectionString);
+        await using var proxy = replyDelay == TimeSpan.Zero ? null : new TcpReplyDelayProxy(connectionOptions.Host ?? throw new InvalidOperationException("Test database host is required."), connectionOptions.Port);
+        if (proxy is not null)
+        {
+            Assert.NotEqual(SslMode.VerifyFull, connectionOptions.SslMode); // Transparent local forwarding cannot preserve DNS certificate validation.
+            connectionOptions.Host = "127.0.0.1";
+            connectionOptions.Port = proxy.Port;
+        }
+        await using var host = CreateModule(connectionOptions.ConnectionString, now);
         await host.StartAsync();
         try
         {
@@ -261,9 +280,24 @@ public sealed class PostgresFactDeliveryRecoveryFailureTests(JourneyDatabaseTemp
                 await using var acquire = new NpgsqlCommand(
                     "SELECT \"Id\" FROM platform.fact_recovery_control WHERE \"Id\" = 1 FOR UPDATE", connection, hold);
                 Assert.Equal(1, await acquire.ExecuteScalarAsync());
-                var rejected = await delivery.RecoverAsync(request, "recovery-operator", now, null).WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.True(rejected.IsFailure);
-                Assert.Equal("audit_capacity.busy", rejected.Error.Code);
+                proxy?.DelayNextReply(replyDelay);
+                if (cleanup)
+                {
+                    var refusal = await Record.ExceptionAsync(() => delivery.CleanupRecoveriesAsync(10, now.AddDays(7)).WaitAsync(TimeSpan.FromSeconds(5)));
+                    output.WriteLine("NSN_CONTENTION cleanup busy={0} canceled={1}",
+                        refusal is CommittedFactCapacityBusyException, refusal is OperationCanceledException);
+                    Assert.IsType<CommittedFactCapacityBusyException>(refusal);
+                }
+                else
+                {
+                    var rejected = await delivery.RecoverAsync(request, "recovery-operator", now, null).WaitAsync(TimeSpan.FromSeconds(5));
+                    output.WriteLine("NSN_CONTENTION recovery busy={0} unavailable={1} succeeded={2}",
+                        rejected.IsFailure && rejected.Error.Code == "audit_capacity.busy",
+                        rejected.IsFailure && rejected.Error.Code == "audit_capacity.unavailable", rejected.IsSuccess);
+                    Assert.True(rejected.IsFailure);
+                    Assert.Equal("audit_capacity.busy", rejected.Error.Code);
+                }
+                if (proxy is not null) { Assert.True(proxy.DelayedReply); }
                 Assert.Equal(stoppedBefore, Assert.Single(await delivery.ListAsync("DeadLettered", 10)));
                 Assert.Empty(await outbox.ReadPendingAsync(10, DateTimeOffset.MaxValue));
                 Assert.Equal(beforeCapacity, (await delivery.ReadRecoveryCapacityAsync()).Value);

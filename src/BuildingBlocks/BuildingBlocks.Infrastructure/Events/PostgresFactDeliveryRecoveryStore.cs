@@ -16,6 +16,8 @@ public sealed class PostgresFactDeliveryRecoveryStore(string connectionString, F
 {
     private readonly string _schema = (source ?? throw new ArgumentNullException(nameof(source))).Schema;
     private static readonly TimeSpan RecoveryTimeout = TimeSpan.FromSeconds(3);
+    // Leave budget for connection/transaction setup and for the server to report an actual lock refusal.
+    private static readonly TimeSpan RecoveryLockTimeout = TimeSpan.FromSeconds(1);
 
     /// <summary>以所属独立连接和有限等待读取单条状态，只选择安全列。</summary>
     /// <param name="messageId">稳定消息标识。</param>
@@ -116,7 +118,7 @@ public sealed class PostgresFactDeliveryRecoveryStore(string connectionString, F
             await using var transaction = await connection.BeginTransactionAsync(budget.Token).ConfigureAwait(false);
             await using (var configure = RecoveryCommand(connection, transaction, "SELECT set_config('lock_timeout', @wait, true)"))
             {
-                configure.Parameters.AddWithValue("wait", ((long)RecoveryTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture));
+                configure.Parameters.AddWithValue("wait", ((long)RecoveryLockTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture));
                 await configure.ExecuteNonQueryAsync(budget.Token).ConfigureAwait(false);
             }
             long retainedRecords;
@@ -275,7 +277,7 @@ public sealed class PostgresFactDeliveryRecoveryStore(string connectionString, F
             await using var transaction = await connection.BeginTransactionAsync(budget.Token).ConfigureAwait(false);
             await using (var configure = RecoveryCommand(connection, transaction, "SELECT set_config('lock_timeout', @wait, true)"))
             {
-                configure.Parameters.AddWithValue("wait", ((long)RecoveryTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture));
+                configure.Parameters.AddWithValue("wait", ((long)RecoveryLockTimeout.TotalMilliseconds).ToString(CultureInfo.InvariantCulture));
                 await configure.ExecuteNonQueryAsync(budget.Token).ConfigureAwait(false);
             }
             long maxRecords;
