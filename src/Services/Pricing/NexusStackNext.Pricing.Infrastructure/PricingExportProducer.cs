@@ -52,7 +52,8 @@ internal sealed class PricingExportProducer(PricingDbContext database, PricingEx
                     var remaining = export.MaxLeaseUntil.Value - input.Now - input.Elapsed.Elapsed;
                     if (remaining <= TimeSpan.Zero) { return Failure("pricing.export.lease_lost"); }
                     budget.CancelAfter(remaining);
-                    var directory = Path.Combine(Path.GetTempPath(), "nsn-pricing-exports");
+                    var directory = string.IsNullOrWhiteSpace(options.TemporaryDirectory)
+                        ? Path.Combine(Path.GetTempPath(), "nsn-pricing-exports") : options.TemporaryDirectory;
                     Directory.CreateDirectory(directory);
                     var streamOptions = new FileStreamOptions
                     {
@@ -63,8 +64,11 @@ internal sealed class PricingExportProducer(PricingDbContext database, PricingEx
                         BufferSize = 65_536,
                     };
                     if (!OperatingSystem.IsWindows()) { streamOptions.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite; }
-                    // 一个宿主只有一个生成名额；实际流写入最多 32 MiB，异常或进程退出由句柄清除临时文件。
-                    await using var content = new FileStream(Path.Combine(directory, Guid.NewGuid().ToString("N") + ".csv.tmp"), streamOptions);
+                    // Unix DeleteOnClose 在托管 Dispose 中删除；SIGKILL 不执行它。写入前先 unlink，
+                    // 字节只由已打开的句柄持有，内核在进程死亡时释放。Windows 使用原生 delete-on-close。
+                    var temporaryPath = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".csv.tmp");
+                    await using var content = new FileStream(temporaryPath, streamOptions);
+                    if (!OperatingSystem.IsWindows()) { File.Delete(temporaryPath); }
                     await PricingCsvV1.WriteAsync(export.Rows, content, options.MaxOutputBytes, budget.Token).ConfigureAwait(false);
                     content.Position = 0;
                     var digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(content, budget.Token).ConfigureAwait(false));

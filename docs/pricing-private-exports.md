@@ -65,10 +65,21 @@ PricingHost 默认 `Pricing:Exports:Enabled=false`。启用时显式装配端口
 | MaxExecutionDuration | 2 分钟 | 10 分钟且大于租约 |
 | MaxAttempts | 3 | 10 |
 | MaxOutputBytes | 33554432 | 32 MiB |
+| TemporaryDirectory | 空，使用系统临时目录 | 指定时必须是绝对目录 |
 | PollInterval | 1 秒 | 30 秒 |
+
+生产可把 `TemporaryDirectory` 指向宿主专用、带容量限制的临时卷。目录创建/写入失败时保留原委托，生成名额与打开的文件释放；恢复同一目录后按原委托继续。Unix 在写入 CSV 前立即移除文件目录项，只通过已打开的句柄上传，强制结束进程也不会留下报价字节；Windows 使用原生 delete-on-close。临时目录不与 Files 的持久字节目录共享。
+
+## CSV 精确文本与 Excel
+
+CSV 是 UTF-8、无 BOM、CRLF 换行，列与次序固定。Int64 输出完整十进制文本，金额输出四位小数；空值为空单元格。数据只包含固定类型及固定枚举，没有用户自由文本或公式列。例：`9223372036854775807` 在 CSV 中保持十九位字符。
+
+双击 CSV 让 Excel 自动识别类型，不能保证原精度。Excel 数值最多保留十五位有效数字；给字段加引号也不能保证关闭类型推断。保留标识、版本、修订号或金额精确文本时，使用“从文本/CSV”导入，在加载前将对应列指定为文本；不要先转换为数值再改文本。参见 [Microsoft 的大数字说明](https://support.microsoft.com/en-us/excel/keeping-leading-zeros-and-large-numbers)。当前交付是 CSV，没有声称提供 Excel 工作簿。
+
+每个请求、快照行数、单个生成文件、执行代次和每宿主生成名额都有界。待处理委托总数、全部冻结快照的数据库占用及永久身份历史没有全局配额；这些限制不能推导出系统总磁盘占用有界。上线容量规划需要单独处理准入配额和保留策略，同时保持旧身份不会重新接纳。
 
 生产只允许 `Files:RevocationMode=Online`，未知撤销状态拒绝，私有 CA 必须提供可验证的 CRL / OCSP。Development / Testing 才可显式 NoCheck。客户端和 Files 生产者许可分别配置，不把用户 JWT 转成服务身份；业务 listener 仅私网可达，网关是唯一公共入口。
 
 部署前运行 PricingHost 独立 `--migrate-pricing`，普通启动不迁移。增量 `20261009093209_PrivatePricingExports` 新建本上下文 exports / export_publications，保留旧报价、任务、审计与事实 Outbox，不重置已合并历史。存在任何 Export 历史时拒绝降级，约束名 `pricing_exports_history_retained`；取消和终态也保留身份。检查与删除在同一事务持排他表锁，锁两秒、语句五秒。没有 Export 的库可降级并重新升级，旧报价保留。
 
-领域依据见 [Pricing ADR-0004](../src/Services/Pricing/docs/adr/0004-private-exports-own-frozen-snapshots-and-publication-intents.md)。已补公开 HTTP / ISender / 字节测试，包括 5000 行边界、未知上传/发布回执、并发取消与选择、真实网关普通用户下载和 Pricing 进程重启；最终完整回归、双轴评审和 PR / dev CI 资格单独记录在 #150。#151 将继续扩充跨宿主故障、迟到回执与生产验收矩阵。
+领域依据见 [Pricing ADR-0004](../src/Services/Pricing/docs/adr/0004-private-exports-own-frozen-snapshots-and-publication-intents.md)。[#56 十二条覆盖与故障注入边界](private-csv-acceptance.md) 逐项指向真实用例；执行资格、双轴评审、PR 和 dev 完整 CI 的具体结果以 #151 的原生交付记录为准。

@@ -13,6 +13,7 @@ internal sealed class GeneratedFileCertificates : IDisposable
 
     public X509Certificate2 Root { get; }
     public X509Certificate2 Producer { get; }
+    internal X509Certificate2 ServerCertificate => _server;
     public IReadOnlyDictionary<string, string> Settings { get; }
 
     public GeneratedFileCertificates(bool useIntermediate = false)

@@ -47,6 +47,7 @@ public static class PricingExportsModule
             var accepted = await sender.SendAsync(parsed.Value, token).ConfigureAwait(false);
             return accepted.IsSuccess ? (IResult)responses.Accepted(accepted.Value) : Failure(accepted.Error);
         }).RequirePermission("/api/pricing/exports", "POST")
+            .Accepts<AcceptPricingExport>("application/json")
             .WithMetadata(new OperationDescription("pricing.export.accept", "接受私有报价 CSV 导出"))
             .Produces<ApiResponse<PricingExportStatus>>(202).ProducesApiErrors(408, 413, 415);
         group.MapGet("/", async (int? limit, string? state, DateTimeOffset? acceptedFrom, DateTimeOffset? acceptedThrough, string? cursor,
