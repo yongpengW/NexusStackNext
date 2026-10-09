@@ -75,23 +75,17 @@ public sealed class PricingExportGenerationRecoveryTests(JourneyDatabaseTemplate
         await first.CrashAsync();
         Assert.Empty(Directory.EnumerateFiles(temporary.Root, "*.csv.tmp", SearchOption.AllDirectories));
         fault.Release();
+        await using var takeover = await GeneratedFileReplyFault.StartAsync(certificates, host.HttpsAddress, GeneratedFileFaultPoint.BeforeContent);
         settings["Kestrel__Endpoints__Public__Url"] = address.AbsoluteUri;
+        settings["Pricing__Exports__Files__BaseAddress"] = takeover.BaseAddress.AbsoluteUri;
         await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricing.ConnectionString, settings: settings);
         restarted.Client.DefaultRequestHeaders.Authorization = host.Client.DefaultRequestHeaders.Authorization;
-        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-        JsonElement completed;
-        while (true)
-        {
-            using var response = await restarted.Client.GetAsync(Relative($"/api/pricing/exports/{id}"), budget.Token);
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            completed = await response.Content.ReadApiDataAsync();
-            if (completed.GetProperty("state").GetString() == "Succeeded") { break; }
-            Assert.Contains(completed.GetProperty("state").GetString(), new[] { "Generating", "Publishing" });
-            await Task.Delay(100, budget.Token);
-        }
-        Assert.Equal(pendingId, completed.GetProperty("fileId").ReadHttpInt64());
-        Assert.Equal(original.GetProperty("snapshotDigest").GetString(), completed.GetProperty("snapshotDigest").GetString());
-        Assert.True(completed.GetProperty("epoch").ReadHttpInt64() > interrupted.GetProperty("epoch").ReadHttpInt64());
+        await takeover.WaitForFaultAsync();
+        using var active = await restarted.Client.GetAsync(Relative($"/api/pricing/exports/{id}"));
+        var generating = await active.Content.ReadApiDataAsync();
+        Assert.Equal("Generating", generating.GetProperty("state").GetString());
+        Assert.True(generating.GetProperty("epoch").ReadHttpInt64() > interrupted.GetProperty("epoch").ReadHttpInt64());
+        Assert.Equal(fault.ObservedUploadId, takeover.ObservedUploadId);
         const string csv = "ItemId,Version,Cost,FeeRate,InputRevision,CalculatedRevision,CostingRevision,BreakEvenPrice,CalculationState\r\n"
             + "11111111-1111-1111-1111-111111111111,1,80.0000,0.2000,1,0,0,,Pending\r\n";
         using var lateBytes = new ByteArrayContent(Encoding.UTF8.GetBytes(csv));
@@ -105,9 +99,30 @@ public sealed class PricingExportGenerationRecoveryTests(JourneyDatabaseTemplate
         await using var scope = oldWorker.CreateAsyncScope();
         var rejected = await scope.ServiceProvider.GetRequiredService<ISender>().SendAsync(new SelectPricingExportPublication(id,
             interrupted.GetProperty("epoch").ReadHttpInt64(), Guid.NewGuid(), receipt));
-        Assert.Equal("pricing.export.selection_conflict", rejected.Error.Code);
+        Assert.False(rejected.IsSuccess, "A stale worker must not select while the current epoch is still Generating.");
+        Assert.Equal("pricing.export.lease_lost", rejected.Error.Code);
         using var unchanged = await restarted.Client.GetAsync(Relative($"/api/pricing/exports/{id}"));
-        Assert.True(JsonElement.DeepEquals(completed, await unchanged.Content.ReadApiDataAsync()));
+        var unselected = await unchanged.Content.ReadApiDataAsync();
+        Assert.Equal("Generating", unselected.GetProperty("state").GetString());
+        Assert.Equal(generating.GetProperty("epoch").ReadHttpInt64(), unselected.GetProperty("epoch").ReadHttpInt64());
+        Assert.Equal(JsonValueKind.Null, unselected.GetProperty("fileId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, unselected.GetProperty("publicationId").ValueKind);
+        using (var hidden = await host.Client.GetAsync(Relative($"/api/files/{pendingId}"))) { Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode); }
+        takeover.Release();
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        JsonElement completed;
+        while (true)
+        {
+            using var response = await restarted.Client.GetAsync(Relative($"/api/pricing/exports/{id}"), budget.Token);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            completed = await response.Content.ReadApiDataAsync();
+            if (completed.GetProperty("state").GetString() == "Succeeded") { break; }
+            Assert.Contains(completed.GetProperty("state").GetString(), new[] { "Generating", "Publishing" });
+            await Task.Delay(100, budget.Token);
+        }
+        Assert.Equal(pendingId, completed.GetProperty("fileId").ReadHttpInt64());
+        Assert.Equal(original.GetProperty("snapshotDigest").GetString(), completed.GetProperty("snapshotDigest").GetString());
+        Assert.Equal(generating.GetProperty("epoch").ReadHttpInt64(), completed.GetProperty("epoch").ReadHttpInt64());
         using var downloaded = await host.Client.GetAsync(Relative($"/api/files/{pendingId}"));
         Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
         Assert.Equal(Encoding.UTF8.GetBytes(csv), await downloaded.Content.ReadAsByteArrayAsync());

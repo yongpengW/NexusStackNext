@@ -76,8 +76,6 @@ internal sealed class GeneratedFileReplyFault(WebApplication application, HttpCl
                 ObservedUploadId = Guid.Parse(path.Split('/')[^2]);
                 _arrived.TrySetResult();
                 await _release.Task.WaitAsync(TimeSpan.FromSeconds(20), context.RequestAborted);
-                context.Abort();
-                return;
             }
             using var request = new HttpRequestMessage(new HttpMethod(context.Request.Method), path + context.Request.QueryString);
             if (HttpMethods.IsPut(context.Request.Method) || HttpMethods.IsPost(context.Request.Method))
