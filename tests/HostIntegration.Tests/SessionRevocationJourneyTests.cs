@@ -95,6 +95,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             { Assert.Equal(HttpStatusCode.ServiceUnavailable, offline.StatusCode); }
             await using var restarted = await PlatformHostProcess.StartAsync(identity.ConnectionString, "session-root-test-password",
                 settings: settings, listenAddress: platform.Client.BaseAddress);
+            await BusinessProcess.WaitForIdentityForwardingAsync(gateway.Client, HttpStatusCode.OK);
             foreach (var (client, path) in checks)
             {
                 using var stillRevoked = await client.GetAsync(new Uri(path, UriKind.Relative));

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -46,6 +47,29 @@ internal sealed class BusinessProcess : IAsyncDisposable
         start.Environment["Gateway__RouteTablePath"] = routePath;
         if (settings is not null) { foreach (var (key, value) in settings) { start.Environment[key] = value; } }
         return StartHttpAsync(start);
+    }
+
+    public static async Task WaitForIdentityForwardingAsync(HttpClient client, HttpStatusCode expected)
+    {
+        // Backend readiness can precede YARP's next probe; observe actual forwarding before a management write.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        var lastStatus = 0;
+        try
+        {
+            while (true)
+            {
+                using var response = await client.GetAsync(new Uri("/api/identity", UriKind.Relative), timeout.Token);
+                lastStatus = (int)response.StatusCode;
+                if (response.StatusCode == expected) { return; }
+                Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable,
+                    $"Identity route returned unexpected HTTP {lastStatus}.");
+                await Task.Delay(TimeSpan.FromMilliseconds(500), timeout.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            Assert.Fail($"Identity forwarding did not reach HTTP {(int)expected} within 8 seconds; last HTTP {lastStatus}.");
+        }
     }
 
     private static async Task<BusinessProcess> StartHttpAsync(ProcessStartInfo start)

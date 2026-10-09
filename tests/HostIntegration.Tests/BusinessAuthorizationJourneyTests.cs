@@ -72,8 +72,10 @@ public sealed class BusinessAuthorizationJourneyTests(JourneyDatabaseTemplates d
             using (var directDenied = await costing.Client.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.Forbidden, directDenied.StatusCode); }
             // Persisted withdrawal is still effective after the authority process restarts, using the original JWT.
             await platform.CrashAsync();
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.ServiceUnavailable);
             await using var restarted = await PlatformHostProcess.StartAsync(identity.ConnectionString, settings: settings, listenAddress: platform.Client.BaseAddress);
             using (var afterRestart = await costing.Client.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.Forbidden, afterRestart.StatusCode); }
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
             foreach (var id in new[] { menuId, writeMenuId })
             { using var restore = await root.PostAsync(Path($"/api/identity/roles/{roleId}/menus/{id}"), null); Assert.Equal(HttpStatusCode.NoContent, restore.StatusCode); }
             using (var restored = await user.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.OK, restored.StatusCode); }
@@ -85,9 +87,11 @@ public sealed class BusinessAuthorizationJourneyTests(JourneyDatabaseTemplates d
             }
             using (var revoked = await user.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode); }
             await restarted.CrashAsync();
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.ServiceUnavailable);
             await using var afterRoleWithdrawal = await PlatformHostProcess.StartAsync(identity.ConnectionString, settings: settings, listenAddress: restarted.Client.BaseAddress);
             using (var persistedRoleWithdrawal = await costing.Client.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.Forbidden, persistedRoleWithdrawal.StatusCode); }
             using (var acceptedHistory = await root.GetAsync(Path($"/api/costing/tasks/{taskId}"))) { Assert.Equal(HttpStatusCode.OK, acceptedHistory.StatusCode); }
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
             using (var reassign = await root.PostAsync(Path($"/api/identity/users/{userId}/roles/{roleId}"), null)) { Assert.Equal(HttpStatusCode.NoContent, reassign.StatusCode); }
             using (var unchangedToken = await user.GetAsync(Path("/api/costing/tasks"))) { Assert.Equal(HttpStatusCode.OK, unchangedToken.StatusCode); }
         }
@@ -106,6 +110,11 @@ public sealed class BusinessAuthorizationJourneyTests(JourneyDatabaseTemplates d
         var table = JsonNode.Parse(await File.ReadAllTextAsync(System.IO.Path.Combine(AppContext.BaseDirectory, "routes.business.json")))!;
         foreach (var cluster in table["clusters"]!.AsArray())
         {
+            if (cluster!["clusterId"]!.GetValue<string>() == "platform-host")
+            {
+                // One failed probe makes both crash/recovery transitions observable; retain the shipped probe interval and timeout.
+                cluster["healthCheck"] = JsonNode.Parse("""{"path":"/health/ready","interval":"00:00:05","timeout":"00:00:02","failureThreshold":1}""");
+            }
             var address = cluster!["clusterId"]!.GetValue<string>() switch { "costing-host" => costing, "pricing-host" => pricing, _ => platform };
             foreach (var destination in cluster["destinations"]!.AsArray()) { destination!["address"] = address.AbsoluteUri; }
         }
