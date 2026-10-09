@@ -149,7 +149,23 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             if (fault == "timeout") { await Task.Delay(TimeSpan.FromSeconds(10), http.RequestAborted); }
             if (fault == "malformed") { return Results.Text("invalid-json", "application/json"); }
             if (fault == "unavailable") { return Results.StatusCode(503); }
-            return Results.Json(new { success = true, code = 200, data = new { contractVersion = 1, subject = "test-operator", sessionVersion = "0", isRoot = true } });
+            if (fault == "invalid-session") { return Results.Unauthorized(); }
+            if (fault == "redirect") { return Results.Redirect("/api/identity/session/v1"); }
+            if (fault == "oversize") { return Results.Text(new string(' ', 4097), "application/json"); }
+            if (fault == "missing-allow") { return Results.Json(new { success = true, code = 200, data = new { contractVersion = 1, subject = "test-operator", sessionVersion = "0", permissionKey = http.Request.Query["permissionKey"].ToString() } }); }
+            return Results.Json(new
+            {
+                success = true,
+                code = 200,
+                data = new
+                {
+                    contractVersion = fault == "wrong-contract" ? 2 : 1,
+                    subject = fault == "wrong-subject" ? "42" : "test-operator",
+                    sessionVersion = fault == "wrong-session" ? "1" : "0",
+                    permissionKey = fault == "wrong-operation" ? "/api/costing/tasks:GET" : http.Request.Query["permissionKey"].ToString(),
+                    isAllowed = fault != "denied",
+                },
+            });
         });
         var settings = new Dictionary<string, string>
         { ["IdentitySession__BaseAddress"] = authority.Address, ["IdentitySession__Timeout"] = "00:00:00.500" };
@@ -157,7 +173,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
         await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", prices.ConnectionString, settings: settings);
         costing.Authenticate();
         pricing.Authenticate();
-        foreach (var failure in new[] { "unavailable", "malformed", "timeout" })
+        foreach (var failure in new[] { "unavailable", "malformed", "timeout", "wrong-contract", "wrong-subject", "wrong-session", "wrong-operation", "missing-allow", "oversize", "redirect", "denied", "invalid-session" })
         {
             var item = Guid.NewGuid();
             var requestId = Guid.NewGuid();
@@ -167,7 +183,8 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                 object input = context == "costing" ? new { requestId, itemId = item, expectedVersion = "0", purchaseCost = 80m, freightCost = 20m }
                     : new { requestId, itemId = item, expectedVersion = "0", cost = 100m, feeRate = 0.2m };
                 using var denied = await host.Client.PostAsJsonAsync(new Uri($"/api/{context}/cost", UriKind.Relative), input);
-                Assert.Equal(HttpStatusCode.ServiceUnavailable, denied.StatusCode);
+                var expected = failure switch { "denied" => HttpStatusCode.Forbidden, "invalid-session" => HttpStatusCode.Unauthorized, _ => HttpStatusCode.ServiceUnavailable };
+                Assert.Equal(expected, denied.StatusCode);
                 fault = "valid";
                 using var absent = await host.Client.GetAsync(new Uri($"/api/{context}/items/{item}", UriKind.Relative));
                 Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
@@ -187,7 +204,11 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
     public async Task Accepted_cost_task_survives_root_password_rotation_and_worker_restart_through_pricing()
         => await AcceptedTaskAfterRevocationAsync(true);
 
-    private async Task AcceptedTaskAfterRevocationAsync(bool rotatePassword)
+    [AuditBrokerFact]
+    public async Task Already_authorized_ordinary_cost_commit_survives_role_withdrawal_and_worker_restart_through_pricing()
+        => await AcceptedTaskAfterRevocationAsync(false, revokeRole: true);
+
+    private async Task AcceptedTaskAfterRevocationAsync(bool rotatePassword, bool revokeRole = false)
     {
         await using var identity = await databases.CreateAsync();
         await using var costs = await databases.CreateAsync("costing");
@@ -211,6 +232,32 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
             await using var costing = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", costs.ConnectionString, settings: settings);
             await PlatformSettingsAccessTests.LoginAsync(platform.Client, "journey-root", "session-root-test-password");
             var bearer = platform.Client.DefaultRequestHeaders.Authorization!;
+            string? userId = null;
+            string? roleId = null;
+            if (revokeRole)
+            {
+                using var registered = await platform.Client.PostAsJsonAsync(new Uri("/api/identity/users", UriKind.Relative), new { userName = "cost-operator", password = "cost-operator-password" });
+                Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
+                userId = (await registered.Content.ReadApiDataAsync()).GetProperty("userId").GetString();
+                using var menu = await platform.Client.PostAsJsonAsync(new Uri("/api/identity/menus", UriKind.Relative), new { title = "Cost operator", sortOrder = 1 });
+                Assert.Equal(HttpStatusCode.Created, menu.StatusCode);
+                var menuId = (await menu.Content.ReadApiDataAsync()).GetProperty("menuId").GetString();
+                foreach (var (path, method) in new[] { ("/api/costing/cost", "POST"), ("/api/costing/tasks/{taskId}", "GET"), ("/api/costing/tasks/{taskId}/retry", "POST"), ("/api/costing/tasks/{taskId}/cancel", "POST") })
+                {
+                    using var resource = await platform.Client.PostAsJsonAsync(new Uri("/api/identity/api-resources", UriKind.Relative), new { path, method, menuId });
+                    Assert.Equal(HttpStatusCode.Created, resource.StatusCode);
+                }
+                using var role = await platform.Client.PostAsJsonAsync(new Uri("/api/identity/roles", UriKind.Relative), new { code = "cost-operator", name = "Cost operator" });
+                Assert.Equal(HttpStatusCode.Created, role.StatusCode);
+                roleId = (await role.Content.ReadApiDataAsync()).GetProperty("roleId").GetString();
+                using var granted = await platform.Client.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null);
+                Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode);
+                using var assigned = await platform.Client.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null);
+                Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode);
+                using var ordinary = new HttpClient { BaseAddress = platform.Client.BaseAddress };
+                await UserLifecycleHttpTests.LoginAsync(ordinary, "cost-operator", "cost-operator-password");
+                bearer = ordinary.DefaultRequestHeaders.Authorization!;
+            }
             costing.Client.DefaultRequestHeaders.Authorization = bearer;
             var item = Guid.NewGuid();
             var task = Guid.NewGuid();
@@ -230,7 +277,15 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                     if ((bool)(await probe.ExecuteScalarAsync(wait.Token))!) { break; }
                     await Task.Delay(20, wait.Token);
                 }
-                await RevokeRootAsync(platform.Client, rotatePassword);
+                if (revokeRole)
+                {
+                    using var current = await platform.Client.GetAsync(new Uri($"/api/identity/users/{userId}", UriKind.Relative));
+                    Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+                    var version = (await current.Content.ReadApiDataAsync()).GetProperty("version").ReadHttpInt64();
+                    using var withdrawn = await platform.Client.PostAsJsonAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}/revoke", UriKind.Relative), new { expectedVersion = version });
+                    Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
+                }
+                else { await RevokeRootAsync(platform.Client, rotatePassword); }
             }
             finally { await locked.RollbackAsync(); }
             using var accepted = await commit;
@@ -240,7 +295,7 @@ public sealed class SessionRevocationJourneyTests(JourneyDatabaseTemplates datab
                 using var denied = path.EndsWith(task.ToString(), StringComparison.Ordinal)
                     ? await costing.Client.GetAsync(new Uri(path, UriKind.Relative))
                     : await costing.Client.PostAsJsonAsync(new Uri(path, UriKind.Relative), new { expectedEpoch = "0" });
-                Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+                Assert.Equal(revokeRole ? HttpStatusCode.Forbidden : HttpStatusCode.Unauthorized, denied.StatusCode);
             }
             await costing.CrashAsync();
             await using var worker = await BusinessProcess.StartAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", costs.ConnectionString, worker: true, settings: settings);

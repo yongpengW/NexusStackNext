@@ -7,6 +7,7 @@ using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Application.Validation;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Domain.Authorization;
+using NexusStackNext.Identity.Domain;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
 using NexusStackNext.Identity.Domain.Menus;
@@ -65,7 +66,11 @@ public sealed record GrantMenuToRoleCommand(long RoleId, long MenuId) : ICommand
 /// <param name="Method">HTTP 方法。</param>
 /// <param name="MenuId">所属菜单；<c>null</c> 表示不对应菜单。</param>
 public sealed record CreateApiResourceCommand(string Path, string Method, long? MenuId)
-    : ICommand<ApiResourceCreated>;
+    : ICommand<ApiResourceCreated>, IIdentifiedRequest
+{
+    /// <inheritdoc />
+    public IReadOnlyList<long> Identifiers => MenuId is { } id ? [id] : [];
+}
 
 /// <summary>新建 API 资源的结果。</summary>
 /// <param name="ApiResourceId">资源标识。</param>
@@ -175,10 +180,12 @@ public sealed class CreateUserHandler(
 
 /// <summary>给用户分配角色。</summary>
 /// <param name="users">用户仓储。</param>
+/// <param name="roles">校验被授予角色存在，仅读取。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class AssignRoleHandler(
     IUserRepository users,
+    IRoleRepository roles,
     IClock clock,
     IdentityCommandTransaction transaction) : ICommandHandler<AssignRoleCommand>
 {
@@ -196,6 +203,8 @@ public sealed class AssignRoleHandler(
             return Result.Failure(new Error("identity.user.not_found", $"用户不存在：{command.UserId}。"));
         }
 
+        if ((await roles.FindManyAsync([new RoleId(command.RoleId)], cancellationToken).ConfigureAwait(false)).Count == 0)
+        { return Result.Failure(AuthorizationManagementErrors.RoleNotFound); }
         var originalVersion = user.Version;
         var result = user.AssignRole(new RoleId(command.RoleId), clock.UtcNow);
 
@@ -278,10 +287,12 @@ public sealed class CreateRoleHandler(
 
 /// <summary>给角色授予一个菜单。</summary>
 /// <param name="roles">角色仓储。</param>
+/// <param name="trees">校验菜单存在，仅读取。</param>
 /// <param name="clock">时钟。</param>
 /// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class GrantMenuToRoleHandler(
     IRoleRepository roles,
+    IMenuTreeRepository trees,
     IClock clock,
     IdentityCommandTransaction transaction) : ICommandHandler<GrantMenuToRoleCommand>
 {
@@ -299,6 +310,8 @@ public sealed class GrantMenuToRoleHandler(
             return Result.Failure(new Error("identity.role.not_found", $"角色不存在：{command.RoleId}。"));
         }
 
+        var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+        if (tree is null || !tree.Nodes.Any(node => node.Id.Value == command.MenuId)) { return Result.Failure(AuthorizationManagementErrors.MenuNotFound); }
         var originalVersion = found[0].Version;
         var result = found[0].Grant(new MenuId(command.MenuId), clock.UtcNow);
 
@@ -315,10 +328,12 @@ public sealed class GrantMenuToRoleHandler(
 
 /// <summary>注册 API 资源。</summary>
 /// <param name="resources">资源仓储。</param>
+/// <param name="trees">校验所属菜单存在，仅读取。</param>
 /// <param name="ids">标识生成。</param>
 /// <param name="transaction">命令提交边界，负责提交后失效。</param>
 public sealed class CreateApiResourceHandler(
     IApiResourceRepository resources,
+    IMenuTreeRepository trees,
     IIdGenerator ids,
     IdentityCommandTransaction transaction) : ICommandHandler<CreateApiResourceCommand, ApiResourceCreated>
 {
@@ -346,6 +361,11 @@ public sealed class CreateApiResourceHandler(
             return Result.Failure<ApiResourceCreated>(resource.Error);
         }
 
+        if (command.MenuId is { } attachedMenu)
+        {
+            var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+            if (tree is null || !tree.Nodes.Any(node => node.Id.Value == attachedMenu)) { return Result.Failure<ApiResourceCreated>(AuthorizationManagementErrors.MenuNotFound); }
+        }
         await resources.AddAsync(resource.Value, cancellationToken).ConfigureAwait(false);
 
         transaction.InvalidatePermissionsAfterCommit();
@@ -356,9 +376,10 @@ public sealed class CreateApiResourceHandler(
     }
 }
 
-/// <summary>判定某个用户能否执行某个请求。</summary>
-/// <param name="cache">权限缓存。</param>
-public sealed class AuthorizeHandler(IPermissionCache cache)
+/// <summary>管理员诊断指定主体的当前操作许可；不签发可复用的允许凭据。</summary>
+/// <param name="states">单次权威状态。</param>
+/// <param name="source">权限数量的诊断投影。</param>
+public sealed class AuthorizeHandler(IAccessStateReader states, IPermissionSource source)
     : IQueryHandler<AuthorizeQuery, AuthorizationOutcome>
 {
     /// <inheritdoc />
@@ -368,25 +389,13 @@ public sealed class AuthorizeHandler(IPermissionCache cache)
     {
         ArgumentNullException.ThrowIfNull(query);
 
-        var permissions = await cache.GetAsync(new UserId(query.UserId), cancellationToken).ConfigureAwait(false);
-
-        if (permissions.IsFailure)
-        {
-            return Result.Failure<AuthorizationOutcome>(permissions.Error);
-        }
-
         var required = PermissionKey.From(query.Path, query.Method);
-
-        // 刻意走**真实的**判定核心（票据 22），而不是在处理器里重写一遍规则。
-        // 没有认证形态（尚未确定）之前，isAuthenticated 与 isRoot 只能是占位——
-        // 但"判定本身"是真实的：它吃的是刚投影出来的权限键集合。
-        var decision = AccessPolicy.Decide(
-            isAuthenticated: true,
-            isRoot: false,
-            granted: permissions.Value,
-            required: required,
-            mode: AuthorizationMode.PermissionKey);
-
+        var current = await states.ReadAsync(query.UserId, required, cancellationToken).ConfigureAwait(false);
+        if (current.IsFailure) { return Result.Failure<AuthorizationOutcome>(current.Error); }
+        if (current.Value is null) { return Result.Failure<AuthorizationOutcome>(IdentityErrors.UserNotFound()); }
+        var permissions = await source.ReadAsync(new UserId(query.UserId), cancellationToken).ConfigureAwait(false);
+        if (permissions.IsFailure) { return Result.Failure<AuthorizationOutcome>(permissions.Error); }
+        var decision = current.Value is { Session.IsEnabled: true, IsAllowed: true } ? AccessDecision.Allowed : AccessDecision.Forbidden;
         return Result.Success(new AuthorizationOutcome(
             required.Value,
             decision.ToString(),
@@ -587,7 +596,12 @@ public static class IdentityUseCaseServiceCollectionExtensions
         AddQuery<GetSessionVersionQuery, long, GetSessionVersionHandler>(services);
         AddQuery<GetCurrentSessionQuery, NexusStackNext.Identity.Contracts.CurrentSessionV1, GetCurrentSessionHandler>(services);
         services.AddScoped<ISessionValidator, GetCurrentSessionHandler>();
+        AddQuery<GetCurrentAccessQuery, NexusStackNext.Identity.Contracts.CurrentAccessV1, GetCurrentAccessHandler>(services);
+        services.AddScoped<IRequestAccessValidator, GetCurrentAccessHandler>();
         AddCommand<AssignRoleCommand, AssignRoleHandler>(services);
+        AddCommand<RevokeRoleCommand, RevokeRoleHandler>(services);
+        AddCommand<ReplaceRoleMenusCommand, ReplaceRoleMenusHandler>(services);
+        AddQuery<GetRoleQuery, RoleView, GetRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
         AddCommand<CreateApiResourceCommand, ApiResourceCreated, CreateApiResourceHandler>(services);
@@ -616,6 +630,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         // 分发器在**开启事务之前**调用它们：一条不合法的请求不该占用一个数据库连接。
         services.AddSingleton<IRequestValidator<CreateUserCommand>, CreateUserCommandValidator>();
         services.AddSingleton<IRequestValidator<IExpectedUserVersion>, ExpectedUserVersionValidator>();
+        services.AddSingleton<IRequestValidator<ReplaceRoleMenusCommand>, ReplaceRoleMenusValidator>();
         services.AddSingleton<IRequestValidator<INewUserPassword>, NewUserPasswordValidator>();
 
         // 一个校验器覆盖所有带标识的请求——靠的是 IRequestValidator<in TRequest> 的逆变。
@@ -631,9 +646,6 @@ public static class IdentityUseCaseServiceCollectionExtensions
         // 而不是让缓存去管作用域——那样缓存就要认识 DI，而它本该只认识端口。
         services.AddSingleton<IPermissionSource, ScopedPermissionSource>();
         services.AddSingleton<IPermissionCache, UserPermissionCache>();
-
-        // 授权过滤器用的端口。它住在 Identity 里，因为权限缓存与用户表都属于这个上下文。
-        services.AddSingleton<IPermissionChecker, CachedPermissionChecker>();
 
         return services;
     }

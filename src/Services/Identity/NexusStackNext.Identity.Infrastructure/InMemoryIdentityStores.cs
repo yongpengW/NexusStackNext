@@ -165,8 +165,10 @@ public static class IdentityInfrastructureServiceCollectionExtensions
         var recoveryLimits = recovery ?? new();
         recoveryLimits.Validate();
         services.AddSingleton(new IdentityMemoryState(capacity, write));
-        services.AddSingleton<ISessionStateReader>(provider => new MemorySessionStateReader(provider.GetRequiredService<IdentityMemoryState>(),
+        services.AddSingleton<MemorySessionStateReader>(provider => new MemorySessionStateReader(provider.GetRequiredService<IdentityMemoryState>(),
             provider.GetService<IdentitySessionReadOptions>() ?? new()));
+        services.AddSingleton<ISessionStateReader>(provider => provider.GetRequiredService<MemorySessionStateReader>());
+        services.AddSingleton<IAccessStateReader>(provider => provider.GetRequiredService<MemorySessionStateReader>());
         services.AddSingleton<IIdentityAuditDelivery>(provider => new InMemoryIdentityAuditDelivery(
             provider.GetRequiredService<IdentityMemoryState>(), recoveryLimits));
         services.AddKeyedSingleton<InMemoryFactCapacityPolicyStore>("identity", (provider, _) =>

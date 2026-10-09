@@ -9,8 +9,8 @@ namespace NexusStackNext.BuildingBlocks.Domain.Authorization;
 /// 把归一化收进类型，这种遗忘就不存在了。
 /// </para>
 /// <para>
-/// 格式沿用参照仓库已验证的预计算设计：登录/改角色时把用户的权限收敛成一个集合，
-/// 鉴权时只做一次集合查找，而不是每请求查库。
+/// 格式沿用参照仓库的路由模板与方法约定；当前请求的许可由 Identity 权威读取裁决，
+/// 预计算集合仅用于权限诊断，不作为准入来源。
 /// </para>
 /// </summary>
 public readonly record struct PermissionKey
@@ -67,7 +67,10 @@ public readonly record struct PermissionKey
             return false;
         }
 
-        key = From(raw[..separator], raw[(separator + 1)..]);
+        var route = raw[..separator];
+        var method = raw[(separator + 1)..];
+        if (string.IsNullOrWhiteSpace(route) || string.IsNullOrWhiteSpace(method)) { return false; }
+        key = From(route, method);
         return true;
     }
 

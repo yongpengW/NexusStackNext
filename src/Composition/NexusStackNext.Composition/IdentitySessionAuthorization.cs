@@ -41,30 +41,30 @@ internal sealed class IdentitySessionCallBudget(IdentitySessionClientOptions opt
     public void Dispose() => Permits.Dispose();
 }
 
-internal sealed class HttpSessionValidator(IHttpClientFactory clients, IHttpContextAccessor accessor,
-    IdentitySessionClientOptions options, IdentitySessionCallBudget calls) : ISessionValidator
+internal sealed class IdentityAuthorityReader(IHttpClientFactory clients, IHttpContextAccessor accessor,
+    IdentitySessionClientOptions options, IdentitySessionCallBudget calls)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { NumberHandling = JsonNumberHandling.AllowReadingFromString };
 
-    public async Task<Result<ValidatedSession>> ValidateAsync(string userId, long? sessionVersion, CancellationToken cancellationToken = default)
+    internal async Task<Result<T>> ReadAsync<T>(Uri endpoint, long? sessionVersion, CancellationToken cancellationToken) where T : class
     {
         var http = accessor.HttpContext;
         if (sessionVersion is null or < 0 || http?.User.Identity?.IsAuthenticated != true
             || http.Request.Headers.Authorization.Count != 1
             || !AuthenticationHeaderValue.TryParse(http.Request.Headers.Authorization.ToString(), out var bearer)
             || !string.Equals(bearer.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) || string.IsNullOrWhiteSpace(bearer.Parameter))
-        { return Result.Failure<ValidatedSession>(SessionValidationErrors.Invalid); }
-        if (!await calls.Permits.WaitAsync(0, cancellationToken).ConfigureAwait(false)) { return Unavailable(); }
+        { return Result.Failure<T>(SessionValidationErrors.Invalid); }
+        if (!await calls.Permits.WaitAsync(0, cancellationToken).ConfigureAwait(false)) { return Unavailable<T>(); }
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(options.Timeout);
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, options.Endpoint());
+            using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
             request.Headers.Authorization = bearer;
             using var response = await clients.CreateClient("identity-session-authority").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, budget.Token).ConfigureAwait(false);
-            if (response.StatusCode == HttpStatusCode.Unauthorized) { return Result.Failure<ValidatedSession>(SessionValidationErrors.Invalid); }
+            if (response.StatusCode == HttpStatusCode.Unauthorized) { return Result.Failure<T>(SessionValidationErrors.Invalid); }
             if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentLength > 4096
-                || !string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase)) { return Unavailable(); }
+                || !string.Equals(response.Content.Headers.ContentType?.MediaType, "application/json", StringComparison.OrdinalIgnoreCase)) { return Unavailable<T>(); }
             await using var stream = await response.Content.ReadAsStreamAsync(budget.Token).ConfigureAwait(false);
             var bytes = new byte[4097];
             var count = 0;
@@ -74,25 +74,36 @@ internal sealed class HttpSessionValidator(IHttpClientFactory clients, IHttpCont
                 if (read == 0) { break; }
                 count += read;
             }
-            if (count > 4096) { return Unavailable(); }
+            if (count > 4096) { return Unavailable<T>(); }
             using var body = JsonDocument.Parse(bytes.AsMemory(0, count));
             var envelope = body.RootElement;
             if (!envelope.TryGetProperty("success", out var success) || success.ValueKind != JsonValueKind.True
                 || !envelope.TryGetProperty("code", out var code) || !code.TryGetInt32(out var status) || status != 200
-                || !envelope.TryGetProperty("data", out var data)) { return Unavailable(); }
-            var decision = data.Deserialize<CurrentSessionV1>(Json);
+                || !envelope.TryGetProperty("data", out var data)) { return Unavailable<T>(); }
+            var decision = data.Deserialize<T>(Json);
             budget.Token.ThrowIfCancellationRequested();
-            return decision is { ContractVersion: 1 } && decision.Subject == userId && decision.SessionVersion == sessionVersion
-                ? Result.Success(new ValidatedSession(decision.IsRoot)) : Unavailable();
+            return decision is not null ? Result.Success(decision) : Unavailable<T>();
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable(); }
-        catch (Exception error) when (error is HttpRequestException or IOException) { cancellationToken.ThrowIfCancellationRequested(); return Unavailable(); }
-        catch (JsonException) { return Unavailable(); }
-        catch (InvalidOperationException) { return Unavailable(); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable<T>(); }
+        catch (Exception error) when (error is HttpRequestException or IOException) { cancellationToken.ThrowIfCancellationRequested(); return Unavailable<T>(); }
+        catch (JsonException) { return Unavailable<T>(); }
+        catch (InvalidOperationException) { return Unavailable<T>(); }
         finally { calls.Permits.Release(); }
     }
 
-    private static Result<ValidatedSession> Unavailable() => Result.Failure<ValidatedSession>(SessionValidationErrors.Unavailable);
+    private static Result<T> Unavailable<T>() => Result.Failure<T>(SessionValidationErrors.Unavailable);
+}
+
+internal sealed class HttpSessionValidator(IdentityAuthorityReader authority, IdentitySessionClientOptions options) : ISessionValidator
+{
+    public async Task<Result<ValidatedSession>> ValidateAsync(string userId, long? sessionVersion, CancellationToken cancellationToken = default)
+    {
+        var response = await authority.ReadAsync<CurrentSessionV1>(options.Endpoint(), sessionVersion, cancellationToken).ConfigureAwait(false);
+        if (response.IsFailure) { return Result.Failure<ValidatedSession>(response.Error); }
+        var decision = response.Value;
+        return decision.ContractVersion == 1 && decision.Subject == userId && decision.SessionVersion == sessionVersion
+            ? Result.Success(new ValidatedSession(decision.IsRoot)) : Result.Failure<ValidatedSession>(SessionValidationErrors.Unavailable);
+    }
 }
 
 /// <summary>三个独立宿主以同一个版本化 HTTP 契约消费 Identity；不引用其存储或领域。</summary>
@@ -112,7 +123,9 @@ public static class IdentitySessionAuthorizationServices
         services.AddSingleton<IdentitySessionCallBudget>();
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, ClaimsCurrentUser>();
+        services.AddScoped<IdentityAuthorityReader>();
         services.AddScoped<ISessionValidator, HttpSessionValidator>();
+        services.AddScoped<IRequestAccessValidator, HttpRequestAccessValidator>();
         services.AddHttpClient("identity-session-authority", client => client.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
             .RedactLoggedHeaders(["Authorization"])
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -123,6 +136,6 @@ public static class IdentitySessionAuthorizationServices
                 ConnectTimeout = options.Timeout,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(2),
             });
-        return services.AddCurrentRootSessionAuthorization();
+        return services.AddCurrentSessionAuthorization();
     }
 }

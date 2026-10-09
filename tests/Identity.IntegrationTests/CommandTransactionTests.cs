@@ -204,17 +204,19 @@ public sealed class CommandTransactionTests(IdentityDatabaseFixture fixture)
         var role = await SendAsync(provider, new CreateRoleCommand("reader", "Reader"));
         Assert.True(user.IsSuccess);
         Assert.True(role.IsSuccess);
+        var menu = await SendAsync(provider, new CreateMenuCommand("Transaction permissions", 1, null));
+        Assert.True(menu.IsSuccess);
         Assert.True((await SendAsync(provider, new AssignRoleCommand(user.Value, role.Value))).IsSuccess);
-        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", 10))).IsSuccess);
+        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", menu.Value.MenuId))).IsSuccess);
         Assert.Empty((await PermissionsAsync(provider, user.Value)).Value);
 
         await using var scope = provider.CreateAsyncScope();
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
         gate.Arm();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendAsync(new GrantMenuToRoleCommand(role.Value, 10)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sender.SendAsync(new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId)));
         Assert.Empty((await PermissionsAsync(provider, user.Value)).Value);
 
-        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(role.Value, 10))).IsSuccess);
+        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId))).IsSuccess);
         Assert.Equal("/transactions:GET", Assert.Single((await PermissionsAsync(provider, user.Value)).Value));
     }
 
@@ -229,8 +231,10 @@ public sealed class CommandTransactionTests(IdentityDatabaseFixture fixture)
         var role = await SendAsync(provider, new CreateRoleCommand("reader", "Reader"));
         Assert.True(user.IsSuccess);
         Assert.True(role.IsSuccess);
-        Assert.True((await SendAsync(provider, new GrantMenuToRoleCommand(role.Value, 10))).IsSuccess);
-        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", 10))).IsSuccess);
+        var menu = await SendAsync(provider, new CreateMenuCommand("Transaction permissions", 1, null));
+        Assert.True(menu.IsSuccess);
+        Assert.True((await SendAsync(provider, new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId))).IsSuccess);
+        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", menu.Value.MenuId))).IsSuccess);
 
         gate.Arm();
         var oldRead = PermissionsAsync(provider, user.Value);
@@ -262,12 +266,14 @@ public sealed class CommandTransactionTests(IdentityDatabaseFixture fixture)
         var role = await SendAsync(provider, new CreateRoleCommand("reader", "Reader"));
         Assert.True(user.IsSuccess);
         Assert.True(role.IsSuccess);
+        var menu = await SendAsync(provider, new CreateMenuCommand("Transaction permissions", 1, null));
+        Assert.True(menu.IsSuccess);
         Assert.True((await SendAsync(provider, new AssignRoleCommand(user.Value, role.Value))).IsSuccess);
-        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", 10))).IsSuccess);
+        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", menu.Value.MenuId))).IsSuccess);
         Assert.Empty((await PermissionsAsync(provider, user.Value)).Value);
 
         gate.Arm();
-        var grant = SendAsync(provider, new GrantMenuToRoleCommand(role.Value, 10));
+        var grant = SendAsync(provider, new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId));
         try
         {
             await gate.Arrived.Task.WaitAsync(TimeSpan.FromSeconds(20));
@@ -315,9 +321,11 @@ public sealed class CommandTransactionTests(IdentityDatabaseFixture fixture)
         var role = await SendAsync(provider, new CreateRoleCommand("reader", "Reader"));
         Assert.True(user.IsSuccess);
         Assert.True(role.IsSuccess);
-        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", 10))).IsSuccess);
+        var menu = await SendAsync(provider, new CreateMenuCommand("Transaction permissions", 1, null));
+        Assert.True(menu.IsSuccess);
+        Assert.True((await SendAsync(provider, new CreateApiResourceCommand("/transactions", "GET", menu.Value.MenuId))).IsSuccess);
         Assert.True((await IdentityTestHost.InScopeAsync(provider, scope => scope.GetRequiredService<ISender>()
-            .SendAsync(new GrantMenuToRoleCommand(role.Value, 10)))).IsSuccess);
+            .SendAsync(new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId)))).IsSuccess);
         Assert.True((await IdentityTestHost.InScopeAsync(provider, scope => scope.GetRequiredService<ISender>()
             .SendAsync(new AssignRoleCommand(user.Value, role.Value)))).IsSuccess);
 

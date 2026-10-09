@@ -169,9 +169,11 @@ public sealed class IdentityUseCasePersistenceTests(IdentityDatabaseFixture fixt
         Assert.Empty(before.Value);
 
         // 授予一个菜单、并把一条 API 资源挂上去——这条链路走完，权限才真的存在。
-        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleId, 10))).IsSuccess);
+        var menu = await sender.SendAsync(new CreateMenuCommand("Persistence permissions", 1, null));
+        Assert.True(menu.IsSuccess);
+        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleId, menu.Value.MenuId))).IsSuccess);
         Assert.True((await sender.SendAsync(
-            new CreateApiResourceCommand("/api/identity/users", "GET", 10))).IsSuccess);
+            new CreateApiResourceCommand("/api/identity/users", "GET", menu.Value.MenuId))).IsSuccess);
 
         // **紧接着**查询——没有等任何 TTL，也没有手工失效。
         var after = await sender.QueryAsync(new GetUserPermissionsQuery(userId));
@@ -210,8 +212,10 @@ public sealed class IdentityUseCasePersistenceTests(IdentityDatabaseFixture fixt
         Assert.True((await sender.SendAsync(new AssignRoleCommand(second, roleA))).IsSuccess);
 
         // 一张菜单授给两个角色——单列主键时这里会撞 PK_role_menus。
-        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleA, 10))).IsSuccess);
-        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleB, 10))).IsSuccess);
+        var menu = await sender.SendAsync(new CreateMenuCommand("Persistence permissions", 1, null));
+        Assert.True(menu.IsSuccess);
+        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleA, menu.Value.MenuId))).IsSuccess);
+        Assert.True((await sender.SendAsync(new GrantMenuToRoleCommand(roleB, menu.Value.MenuId))).IsSuccess);
 
         // 直接数连接表：两行才算真的写进去了——这是"两列主键"最直接的证据。
         await using var connection = new Npgsql.NpgsqlConnection(fixture.Database.ConnectionString);

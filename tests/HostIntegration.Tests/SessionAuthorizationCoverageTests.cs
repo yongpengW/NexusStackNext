@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application.Authorization;
+using NexusStackNext.BuildingBlocks.Domain.Authorization;
 using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.CostingHost;
 using NexusStackNext.IntegrationSupport;
@@ -14,7 +16,7 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class SessionAuthorizationCoverageTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
-    public async Task EveryBusinessEndpointAndGatewayManagementOperation_RequiresCurrentRootSession()
+    public async Task EveryBusinessEndpointDeclaresAnOperation_WhileGatewayManagementRequiresCurrentRootSession()
     {
         await using var costs = await databases.CreateAsync("costing");
         await using var prices = await databases.CreateAsync("pricing");
@@ -46,7 +48,20 @@ public sealed class SessionAuthorizationCoverageTests(JourneyDatabaseTemplates d
             Assert.NotEmpty(declarations);
             var policy = await AuthorizationPolicy.CombineAsync(provider, declarations);
             Assert.NotNull(policy);
-            Assert.Contains(policy.Requirements, requirement => requirement is CurrentRootSessionRequirement);
+            if (excludeDescription)
+            {
+                Assert.Contains(policy.Requirements, requirement => requirement is CurrentRootSessionRequirement);
+            }
+            else
+            {
+                Assert.Contains(policy.Requirements, requirement => requirement is CurrentOperationRequirement);
+                var operation = endpoint.Metadata.GetMetadata<AuthorizationRequirement>();
+                Assert.NotNull(operation);
+                Assert.Equal(AuthorizationMode.PermissionKey, operation.Mode);
+                Assert.NotNull(operation.PermissionKey);
+                var route = System.Text.RegularExpressions.Regex.Replace(endpoint.RoutePattern.RawText!, @"\{([^}:]+):[^}]+\}", "{$1}");
+                Assert.Equal(PermissionKey.From(route, Assert.Single(methods)), operation.PermissionKey.Value);
+            }
             checkedOperations += methods.Count;
         }
         Assert.True(checkedOperations > 0);
