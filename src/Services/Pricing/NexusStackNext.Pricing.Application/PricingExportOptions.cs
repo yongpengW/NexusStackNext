@@ -11,6 +11,8 @@ public sealed class PricingExportOptions
     public int MaxAttempts { get; init; } = 3;
     /// <summary>生成器的实际字节预算，最多 32 MiB。</summary>
     public long MaxOutputBytes { get; init; } = 33_554_432;
+    /// <summary>可选的宿主专用临时卷绝对目录；留空使用操作系统临时目录。</summary>
+    public string? TemporaryDirectory { get; init; }
     /// <summary>无工作或失败后的有界轮询间隔。</summary>
     public TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(1);
 
@@ -20,6 +22,7 @@ public sealed class PricingExportOptions
         if (LeaseDuration < TimeSpan.FromMilliseconds(100) || LeaseDuration > TimeSpan.FromMinutes(2)
             || MaxExecutionDuration <= LeaseDuration || MaxExecutionDuration > TimeSpan.FromMinutes(10)
             || MaxAttempts is < 1 or > 10 || MaxOutputBytes is < 1 or > 33_554_432
+            || (!string.IsNullOrWhiteSpace(TemporaryDirectory) && !Path.IsPathFullyQualified(TemporaryDirectory))
             || PollInterval < TimeSpan.FromMilliseconds(100) || PollInterval > TimeSpan.FromSeconds(30))
         { throw new InvalidOperationException("Pricing:Exports 的租约策略无效。"); }
     }

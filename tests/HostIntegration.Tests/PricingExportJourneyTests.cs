@@ -20,7 +20,7 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
-    public async Task Ordinary_owner_exports_frozen_csv_through_gateway_and_downloads_with_new_session_after_logout()
+    public async Task Ordinary_owner_recovers_lost_https_publication_after_pricing_process_death_through_gateway_and_deletion_cannot_resurrect_it()
     {
         await using var platformDatabase = await databases.CreateAsync();
         await using var pricingDatabase = await databases.CreateAsync("pricing");
@@ -33,13 +33,18 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         };
         await using var platform = await PlatformHostProcess.StartAsync(platformDatabase.ConnectionString, "export-root-test-password", settings: settings);
         Assert.NotNull(platform.HttpsAddress);
-        var client = certificates.PricingClientOptions(platform.HttpsAddress);
+        await using var fault = await GeneratedFileReplyFault.StartAsync(certificates, platform.HttpsAddress, GeneratedFileFaultPoint.AfterPublication);
+        using (var probe = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = fault.BaseAddress, Timeout = TimeSpan.FromSeconds(5) })
+        using (var missing = await probe.GetAsync(Relative("/internal/files/v1/uploads/11111111-1111-1111-1111-111111111111")))
+        { Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode); }
+        var client = certificates.PricingClientOptions(fault.BaseAddress);
         var pricingSettings = new Dictionary<string, string>
         {
             ["DOTNET_ENVIRONMENT"] = "Testing",
             ["IdentitySession__BaseAddress"] = platform.Client.BaseAddress!.AbsoluteUri,
             ["Pricing__Exports__Enabled"] = "true",
             ["Pricing__Exports__Execution__PollInterval"] = "00:00:00.100",
+            ["Pricing__Exports__Execution__LeaseDuration"] = "00:00:03",
             ["Pricing__Exports__Files__BaseAddress"] = client.BaseAddress,
             ["Pricing__Exports__Files__ClientCertificatePath"] = client.ClientCertificatePath,
             ["Pricing__Exports__Files__ClientKeyPath"] = client.ClientKeyPath,
@@ -48,6 +53,14 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         };
         await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
             settings: pricingSettings);
+        var document = await pricing.Client.GetFromJsonAsync<JsonElement>(Relative("/openapi/v1.json"));
+        var post = Assert.Single(document.GetProperty("paths").EnumerateObject(), path => path.Name.TrimEnd('/') == "/api/pricing/exports")
+            .Value.GetProperty("post");
+        Assert.True(post.TryGetProperty("requestBody", out var requestBody), "The public export POST must document its JSON request body.");
+        var schema = HttpInt64OpenApiTests.Resolve(document, requestBody.GetProperty("content")
+            .GetProperty("application/json").GetProperty("schema"));
+        Assert.Equal(new[] { "calculationState", "columnSetVersion", "formatVersion", "itemIds", "requestId" },
+            schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
         var routeFile = Path.Combine(Path.GetTempPath(), "nsn-export-routes-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
@@ -62,6 +75,7 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 new Dictionary<string, string> { ["IdentitySession__BaseAddress"] = platform.Client.BaseAddress.AbsoluteUri });
             using var root = new HttpClient { BaseAddress = gateway.Client.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
             using var owner = new HttpClient { BaseAddress = gateway.Client.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
+            using var other = new HttpClient { BaseAddress = gateway.Client.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
             var user = await CreateAsync(owner, "/api/identity/users", new { userName = "export-owner", password = "export-owner-test-password" });
             await UserLifecycleHttpTests.LoginAsync(root, "journey-root", "export-root-test-password");
             await UserLifecycleHttpTests.LoginAsync(owner, "export-owner", "export-owner-test-password");
@@ -71,12 +85,18 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             {
                 ("/api/pricing/exports", "POST"), ("/api/pricing/exports", "GET"), ("/api/pricing/exports/{exportId}", "GET"),
                 ("/api/pricing/exports/{exportId}/artifact", "GET"), ("/api/files/{fileId}", "GET"),
+                ("/api/files/{fileId}", "DELETE"), ("/api/files/{fileId}/deletion", "GET"), ("/api/files/{fileId}/metadata", "GET"),
+                ("/api/pricing/exports/{exportId}/cancel", "POST"), ("/api/pricing/exports/{exportId}/retry", "POST"),
             }) { _ = await CreateAsync(root, "/api/identity/api-resources", new { path = permission.Item1, method = permission.Item2, menuId }); }
             var role = await CreateAsync(root, "/api/identity/roles", new { code = "export-owner", name = "Own exports" });
             var roleId = role.GetProperty("roleId").GetString();
             using (var granted = await root.PostAsync(Relative($"/api/identity/roles/{roleId}/menus/{menuId}"), null)) { Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode); }
             using (var assigned = await root.PostAsync(Relative($"/api/identity/users/{user.GetProperty("userId").GetString()}/roles/{roleId}"), null))
             { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+            var otherUser = await CreateAsync(root, "/api/identity/users", new { userName = "other-export-owner", password = "other-export-test-password" });
+            using (var assigned = await root.PostAsync(Relative($"/api/identity/users/{otherUser.GetProperty("userId").GetString()}/roles/{roleId}"), null))
+            { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+            await UserLifecycleHttpTests.LoginAsync(other, "other-export-owner", "other-export-test-password");
             var item = Guid.Parse("11111111-1111-1111-1111-111111111111");
             using (var cost = await root.PostAsJsonAsync(Relative("/api/pricing/cost"), new { requestId = Guid.NewGuid(), itemId = item, expectedVersion = "0", cost = 80m, feeRate = 0.2m }))
             { Assert.Equal(HttpStatusCode.Accepted, cost.StatusCode); }
@@ -118,10 +138,32 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             using (var invalid = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"))) { Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode); }
             await UserLifecycleHttpTests.LoginAsync(owner, "export-owner", "export-owner-test-password");
             using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            try { await fault.WaitForFaultAsync(); }
+            catch (TimeoutException)
+            {
+                using var stalled = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"));
+                var state = await stalled.Content.ReadApiDataAsync();
+                Assert.Fail($"Publication barrier not reached; public state={state.GetProperty("state").GetString()}, error={state.GetProperty("errorCode").GetString()}, relay={fault.LastTransportResult}.");
+            }
+            using var selectedReply = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"));
+            Assert.Equal(HttpStatusCode.OK, selectedReply.StatusCode);
+            var selected = await selectedReply.Content.ReadApiDataAsync();
+            Assert.Equal("Publishing", selected.GetProperty("state").GetString());
+            var selectedFile = selected.GetProperty("fileId").GetString();
+            using (var alreadyPublished = await owner.GetAsync(Relative($"/api/files/{selectedFile}"))) { Assert.Equal(HttpStatusCode.OK, alreadyPublished.StatusCode); }
+            using (var cancel = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/cancel"), new { expectedVersion = selected.GetProperty("version").GetString() }))
+            { Assert.Equal(HttpStatusCode.Conflict, cancel.StatusCode); }
+            var restartAddress = pricing.Client.BaseAddress!;
+            await pricing.CrashAsync();
+            fault.Release();
+            pricingSettings["Kestrel__Endpoints__Public__Url"] = restartAddress.AbsoluteUri;
+            await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
+                settings: pricingSettings);
             JsonElement completed;
             while (true)
             {
                 using var status = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"), wait.Token);
+                if (status.StatusCode is HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable) { await Task.Delay(100, wait.Token); continue; }
                 Assert.Equal(HttpStatusCode.OK, status.StatusCode);
                 completed = await status.Content.ReadApiDataAsync();
                 if (completed.GetProperty("state").GetString() == "Succeeded") { break; }
@@ -129,6 +171,8 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 await Task.Delay(100, wait.Token);
             }
             Assert.Equal(original.GetProperty("snapshotDigest").GetString(), completed.GetProperty("snapshotDigest").GetString());
+            Assert.Equal(selectedFile, completed.GetProperty("fileId").GetString());
+            Assert.Equal(selected.GetProperty("publicationId").GetGuid(), completed.GetProperty("publicationId").GetGuid());
             using var artifactResponse = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}/artifact"));
             Assert.Equal(HttpStatusCode.OK, artifactResponse.StatusCode);
             var artifact = await artifactResponse.Content.ReadApiDataAsync();
@@ -140,8 +184,51 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 + "11111111-1111-1111-1111-111111111111,1,80.0000,0.2000,1,0,0,,Pending\r\n";
             Assert.Equal(Encoding.UTF8.GetBytes(expected), await download.Content.ReadAsByteArrayAsync());
             using (var rootCannotOwn = await root.GetAsync(Relative(downloadPath))) { Assert.Equal(HttpStatusCode.NotFound, rootCannotOwn.StatusCode); }
+            var currentToken = owner.DefaultRequestHeaders.Authorization;
             owner.DefaultRequestHeaders.Authorization = oldToken;
             using (var revoked = await owner.GetAsync(Relative(downloadPath))) { Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode); }
+            foreach (var path in new[] { $"/api/files/{selectedFile}/metadata", $"/api/pricing/exports/{exportId}/artifact" })
+            { using var denied = await owner.GetAsync(Relative(path)); Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode); }
+            using (var revokedDelete = await owner.DeleteAsync(Relative(downloadPath))) { Assert.Equal(HttpStatusCode.Unauthorized, revokedDelete.StatusCode); }
+            owner.DefaultRequestHeaders.Authorization = currentToken;
+            var fileId = completed.GetProperty("fileId").GetString();
+            foreach (var path in new[] { $"/api/files/{fileId}/metadata", $"/api/files/{fileId}/deletion", $"/api/pricing/exports/{exportId}/artifact" })
+            { using var denied = await root.GetAsync(Relative(path)); Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode); }
+            foreach (var foreign in new[] { root, other })
+            {
+                foreach (var path in new[] { downloadPath, $"/api/files/{fileId}/metadata", $"/api/files/{fileId}/deletion", $"/api/pricing/exports/{exportId}", $"/api/pricing/exports/{exportId}/artifact" })
+                { using var denied = await foreign.GetAsync(Relative(path)); Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode); }
+                foreach (var action in new[] { "cancel", "retry" })
+                {
+                    using var denied = await foreign.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/{action}"), new { expectedVersion = completed.GetProperty("version").GetString() });
+                    Assert.Equal(HttpStatusCode.NotFound, denied.StatusCode);
+                }
+                using var deniedDelete = await foreign.DeleteAsync(Relative(downloadPath));
+                Assert.Equal(HttpStatusCode.NotFound, deniedDelete.StatusCode);
+            }
+            using (var deleted = await owner.DeleteAsync(Relative($"/api/files/{fileId}"))) { Assert.Contains(deleted.StatusCode, new[] { HttpStatusCode.NoContent, HttpStatusCode.Accepted }); }
+            using (var gone = await owner.GetAsync(Relative($"/api/files/{fileId}"))) { Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode); }
+            using (var replay = await owner.PostAsJsonAsync(Relative("/api/pricing/exports"), request))
+            { Assert.True(JsonElement.DeepEquals(completed, await replay.Content.ReadApiDataAsync())); }
+            using (var closed = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}/artifact")))
+            {
+                var unavailable = await closed.Content.ReadApiDataAsync();
+                Assert.Equal("Deleted", unavailable.GetProperty("state").GetString());
+                Assert.Equal(JsonValueKind.Null, unavailable.GetProperty("downloadPath").ValueKind);
+                Assert.Equal(artifact.GetProperty("publishedAt").GetDateTimeOffset(), unavailable.GetProperty("publishedAt").GetDateTimeOffset());
+                Assert.Equal(artifact.GetProperty("expiresAt").GetDateTimeOffset(), unavailable.GetProperty("expiresAt").GetDateTimeOffset());
+            }
+            using (var retry = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/retry"), new { expectedVersion = completed.GetProperty("version").GetString() }))
+            { Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode); }
+            while (true)
+            {
+                using var deletion = await owner.GetAsync(Relative($"/api/files/{fileId}/deletion"), wait.Token);
+                Assert.Equal(HttpStatusCode.OK, deletion.StatusCode);
+                if ((await deletion.Content.ReadApiDataAsync()).GetProperty("completed").GetBoolean()) { break; }
+                await Task.Delay(100, wait.Token);
+            }
+            using var stillGone = await owner.GetAsync(Relative($"/api/files/{fileId}"));
+            Assert.Equal(HttpStatusCode.NotFound, stillGone.StatusCode);
         }
         finally { File.Delete(routeFile); }
     }

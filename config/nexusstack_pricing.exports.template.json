@@ -8,6 +8,7 @@
         "MaxExecutionDuration": "00:02:00",
         "MaxAttempts": 3,
         "MaxOutputBytes": 33554432,
+        "TemporaryDirectory": "",
         "PollInterval": "00:00:01"
       },
       "Files": {
