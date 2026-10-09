@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text;
@@ -20,7 +21,18 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
-    public async Task Ordinary_owner_recovers_lost_https_publication_after_pricing_process_death_through_gateway_and_deletion_cannot_resurrect_it()
+    public Task Ordinary_owner_recovers_lost_https_publication_after_pricing_process_death_through_gateway_and_deletion_cannot_resurrect_it() =>
+        VerifyPrivateExportJourneyAsync("csv", GeneratedFileFaultPoint.AfterPublication);
+
+    [PostgresFact]
+    public Task Ordinary_owner_downloads_exact_xlsx_through_gateway_after_lost_publication_reply_and_deletion_cannot_resurrect_it() =>
+        VerifyPrivateExportJourneyAsync("xlsx", GeneratedFileFaultPoint.AfterPublication);
+
+    [PostgresFact]
+    public Task Ordinary_owner_recovers_original_staged_xlsx_after_process_death_even_when_rendering_directory_is_unusable() =>
+        VerifyPrivateExportJourneyAsync("xlsx", GeneratedFileFaultPoint.AfterContent, failAtTail: true);
+
+    private async Task VerifyPrivateExportJourneyAsync(string format, GeneratedFileFaultPoint faultPoint, bool failAtTail = false)
     {
         await using var platformDatabase = await databases.CreateAsync();
         await using var pricingDatabase = await databases.CreateAsync("pricing");
@@ -33,11 +45,12 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         };
         await using var platform = await PlatformHostProcess.StartAsync(platformDatabase.ConnectionString, "export-root-test-password", settings: settings);
         Assert.NotNull(platform.HttpsAddress);
-        await using var fault = await GeneratedFileReplyFault.StartAsync(certificates, platform.HttpsAddress, GeneratedFileFaultPoint.AfterPublication);
+        await using var fault = await GeneratedFileReplyFault.StartAsync(certificates, platform.HttpsAddress, faultPoint);
         using (var probe = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = fault.BaseAddress, Timeout = TimeSpan.FromSeconds(5) })
         using (var missing = await probe.GetAsync(Relative("/internal/files/v1/uploads/11111111-1111-1111-1111-111111111111")))
         { Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode); }
         var client = certificates.PricingClientOptions(fault.BaseAddress);
+        var temporaryDirectory = Path.Combine(Path.GetTempPath(), "nsn-xlsx-journey-" + Guid.NewGuid().ToString("N"));
         var pricingSettings = new Dictionary<string, string>
         {
             ["DOTNET_ENVIRONMENT"] = "Testing",
@@ -50,7 +63,15 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             ["Pricing__Exports__Files__ClientKeyPath"] = client.ClientKeyPath,
             ["Pricing__Exports__Files__RootCertificatePaths__0"] = client.RootCertificatePaths[0],
             ["Pricing__Exports__Files__RevocationMode"] = "NoCheck",
+            ["Pricing__Exports__Execution__TemporaryDirectory"] = temporaryDirectory,
         };
+        if (failAtTail)
+        {
+            using var complete = new MemoryStream();
+            await PricingXlsxV1.WriteAsync([new(new(Guid.Parse("11111111-1111-1111-1111-111111111111")), 1, 80m, 0.2m, 1, 0, 0, null)], complete);
+            // All entries fit, but the worker cannot write the last ZIP end-record byte.
+            pricingSettings["Pricing__Exports__Execution__MaxOutputBytes"] = (complete.Length - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
         await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
             settings: pricingSettings);
         var document = await pricing.Client.GetFromJsonAsync<JsonElement>(Relative("/openapi/v1.json"));
@@ -59,9 +80,10 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         Assert.True(post.TryGetProperty("requestBody", out var requestBody), "The public export POST must document its JSON request body.");
         var schema = HttpInt64OpenApiTests.Resolve(document, requestBody.GetProperty("content")
             .GetProperty("application/json").GetProperty("schema"));
-        Assert.Equal(new[] { "calculationState", "columnSetVersion", "formatVersion", "itemIds", "requestId" },
+        Assert.Equal(new[] { "calculationState", "columnSetVersion", "format", "formatVersion", "itemIds", "requestId" },
             schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
         var routeFile = Path.Combine(Path.GetTempPath(), "nsn-export-routes-" + Guid.NewGuid().ToString("N") + ".json");
+        BusinessProcess? recoveredAfterTail = null;
         try
         {
             var routes = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.business.json")))!;
@@ -106,6 +128,8 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 "{\"requestId\":\"" + Guid.NewGuid() + "\",\"requestId\":\"" + Guid.NewGuid() + "\",\"itemIds\":[]}",
                 "{\"requestId\":\"" + Guid.NewGuid() + "\",\"itemIds\":[],\"formatVersion\":2}",
                 "{\"requestId\":\"" + Guid.NewGuid() + "\",\"itemIds\":[],\"calculationState\":\"unknown\"}",
+                "{\"requestId\":\"" + Guid.NewGuid() + "\",\"itemIds\":[],\"format\":\"XLSX\"}",
+                "{\"requestId\":\"" + Guid.NewGuid() + "\",\"itemIds\":[],\"format\":123}",
             })
             {
                 using var body = new StringContent(malformed, Encoding.UTF8, "application/json");
@@ -125,10 +149,11 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 Assert.Equal(HttpStatusCode.OK, list.StatusCode);
                 Assert.Empty((await list.Content.ReadApiDataAsync()).GetProperty("items").EnumerateArray());
             }
-            var request = new { requestId = Guid.NewGuid(), itemIds = new[] { item }, calculationState = "Any", formatVersion = 1, columnSetVersion = 1 };
+            var request = new { requestId = Guid.NewGuid(), itemIds = new[] { item }, calculationState = "Any", format, formatVersion = 1, columnSetVersion = 1 };
             using var accepted = await owner.PostAsJsonAsync(Relative("/api/pricing/exports"), request);
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             var original = await accepted.Content.ReadApiDataAsync();
+            Assert.Equal(format, original.GetProperty("format").GetString());
             var exportId = original.GetProperty("exportId").GetGuid();
             using (var costChanged = await root.PostAsJsonAsync(Relative("/api/pricing/cost"), new { requestId = Guid.NewGuid(), itemId = item, expectedVersion = "1", cost = 120m, feeRate = 0.2m }))
             { Assert.Equal(HttpStatusCode.Accepted, costChanged.StatusCode); }
@@ -138,6 +163,36 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             using (var invalid = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"))) { Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode); }
             await UserLifecycleHttpTests.LoginAsync(owner, "export-owner", "export-owner-test-password");
             using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            if (failAtTail)
+            {
+                JsonElement failed;
+                while (true)
+                {
+                    using var status = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"), wait.Token);
+                    Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+                    failed = await status.Content.ReadApiDataAsync();
+                    if (failed.GetProperty("state").GetString() == "Failed") { break; }
+                    Assert.Contains(failed.GetProperty("state").GetString(), new[] { "Queued", "Generating" });
+                    await Task.Delay(100, wait.Token);
+                }
+                Assert.Equal("pricing.export.output_limit", failed.GetProperty("errorCode").GetString());
+                Assert.Equal(original.GetProperty("snapshotDigest").GetString(), failed.GetProperty("snapshotDigest").GetString());
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("fileId").ValueKind);
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("publicationId").ValueKind);
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("artifactDigest").ValueKind);
+                Assert.Empty(Directory.EnumerateFiles(temporaryDirectory));
+                await pricing.CrashAsync();
+                pricingSettings.Remove("Pricing__Exports__Execution__MaxOutputBytes");
+                pricingSettings["Kestrel__Endpoints__Public__Url"] = pricing.Client.BaseAddress!.AbsoluteUri;
+                recoveredAfterTail = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
+                    settings: pricingSettings);
+                using var retry = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/retry"),
+                    new { expectedVersion = failed.GetProperty("version").GetString() }, wait.Token);
+                Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+                var retried = await retry.Content.ReadApiDataAsync();
+                Assert.Equal(exportId, retried.GetProperty("exportId").GetGuid());
+                Assert.Equal(original.GetProperty("snapshotDigest").GetString(), retried.GetProperty("snapshotDigest").GetString());
+            }
             try { await fault.WaitForFaultAsync(); }
             catch (TimeoutException)
             {
@@ -148,14 +203,46 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             using var selectedReply = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"));
             Assert.Equal(HttpStatusCode.OK, selectedReply.StatusCode);
             var selected = await selectedReply.Content.ReadApiDataAsync();
-            Assert.Equal("Publishing", selected.GetProperty("state").GetString());
-            var selectedFile = selected.GetProperty("fileId").GetString();
-            using (var alreadyPublished = await owner.GetAsync(Relative($"/api/files/{selectedFile}"))) { Assert.Equal(HttpStatusCode.OK, alreadyPublished.StatusCode); }
-            using (var cancel = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/cancel"), new { expectedVersion = selected.GetProperty("version").GetString() }))
-            { Assert.Equal(HttpStatusCode.Conflict, cancel.StatusCode); }
-            var restartAddress = pricing.Client.BaseAddress!;
-            await pricing.CrashAsync();
+            string? selectedFile;
+            string? stagedDigest = null;
+            if (faultPoint == GeneratedFileFaultPoint.AfterContent)
+            {
+                Assert.Equal("Generating", selected.GetProperty("state").GetString());
+                using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = platform.HttpsAddress };
+                using var receipt = await producer.GetAsync(Relative($"/internal/files/v1/uploads/{fault.ObservedUploadId}"));
+                Assert.Equal(HttpStatusCode.OK, receipt.StatusCode);
+                var staged = await receipt.Content.ReadApiDataAsync();
+                Assert.Equal("Staged", staged.GetProperty("stage").GetString());
+                selectedFile = staged.GetProperty("fileId").GetString();
+                stagedDigest = staged.GetProperty("description").GetProperty("sha256").GetString();
+                using var hidden = await owner.GetAsync(Relative($"/api/files/{selectedFile}"));
+                Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode);
+            }
+            else
+            {
+                Assert.Equal("Publishing", selected.GetProperty("state").GetString());
+                selectedFile = selected.GetProperty("fileId").GetString();
+                using var alreadyPublished = await owner.GetAsync(Relative($"/api/files/{selectedFile}"));
+                Assert.Equal(HttpStatusCode.OK, alreadyPublished.StatusCode);
+                using var cancel = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/cancel"), new { expectedVersion = selected.GetProperty("version").GetString() });
+                Assert.Equal(HttpStatusCode.Conflict, cancel.StatusCode);
+            }
+            var activePricing = recoveredAfterTail ?? pricing;
+            var restartAddress = activePricing.Client.BaseAddress!;
+            await activePricing.CrashAsync();
             fault.Release();
+            // Process exit precedes observable deletion on some Windows file systems.
+            // Observe kernel delete-on-close within a fixed budget; never delete the bytes to make this pass.
+            var cleanupWait = Stopwatch.StartNew();
+            while (Directory.EnumerateFiles(temporaryDirectory).Any() && cleanupWait.Elapsed < TimeSpan.FromSeconds(5))
+            { await Task.Delay(25); }
+            var remainingFiles = Directory.GetFiles(temporaryDirectory);
+            Assert.True(remainingFiles.Length == 0, "Remaining temporary files: " + string.Join(", ", remainingFiles.Select(Path.GetFileName)));
+            if (faultPoint == GeneratedFileFaultPoint.AfterContent)
+            {
+                Directory.Delete(temporaryDirectory);
+                await File.WriteAllTextAsync(temporaryDirectory, "Rendering must not be attempted after the original workbook was staged.");
+            }
             pricingSettings["Kestrel__Endpoints__Public__Url"] = restartAddress.AbsoluteUri;
             await using var restarted = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
                 settings: pricingSettings);
@@ -172,7 +259,15 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             }
             Assert.Equal(original.GetProperty("snapshotDigest").GetString(), completed.GetProperty("snapshotDigest").GetString());
             Assert.Equal(selectedFile, completed.GetProperty("fileId").GetString());
-            Assert.Equal(selected.GetProperty("publicationId").GetGuid(), completed.GetProperty("publicationId").GetGuid());
+            if (faultPoint == GeneratedFileFaultPoint.AfterContent)
+            {
+                using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = platform.HttpsAddress };
+                using var originalReceipt = await producer.GetAsync(Relative($"/internal/files/v1/uploads/{fault.ObservedUploadId}"));
+                Assert.Equal(HttpStatusCode.OK, originalReceipt.StatusCode);
+                Assert.Equal(selectedFile, (await originalReceipt.Content.ReadApiDataAsync()).GetProperty("fileId").GetString());
+                Assert.Equal(stagedDigest, completed.GetProperty("artifactDigest").GetString());
+            }
+            else { Assert.Equal(selected.GetProperty("publicationId").GetGuid(), completed.GetProperty("publicationId").GetGuid()); }
             using var artifactResponse = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}/artifact"));
             Assert.Equal(HttpStatusCode.OK, artifactResponse.StatusCode);
             var artifact = await artifactResponse.Content.ReadApiDataAsync();
@@ -182,7 +277,16 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             Assert.Equal(HttpStatusCode.OK, download.StatusCode);
             const string expected = "ItemId,Version,Cost,FeeRate,InputRevision,CalculatedRevision,CostingRevision,BreakEvenPrice,CalculationState\r\n"
                 + "11111111-1111-1111-1111-111111111111,1,80.0000,0.2000,1,0,0,,Pending\r\n";
-            Assert.Equal(Encoding.UTF8.GetBytes(expected), await download.Content.ReadAsByteArrayAsync());
+            var bytes = await download.Content.ReadAsByteArrayAsync();
+            if (format == "csv") { Assert.Equal(Encoding.UTF8.GetBytes(expected), bytes); }
+            else
+            {
+                PricingWorkbookAssertions.FrozenPendingQuote(bytes);
+                Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", download.Content.Headers.ContentType!.MediaType);
+                Assert.Contains("export.xlsx", download.Content.Headers.ContentDisposition!.ToString(), StringComparison.Ordinal);
+                Assert.True(download.Headers.CacheControl!.Private);
+                Assert.True(download.Headers.CacheControl.NoStore);
+            }
             using (var rootCannotOwn = await root.GetAsync(Relative(downloadPath))) { Assert.Equal(HttpStatusCode.NotFound, rootCannotOwn.StatusCode); }
             var currentToken = owner.DefaultRequestHeaders.Authorization;
             owner.DefaultRequestHeaders.Authorization = oldToken;
@@ -230,7 +334,13 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             using var stillGone = await owner.GetAsync(Relative($"/api/files/{fileId}"));
             Assert.Equal(HttpStatusCode.NotFound, stillGone.StatusCode);
         }
-        finally { File.Delete(routeFile); }
+        finally
+        {
+            if (recoveredAfterTail is not null) { await recoveredAfterTail.DisposeAsync(); }
+            File.Delete(routeFile);
+            if (File.Exists(temporaryDirectory)) { File.Delete(temporaryDirectory); }
+            else if (Directory.Exists(temporaryDirectory)) { Directory.Delete(temporaryDirectory, recursive: true); }
+        }
     }
 
     private static Uri Relative(string path) => new(path, UriKind.Relative);

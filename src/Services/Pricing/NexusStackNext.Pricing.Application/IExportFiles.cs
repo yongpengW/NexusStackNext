@@ -6,6 +6,12 @@ namespace NexusStackNext.Pricing.Application;
 /// <summary>跨宿主私有成果协议；只接受冻结描述和固定身份，不携带用户令牌。</summary>
 public interface IExportFiles
 {
+    /// <summary>在渲染前查询原候选，恢复已经封存的实际字节身份。</summary>
+    /// <param name="lookup">原上传与格式身份；尚未知晓 ZIP 摘要。</param>
+    /// <param name="cancellationToken">独立网络预算。</param>
+    /// <returns>经过完整身份校验的原候选；未登记时为空。</returns>
+    Task<Result<GeneratedFileReceiptV1?>> FindAsync(ExportFileLookup lookup, CancellationToken cancellationToken = default);
+
     /// <summary>按原候选身份查询或封存精确字节。</summary>
     /// <param name="upload">固定候选与冻结描述。</param>
     /// <param name="content">可重新定位的完整字节流；调用方拥有其生命周期。</param>
@@ -26,6 +32,13 @@ public interface IExportFiles
     /// <returns>当前可用性。</returns>
     Task<Result<GeneratedFileAvailabilityV1>> AvailabilityAsync(Guid uploadId, long fileId, CancellationToken cancellationToken = default);
 }
+
+/// <summary>渲染前已经持久确定的原候选身份。</summary>
+/// <param name="UploadId">原上传。</param>
+/// <param name="OwnerId">原委托归属。</param>
+/// <param name="SourceExportId">原委托。</param>
+/// <param name="Format">原格式。</param>
+public sealed record ExportFileLookup(Guid UploadId, string OwnerId, Guid SourceExportId, string Format);
 
 /// <summary>固定候选描述。</summary>
 /// <param name="UploadId">原候选身份。</param>

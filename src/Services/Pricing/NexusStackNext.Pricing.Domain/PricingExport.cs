@@ -29,6 +29,12 @@ public sealed class PricingExport : AuditedAggregateRoot<PricingExportId>
     public string SnapshotDigest { get; private set; } = string.Empty;
     /// <summary>固定 CSV 的精确实际字节数。</summary>
     public long SnapshotLength { get; private set; }
+    /// <summary>首次请求选定的输出格式，不改变规范化快照摘要。</summary>
+    public string Format { get; private set; } = "csv";
+    /// <summary>唯一选定文件的实际摘要；不假设 XLSX ZIP 等于快照文本。</summary>
+    public string? ArtifactDigest { get; private set; }
+    /// <summary>唯一选定文件的实际字节数。</summary>
+    public long? ArtifactLength { get; private set; }
     /// <summary>快照摘要规则版本。</summary>
     public int SnapshotDigestVersion { get; private set; } = 1;
     /// <summary>首次数据库接受时刻。</summary>
@@ -81,17 +87,18 @@ public sealed class PricingExport : AuditedAggregateRoot<PricingExportId>
     /// <param name="acceptedAt">数据库接受时间。</param>
     /// <param name="frozenAt">数据库观察时间。</param>
     /// <param name="rows">最多五千行的非空快照。</param>
+    /// <param name="format">csv 或 xlsx；旧调用保留 CSV。</param>
     /// <returns>导出或稳定拒绝。</returns>
     public static Result<PricingExport> Accept(PricingExportId id, string ownerId, Guid requestId,
         string canonicalRequest, string requestDigest, string snapshotDigest, long snapshotLength, DateTimeOffset acceptedAt,
-        DateTimeOffset frozenAt, IReadOnlyList<PricingExportRow> rows)
+        DateTimeOffset frozenAt, IReadOnlyList<PricingExportRow> rows, string format = "csv")
     {
         ArgumentNullException.ThrowIfNull(id);
         if (id.Value == Guid.Empty || string.IsNullOrWhiteSpace(ownerId) || ownerId.Length > 200 || ownerId.Any(char.IsControl)
             || requestId == Guid.Empty || string.IsNullOrEmpty(canonicalRequest) || canonicalRequest.Length > 262_144
             || !IsDigest(requestDigest) || !IsDigest(snapshotDigest) || snapshotLength is < 1 or > 33_554_432
             || rows is null || rows.Count is < 1 or > 5000
-            || frozenAt == default || acceptedAt < frozenAt)
+            || frozenAt == default || acceptedAt < frozenAt || format is not ("csv" or "xlsx"))
         { return Result.Failure<PricingExport>(new Error("pricing.export.invalid", "导出身份或快照无效。")); }
         return Result.Success(new PricingExport(id)
         {
@@ -101,6 +108,7 @@ public sealed class PricingExport : AuditedAggregateRoot<PricingExportId>
             RequestDigest = requestDigest,
             SnapshotDigest = snapshotDigest,
             SnapshotLength = snapshotLength,
+            Format = format,
             AcceptedAt = acceptedAt,
             FrozenAt = frozenAt,
             AvailableAt = acceptedAt,
@@ -178,22 +186,32 @@ public sealed class PricingExport : AuditedAggregateRoot<PricingExportId>
     /// <param name="fileId">已完整验证的候选文件。</param>
     /// <param name="publicationId">稳定发布身份。</param>
     /// <param name="producer">已验证的生产者。</param>
+    /// <param name="artifactDigest">选定文件的实际摘要；CSV 旧调用可省略。</param>
+    /// <param name="artifactLength">选定文件的实际长度；CSV 旧调用可省略。</param>
     /// <returns>是否首次选定。</returns>
-    public Result<bool> SelectPublication(long epoch, DateTimeOffset now, long fileId, Guid publicationId, string producer)
+    public Result<bool> SelectPublication(long epoch, DateTimeOffset now, long fileId, Guid publicationId, string producer,
+        string? artifactDigest = null, long? artifactLength = null)
     {
+        artifactDigest ??= Format == "csv" ? SnapshotDigest : null;
+        artifactLength ??= Format == "csv" ? SnapshotLength : null;
         if (State is "Publishing" or "Succeeded")
         {
             return Epoch == epoch && FileId == fileId && PublicationId == publicationId && Producer == producer
+                && ArtifactDigest == artifactDigest && ArtifactLength == artifactLength
                 ? Result.Success(false)
                 : Result.Failure<bool>(new Error("pricing.export.selection_conflict", "已有发布意图不能替换。"));
         }
         if (State != "Generating" || Epoch != epoch || LeaseUntil is null || LeaseUntil <= now || MaxLeaseUntil is null || MaxLeaseUntil <= now)
         { return Result.Failure<bool>(new Error("pricing.export.lease_lost", "当前执行权已失效。")); }
-        if (fileId <= 0 || publicationId == Guid.Empty || producer != "pricing")
+        if (fileId <= 0 || publicationId == Guid.Empty || producer != "pricing" || !IsDigest(artifactDigest)
+            || artifactLength is null or < 1 or > 33_554_432
+            || (Format == "csv" && (artifactDigest != SnapshotDigest || artifactLength != SnapshotLength)))
         { return Result.Failure<bool>(new Error("pricing.export.invalid_receipt", "成果回执无效。")); }
         FileId = fileId;
         PublicationId = publicationId;
         Producer = producer;
+        ArtifactDigest = artifactDigest;
+        ArtifactLength = artifactLength;
         PublicationSelectedAt = now;
         State = "Publishing";
         LeaseUntil = null;
@@ -256,7 +274,7 @@ public sealed class PricingExport : AuditedAggregateRoot<PricingExportId>
     public Result RetryGeneration(long expectedVersion, DateTimeOffset now)
     {
         if (State != "Failed" || Version != expectedVersion || RetryRevision >= 10
-            || ErrorCode is "pricing.export.file_closed" or "pricing.export.snapshot_corrupt")
+            || ErrorCode is "pricing.export.file_closed" or "pricing.export.snapshot_corrupt" or "pricing.export.candidate_bytes_conflict")
         { return Result.Failure(new Error("pricing.export.retry_conflict", "当前停机状态不能按原观察恢复。")); }
         State = "Queued";
         RetryRevision++;

@@ -27,7 +27,7 @@ Contracts 属于 Files。调用方只依赖 `NexusStackNext.Files.Contracts`，�
 | 原发布历史 | `GET /internal/files/v1/publications/{publicationId}` |
 | 当前可用性 | `GET /internal/files/v1/uploads/{uploadId}/availability` |
 
-固定描述包含 OwnerId、SourceExportId、完整 SHA-256、实际预期 Length、`format=csv`、`formatVersion=1`、`columnSetVersion=1`。SHA-256 规范化为小写；身份与描述在首次登记后不变。Files 验实际长度与摘要，CSV 列与内容的生成语义由来源上下文负责。
+固定描述包含 OwnerId、SourceExportId、完整 SHA-256、实际预期 Length、`format=csv` 或 `xlsx`、`formatVersion=1`、`columnSetVersion=1`。SHA-256 规范化为小写；身份与描述在首次登记后不变。Files 验实际长度与摘要，列与内容的生成语义由来源上下文负责。XLSX 工作簿的完整包与精确文本检查由 Pricing 生成适配器完成，见 [XLSX 契约](pricing-private-xlsx.md)。
 
 UploadId 和 PublicationId 均由来源持久工作提供，且非空；两者分别在 Producer 命名空间内唯一。同身份同描述/字节保留原 FileId、时间及期限，异描述、Owner、来源或内容为 409，不能用另一发布身份替换同一成果。其他 Producer 只能看到不存在。UploadReceipt 的 Pending/Staged 是封存历史，PublicationReceipt 是首次发布历史，均不表示现在可下载。
 

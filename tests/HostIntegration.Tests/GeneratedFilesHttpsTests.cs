@@ -29,6 +29,39 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task Private_xlsx_candidate_is_published_as_an_excel_attachment_with_private_cache_policy()
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        await using var services = new ServiceCollection().AddPricingExportFiles(certificates.PricingClientOptions(host.Client.BaseAddress!), "Testing").BuildServiceProvider();
+        var files = services.GetRequiredService<IExportFiles>();
+        using var content = new MemoryStream();
+        await PricingXlsxV1.WriteAsync([new(new NexusStackNext.Pricing.Domain.PriceId(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            long.MaxValue, 80m, 0.2m, 1, 0, 0, null)], content);
+        var expected = content.ToArray();
+        var description = new GeneratedFileDescriptionV1(owner, Guid.NewGuid(), Convert.ToHexStringLower(SHA256.HashData(expected)), expected.Length, "xlsx", 1, 1);
+        var upload = new ExportFileUpload(Guid.NewGuid(), description);
+        var staged = await files.StageAsync(upload, content);
+        Assert.True(staged.IsSuccess, staged.Error?.Code);
+        using (var hidden = await host.Client.GetAsync(new Uri($"/api/files/{staged.Value.FileId}", UriKind.Relative)))
+        { Assert.Equal(HttpStatusCode.NotFound, hidden.StatusCode); }
+        var publication = new ExportFilePublication(upload.UploadId, staged.Value.FileId, Guid.NewGuid(), description);
+        Assert.True((await files.PublishAsync(publication)).IsSuccess);
+        using var download = await host.Client.GetAsync(new Uri($"/api/files/{staged.Value.FileId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", download.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("export.xlsx", download.Content.Headers.ContentDisposition!.FileName!.Trim('"'));
+        Assert.True(download.Headers.CacheControl!.Private);
+        Assert.True(download.Headers.CacheControl.NoStore);
+        Assert.Equal(expected, await download.Content.ReadAsByteArrayAsync());
+        Assert.Equal(staged.Value, (await files.StageAsync(upload, content)).Value);
+    }
+
+    [PostgresFact]
     public async Task Pricing_https_adapter_rejects_server_outside_its_explicit_private_trust_roots()
     {
         await using var database = await databases.CreateAsync();
@@ -45,7 +78,12 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
     }
 
     [PostgresFact]
-    public async Task Pricing_export_generates_frozen_csv_through_https_and_completes_original_publication()
+    public Task Pricing_export_generates_frozen_csv_through_https_and_completes_original_publication() => VerifyFrozenExportAsync("csv");
+
+    [PostgresFact]
+    public Task Pricing_export_generates_frozen_xlsx_through_https_and_completes_original_publication() => VerifyFrozenExportAsync("xlsx");
+
+    private async Task VerifyFrozenExportAsync(string format)
     {
         await using var platform = await databases.CreateAsync();
         await using var pricing = await databases.CreateAsync("pricing");
@@ -64,7 +102,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
             var sender = scope.ServiceProvider.GetRequiredService<ISender>();
             var item = Guid.Parse("11111111-1111-1111-1111-111111111111");
             Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 80m, 0.2m))).IsSuccess);
-            accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item]))).Value;
+            accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item], Format: format))).Value;
             Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 1, 120m, 0.2m))).IsSuccess);
         }
         var workerServices = new ServiceCollection().AddNexusStackApplication();
@@ -88,7 +126,13 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
         const string expected = "ItemId,Version,Cost,FeeRate,InputRevision,CalculatedRevision,CostingRevision,BreakEvenPrice,CalculationState\r\n"
             + "11111111-1111-1111-1111-111111111111,1,80.0000,0.2000,1,0,0,,Pending\r\n";
-        Assert.Equal(Encoding.UTF8.GetBytes(expected), await downloaded.Content.ReadAsByteArrayAsync());
+        var bytes = await downloaded.Content.ReadAsByteArrayAsync();
+        if (format == "csv") { Assert.Equal(Encoding.UTF8.GetBytes(expected), bytes); }
+        else
+        {
+            Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloaded.Content.Headers.ContentType!.MediaType);
+            PricingWorkbookAssertions.FrozenPendingQuote(bytes);
+        }
         Assert.Equal(completed.Value, (await worker.SendAsync(new PublishPricingExport(delivery))).Value);
     }
 
@@ -245,7 +289,12 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
     }
 
     [PostgresFact]
-    public async Task Expiry_blocks_download_before_cleanup_and_recovery_preserves_expired_publication_history()
+    public Task Expiry_blocks_download_before_cleanup_and_recovery_preserves_expired_publication_history() => VerifyExpiryAsync("csv");
+
+    [PostgresFact]
+    public Task Expired_xlsx_is_not_downloadable_and_replaying_original_publication_after_restart_does_not_extend_its_deadline() => VerifyExpiryAsync("xlsx");
+
+    private async Task VerifyExpiryAsync(string format)
     {
         await using var database = await databases.CreateAsync();
         using var certificates = new GeneratedFileCertificates();
@@ -265,7 +314,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
             await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
             var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
             using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
-            fileId = await StageAsync(producer, uploadId, owner);
+            fileId = await StageAsync(producer, uploadId, owner, format);
             using var published = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/publish", UriKind.Relative), new { publicationId });
             Assert.Equal(HttpStatusCode.OK, published.StatusCode);
             expiresAt = (await published.Content.ReadApiDataAsync()).GetProperty("expiresAt").GetDateTimeOffset();
@@ -1263,12 +1312,22 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
     private static GeneratedFileDescriptionV1 Description(string owner) => new(owner, Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
         "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81", 3, "csv", 1, 1);
 
-    private static async Task<long> StageAsync(HttpClient producer, Guid uploadId, string owner)
+    private static async Task<long> StageAsync(HttpClient producer, Guid uploadId, string owner, string format = "csv")
     {
-        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description(owner));
+        byte[] payload = [1, 2, 3];
+        var description = Description(owner);
+        if (format == "xlsx")
+        {
+            using var workbook = new MemoryStream();
+            await PricingXlsxV1.WriteAsync([new(new NexusStackNext.Pricing.Domain.PriceId(Guid.Parse("11111111-1111-1111-1111-111111111111")), 1, 80m, 0.2m, 1, 0, 0, null)], workbook);
+            payload = workbook.ToArray();
+            PricingWorkbookAssertions.FrozenPendingQuote(payload);
+            description = description with { Format = "xlsx", Length = payload.Length, Sha256 = Convert.ToHexStringLower(SHA256.HashData(payload)) };
+        }
+        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), description);
         Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
         var id = (await registered.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64();
-        using var bytes = new ByteArrayContent([1, 2, 3]);
+        using var bytes = new ByteArrayContent(payload);
         using var sealedFile = await producer.PutAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/content", UriKind.Relative), bytes);
         Assert.Equal(HttpStatusCode.Created, sealedFile.StatusCode);
         return id;

@@ -146,7 +146,9 @@ public sealed class StoredFile : AuditedAggregateRoot<StoredFileId>
     public static StoredFile RegisterCandidate(StoredFileId id, FileCandidate candidate, DateTimeOffset at)
     {
         ArgumentNullException.ThrowIfNull(candidate);
-        return new StoredFile(id, FileName.Create("export.csv").Value, "text/csv; charset=utf-8", candidate.OwnerId, at)
+        var name = candidate.Format == "xlsx" ? "export.xlsx" : "export.csv";
+        var contentType = candidate.Format == "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8";
+        return new StoredFile(id, FileName.Create(name).Value, contentType, candidate.OwnerId, at)
         { Candidate = candidate.Snapshot() };
     }
 

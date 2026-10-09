@@ -25,7 +25,7 @@ public sealed class FileCandidate
         if (string.IsNullOrWhiteSpace(producer) || producer.Length > 32 || uploadId == Guid.Empty || sourceExportId == Guid.Empty
             || string.IsNullOrWhiteSpace(ownerId) || ownerId.Length > 128 || ownerId.Any(char.IsControl)
             || sha256 is null || sha256.Length != 64 || sha256.Any(character => !Uri.IsHexDigit(character))
-            || length is < 1 or > 32 * 1024 * 1024 || format != "csv" || formatVersion != 1 || columnSetVersion != 1)
+            || length is < 1 or > 32 * 1024 * 1024 || format is not ("csv" or "xlsx") || formatVersion != 1 || columnSetVersion != 1)
         { return Result.Failure<FileCandidate>(new Error("files.candidate.invalid", "候选描述无效。")); }
         return Result.Success(new FileCandidate
         {

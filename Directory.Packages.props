@@ -45,6 +45,10 @@
     <PackageVersion Include="StackExchange.Redis" Version="2.13.17" />
     <!-- Scheduling 日历计算；Cronos 为 MIT，不引入第二套调度存储。 -->
     <PackageVersion Include="Cronos" Version="0.13.0" />
+    <!-- Pricing XLSX：官方 Open XML SDK，MIT；传递框架与 ZIP 包装也锁定版本，见第三方通知。 -->
+    <PackageVersion Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <PackageVersion Include="DocumentFormat.OpenXml.Framework" Version="3.5.1" />
+    <PackageVersion Include="System.IO.Packaging" Version="10.0.12" />
   <PackageVersion Include="Aspire.Hosting.AppHost" Version="13.6.0" />
   <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
   <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.19.1" />

@@ -21,6 +21,8 @@ internal static class PricingExportMapping
         export.Property(x => x.CanonicalRequest).HasMaxLength(262_144);
         export.Property(x => x.RequestDigest).HasMaxLength(64);
         export.Property(x => x.SnapshotDigest).HasMaxLength(64);
+        export.Property(x => x.Format).HasMaxLength(8).HasDefaultValue("csv");
+        export.Property(x => x.ArtifactDigest).HasMaxLength(64);
         export.Property(x => x.State).HasMaxLength(24);
         export.Property(x => x.ErrorCode).HasMaxLength(100);
         export.Property(x => x.Producer).HasMaxLength(32);

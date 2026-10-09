@@ -106,9 +106,10 @@ internal sealed class PricingExportControl(PricingDbContext database, PricingExp
 
     private static string SafeError(string code) => code is "pricing.export.files_unavailable" or "pricing.export.unavailable" or "pricing.export.execution_timeout"
         or "pricing.export.storage_unavailable" or "pricing.export.generator_busy" or "pricing.export.file_closed" or "pricing.export.file_not_found"
-        or "pricing.export.snapshot_corrupt" or "pricing.export.invalid_receipt" or "pricing.export.output_limit" ? code : "pricing.export.execution_failed";
+        or "pricing.export.snapshot_corrupt" or "pricing.export.invalid_receipt" or "pricing.export.output_limit"
+        or "pricing.export.candidate_bytes_conflict" or "pricing.export.invalid_workbook" ? code : "pricing.export.execution_failed";
     private static bool Permanent(string code) => code is "pricing.export.file_closed" or "pricing.export.file_not_found" or "pricing.export.snapshot_corrupt"
-        or "pricing.export.invalid_receipt" or "pricing.export.output_limit";
+        or "pricing.export.invalid_receipt" or "pricing.export.output_limit" or "pricing.export.candidate_bytes_conflict" or "pricing.export.invalid_workbook";
     private static Result Lost() => Result.Failure(new Error("pricing.export.lease_lost", "当前发布执行权已失效。"));
     private static Result<ControlState> Unavailable() => Result.Failure<ControlState>(new Error("pricing.export.unavailable", "恢复暂不可用，请读取原工作状态。"));
     private sealed record ControlState(PricingExportStatus Status, PricingExportPublicationLease? Lease);
