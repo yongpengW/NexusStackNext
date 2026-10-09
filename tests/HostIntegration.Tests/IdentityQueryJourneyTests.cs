@@ -36,6 +36,8 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
 
         var user = (await SendAsync(app, new CreateUserCommand("query-reader", "query-test-password"))).Value;
         var role = (await SendAsync(app, new CreateRoleCommand("query-reader", "Query reader"))).Value;
+        var menu = await SendAsync(app, new CreateMenuCommand("Query reader", 1, null));
+        Assert.True(menu.IsSuccess);
         Assert.True((await SendAsync(app, new AssignRoleCommand(user, role))).IsSuccess);
         using var timings = new IdentityQueryTimings(output);
         timings.Start();
@@ -46,8 +48,8 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             Assert.True(permissions.IsSuccess);
             Assert.Empty(permissions.Value);
         }
-        Assert.True((await SendAsync(app, new GrantMenuToRoleCommand(role, 10))).IsSuccess);
-        Assert.True((await SendAsync(app, new CreateApiResourceCommand("/api/identity/users", "GET", 10))).IsSuccess);
+        Assert.True((await SendAsync(app, new GrantMenuToRoleCommand(role, menu.Value.MenuId))).IsSuccess);
+        Assert.True((await SendAsync(app, new CreateApiResourceCommand("/api/identity/users", "GET", menu.Value.MenuId))).IsSuccess);
         foreach (var phase in new[] { QueryPhase.GrantedCold, QueryPhase.GrantedWarm })
         {
             using var measurement = timings.Measure(phase);
@@ -63,7 +65,7 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             acceptedVersion = current.Value;
         }
 
-        Assert.True((await SendAsync(app, new CreateApiResourceCommand("/api/identity/menus", "GET", 10))).IsSuccess);
+        Assert.True((await SendAsync(app, new CreateApiResourceCommand("/api/identity/menus", "GET", menu.Value.MenuId))).IsSuccess);
         await PlatformSettingsAccessTests.LoginAsync(gateway.Client, "query-reader", "query-test-password");
         foreach (var phase in new[] { QueryPhase.HttpCold, QueryPhase.HttpWarm })
         {
@@ -104,10 +106,15 @@ public sealed class IdentityQueryJourneyTests(JourneyDatabaseTemplates databases
             builder.ConfigureTestServices(services =>
             {
                 var original = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(ISessionStateReader));
+                var access = Assert.Single(services, descriptor => descriptor.ServiceType == typeof(IAccessStateReader));
                 Assert.NotNull(original.ImplementationFactory);
+                Assert.NotNull(access.ImplementationFactory);
                 services.Remove(original);
-                services.AddSingleton<ISessionStateReader>(provider => new IdentityQueryTimings.SessionReader(
-                    (ISessionStateReader)original.ImplementationFactory(provider)));
+                services.Remove(access);
+                services.AddSingleton(provider => new IdentityQueryTimings.AuthorityReader(
+                    (ISessionStateReader)original.ImplementationFactory(provider), (IAccessStateReader)access.ImplementationFactory(provider)));
+                services.AddSingleton<ISessionStateReader>(provider => provider.GetRequiredService<IdentityQueryTimings.AuthorityReader>());
+                services.AddSingleton<IAccessStateReader>(provider => provider.GetRequiredService<IdentityQueryTimings.AuthorityReader>());
             });
         }
     }

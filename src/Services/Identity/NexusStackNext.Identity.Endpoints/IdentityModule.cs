@@ -7,6 +7,7 @@ using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Domain.Authorization;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
@@ -132,6 +133,18 @@ public static class IdentityModule
                     title: result.Error.Message, extensions: new Dictionary<string, object?> { ["errorCode"] = result.Error.Code });
         }).RequireAuthorization().Produces<ApiResponse<CurrentSessionV1>>().ProducesApiErrors(401, 503)
             .WithMetadata(new OperationLogSuppression("内部权威读取不产生额外操作观察，来源业务请求仍记录授权结果，避免每次授权放大日志。"));
+
+        endpoints.MapGet("/api/identity/access/v1", async (string permissionKey, ICurrentUser caller, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            if (!TrySubject(caller, out var userId)) { return Results.Unauthorized(); }
+            if (permissionKey.Length > 280 || !PermissionKey.TryParse(permissionKey, out var operation))
+            { return Failure(new("identity.access.key_invalid", "必须提供有界操作权限键。")); }
+            var result = await sender.QueryAsync(new GetCurrentAccessQuery(userId, caller.SessionVersion, operation), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value)
+                : Results.Problem(statusCode: result.Error == SessionValidationErrors.Invalid ? StatusCodes.Status401Unauthorized : StatusCodes.Status503ServiceUnavailable,
+                    title: result.Error.Message, extensions: new Dictionary<string, object?> { ["errorCode"] = result.Error.Code });
+        }).RequireAuthorization().Produces<ApiResponse<CurrentAccessV1>>().ProducesApiErrors(400, 401, 503)
+            .WithMetadata(new OperationLogSuppression("内部当前访问判定不产生额外操作观察；用户业务请求独立保留授权结果。"));
 
         var identity = endpoints.MapGroup("/api/identity").ProducesApiErrors(400, 401, 403, 500, 503);
 
@@ -364,7 +377,28 @@ public static class IdentityModule
                 : responses.Ok(new UserPermissionsResponse(userId, result.Value));
         }).Produces<ApiResponse<UserPermissionsResponse>>().ProducesApiErrors(404).RequirePermission("/api/identity/users/{userId}/permissions", "GET");
 
+        identity.MapPost("/users/{userId:long}/roles/{roleId:long}/revoke", async (long userId, long roleId,
+            UserVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new RevokeRoleCommand(userId, roleId, request.ExpectedVersion), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/users/{userId}/roles/{roleId}/revoke", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.user.role-revoke", "撤销用户角色"));
+
         // ---------- 角色 ----------
+
+        identity.MapGet("/roles/{roleId:long}", async (long roleId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetRoleQuery(roleId), token);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}", "GET").Produces<ApiResponse<RoleView>>().ProducesApiErrors(404);
+
+        identity.MapPut("/roles/{roleId:long}/menus", async (long roleId, ReplaceRoleMenusRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new ReplaceRoleMenusCommand(roleId, request.ExpectedVersion, request.MenuIds), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}/menus", "PUT").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.role.menus-replace", "替换角色菜单授权"));
 
         identity.MapPost("/roles", async (ApiResponses responses,
             CreateRoleRequest request,
@@ -479,12 +513,13 @@ public static class IdentityModule
         statusCode: error.Code switch
         {
             "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
-            "identity.user.not_found" or "identity.role.not_found" or "identity.delivery_recovery.not_found" or "identity.delivery_not_found" => StatusCodes.Status404NotFound,
+            "identity.user.not_found" or "identity.role.not_found" or "identity.menu.not_found" or "identity.delivery_recovery.not_found" or "identity.delivery_not_found" => StatusCodes.Status404NotFound,
             "identity.delivery_conflict" or "identity.delivery_recovery.request_conflict" => StatusCodes.Status409Conflict,
             "identity.delivery_recovery.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.user.conflict" => StatusCodes.Status409Conflict,
+            "identity.role.conflict" => StatusCodes.Status409Conflict,
             "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
@@ -510,6 +545,7 @@ internal sealed record RefreshRequest(string RefreshToken);
 internal sealed record CreateUserRequest(string UserName, string Password);
 
 internal sealed record UserVersionRequest([property: JsonRequired] long ExpectedVersion);
+internal sealed record ReplaceRoleMenusRequest([property: JsonRequired] long ExpectedVersion, [property: JsonRequired] IReadOnlyList<long>? MenuIds);
 internal sealed record OwnPasswordRequest([property: JsonRequired] long ExpectedVersion, string OldPassword, string NewPassword);
 internal sealed record ResetPasswordRequest([property: JsonRequired] long ExpectedVersion, string NewPassword);
 

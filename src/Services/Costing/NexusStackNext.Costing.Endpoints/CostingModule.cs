@@ -106,43 +106,43 @@ public static class CostingModule
             }
             var result = await sender.SendAsync(parsed.Request!, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Accepts<AcceptCostBatch>("application/json").Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(413, 415)
+        }).RequirePermission("/api/costing/batches", "POST").Accepts<AcceptCostBatch>("application/json").Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(413, 415)
             .WithMetadata(new OperationDescription("costing.batch.accept", "受理成本批次"));
         group.MapGet("/batches", async (int? page, int? limit, string? state, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var query = new ListCostBatches(page ?? 1, limit ?? 50, state);
             var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
-        }).Produces<ApiPage<CostBatchStatus>>();
+        }).RequirePermission("/api/costing/batches", "GET").Produces<ApiPage<CostBatchStatus>>();
         group.MapGet("/batches/{batchId:guid}", async (Guid batchId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostBatch(batchId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostBatchStatus>>();
+        }).RequirePermission("/api/costing/batches/{batchId}", "GET").Produces<ApiResponse<CostBatchStatus>>();
         group.MapGet("/batches/{batchId:guid}/rows", async (Guid batchId, int? page, int? limit, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var query = new ListCostBatchRows(batchId, page ?? 1, limit ?? 50);
             var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
-        }).Produces<ApiPage<CostBatchRowStatus>>();
+        }).RequirePermission("/api/costing/batches/{batchId}/rows", "GET").Produces<ApiPage<CostBatchRowStatus>>();
         group.MapGet("/batches/{batchId:guid}/attempts", async (Guid batchId, int? page, int? limit, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var query = new ListCostBatchAttempts(batchId, page ?? 1, limit ?? 50);
             var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
-        }).Produces<ApiPage<CostingAttempt>>();
+        }).RequirePermission("/api/costing/batches/{batchId}/attempts", "GET").Produces<ApiPage<CostingAttempt>>();
         group.MapPost("/batches/{batchId:guid}/retry", async (Guid batchId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new RetryCostBatch(batchId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(415)
+        }).RequirePermission("/api/costing/batches/{batchId}/retry", "POST").Produces<ApiResponse<CostBatchStatus>>(202).ProducesApiErrors(415)
             .WithMetadata(new OperationDescription("costing.batch.retry", "重试批次导入",
                 new OperationSubjectRoute("CostBatch", "batchId", OperationSubjectIdKind.Uuid)));
         group.MapPost("/batches/{batchId:guid}/cancel", async (Guid batchId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new CancelCostBatch(batchId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostBatchStatus>>().ProducesApiErrors(415)
+        }).RequirePermission("/api/costing/batches/{batchId}/cancel", "POST").Produces<ApiResponse<CostBatchStatus>>().ProducesApiErrors(415)
             .WithMetadata(new OperationDescription("costing.batch.cancel", "取消批次导入",
                 new OperationSubjectRoute("CostBatch", "batchId", OperationSubjectIdKind.Uuid)));
         group.MapGet("/audit-capacity", async ([FromKeyedServices("costing")] ICommittedFactCapacityPolicyStore policies,
@@ -150,7 +150,7 @@ public static class CostingModule
         {
             var result = await policies.ReadPolicyAsync(token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(503);
+        }).RequirePermission("/api/costing/audit-capacity", "GET").Produces<ApiResponse<FactCapacityPolicySnapshot>>().ProducesApiErrors(503);
         group.MapPut("/audit-capacity", async (FactCapacityPolicyRequest request, ICurrentUser user, IClock clock,
             IExecutionContext execution, ApiResponses responses, CancellationToken token,
             [FromKeyedServices("costing")] ICommittedFactCapacityPolicyStore policies) =>
@@ -158,7 +158,7 @@ public static class CostingModule
             var result = await policies.AdjustAsync(request, user.UserId ?? string.Empty, clock.UtcNow,
                 execution.Capture(), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 409, 415, 503)
+        }).RequirePermission("/api/costing/audit-capacity", "PUT").Produces<ApiResponse<FactCapacityPolicyReceipt>>().ProducesApiErrors(400, 409, 415, 503)
             .WithMetadata(new OperationDescription("costing.fact-capacity-policy.adjust", "调整所属事实容量策略"));
         group.MapGet("/audit-deliveries", async ([FromServices] ICostingAuditDelivery delivery,
             ApiResponses responses, CancellationToken token, string state = "Pending", int limit = 50) =>
@@ -166,7 +166,7 @@ public static class CostingModule
             if (state is not ("Pending" or "Delivered" or "DeadLettered") || limit is < 1 or > 100)
             { return Failure(new Error("costing.delivery_query.invalid", "投递状态必须为 Pending、Delivered 或 DeadLettered，limit 必须在 1 到 100。")); }
             return (IResult)responses.Ok(await delivery.ListAsync(state, limit, token).ConfigureAwait(false));
-        })
+        }).RequirePermission("/api/costing/audit-deliveries", "GET")
             .Produces<ApiResponse<IReadOnlyList<FactDeliveryState>>>();
 
         group.MapGet("/audit-deliveries/{messageId:guid}", async (Guid messageId,
@@ -174,7 +174,7 @@ public static class CostingModule
         {
             var result = await delivery.GetAsync(messageId, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        })
+        }).RequirePermission("/api/costing/audit-deliveries/{messageId}", "GET")
             .Produces<ApiResponse<FactDeliveryState>>().ProducesApiErrors(404, 503);
 
         group.MapGet("/audit-deliveries/recovery-capacity", async (
@@ -182,7 +182,7 @@ public static class CostingModule
         {
             var capacity = await delivery.ReadRecoveryCapacityAsync(token).ConfigureAwait(false);
             return capacity.IsSuccess ? (IResult)responses.Ok(capacity.Value) : Failure(capacity.Error);
-        })
+        }).RequirePermission("/api/costing/audit-deliveries/recovery-capacity", "GET")
             .Produces<ApiResponse<FactDeliveryRecoveryCapacity>>().ProducesApiErrors(503);
 
         group.MapPost("/audit-deliveries/{messageId:guid}/retry", async (Guid messageId, RetryCostingAuditDeliveryRequest request,
@@ -193,7 +193,7 @@ public static class CostingModule
                 request.ExpectedRetryRevision, request.Reason), user.UserId ?? string.Empty, clock.UtcNow,
                 execution.Capture(), token).ConfigureAwait(false);
             return recovered.IsSuccess ? (IResult)responses.Ok(recovered.Value) : Failure(recovered.Error);
-        })
+        }).RequirePermission("/api/costing/audit-deliveries/{messageId}/retry", "POST")
             .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(409, 415, 503)
             .WithMetadata(new OperationDescription("costing.fact-delivery.recover", "恢复所属事实投递"));
 
@@ -202,58 +202,58 @@ public static class CostingModule
         {
             var receipt = await delivery.GetRecoveryAsync(requestId, token).ConfigureAwait(false);
             return receipt.IsSuccess ? (IResult)responses.Ok(receipt.Value) : Failure(receipt.Error);
-        })
+        }).RequirePermission("/api/costing/audit-deliveries/recoveries/{requestId}", "GET")
             .Produces<ApiResponse<FactDeliveryRecoveryReceipt>>().ProducesApiErrors(404, 503);
 
         group.MapGet("/schedule-receipts/{occurrenceId:guid}", async (Guid occurrenceId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetScheduledCostReceipt(occurrenceId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<ScheduledCostReceipt>>();
+        }).RequirePermission("/api/costing/schedule-receipts/{occurrenceId}", "GET").Produces<ApiResponse<ScheduledCostReceipt>>();
         group.MapPost("/cost", async (UpdateCostInputs request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(request, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415, 503)
+        }).RequirePermission("/api/costing/cost", "POST").Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415, 503)
             .WithMetadata(new OperationDescription("costing.cost.update", "更新成本组成并申请重算"));
         group.MapGet("/tasks/{taskId:guid}/delivery", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostDelivery(taskId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostDeliveryStatus>>();
+        }).RequirePermission("/api/costing/tasks/{taskId}/delivery", "GET").Produces<ApiResponse<CostDeliveryStatus>>();
         group.MapPost("/tasks/{taskId:guid}/delivery/retry", async (Guid taskId, DeliveryRetryRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new RetryCostDelivery(taskId, request.ExpectedDeadLetteredAt), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostDeliveryStatus>>(202).ProducesApiErrors(415);
+        }).RequirePermission("/api/costing/tasks/{taskId}/delivery/retry", "POST").Produces<ApiResponse<CostDeliveryStatus>>(202).ProducesApiErrors(415);
         group.MapGet("/items/{itemId:guid}", async (Guid itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostSheet(itemId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostSheetView>>();
+        }).RequirePermission("/api/costing/items/{itemId}", "GET").Produces<ApiResponse<CostSheetView>>();
         group.MapGet("/tasks", async (int? page, int? limit, string? state, Guid? itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var query = new ListCostCalculations(page ?? 1, limit ?? 50, state, itemId);
             var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
-        }).Produces<ApiPage<CostCalculationSummary>>();
+        }).RequirePermission("/api/costing/tasks", "GET").Produces<ApiPage<CostCalculationSummary>>();
         group.MapPost("/tasks/{taskId:guid}/cancel", async (Guid taskId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new CancelCostingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>().ProducesApiErrors(415)
+        }).RequirePermission("/api/costing/tasks/{taskId}/cancel", "POST").Produces<ApiResponse<CostCalculationStatus>>().ProducesApiErrors(415)
             .WithMetadata(new OperationDescription("costing.task.cancel", "取消计算任务",
                 new OperationSubjectRoute("CostCalculation", "taskId", OperationSubjectIdKind.Uuid)));
         group.MapGet("/tasks/{taskId:guid}", async (Guid taskId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetCostCalculation(taskId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>();
+        }).RequirePermission("/api/costing/tasks/{taskId}", "GET").Produces<ApiResponse<CostCalculationStatus>>();
         group.MapPost("/tasks/{taskId:guid}/retry", async (Guid taskId, RetryRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new RetryCostingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
-        }).Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415)
+        }).RequirePermission("/api/costing/tasks/{taskId}/retry", "POST").Produces<ApiResponse<CostCalculationStatus>>(202).ProducesApiErrors(415)
             .WithMetadata(new OperationDescription("costing.task.retry", "重试成本计算",
                 new OperationSubjectRoute("CostCalculation", "taskId", OperationSubjectIdKind.Uuid)));
         return endpoints;

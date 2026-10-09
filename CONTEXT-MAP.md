@@ -79,6 +79,9 @@
 - **Identity → Costing / Pricing / Gateway 管理面**：当前会话判定包含有效性与权威根身份。
   独立宿主每次授权通过固定 HTTP 契约取得结论，平台模块由 Identity 本机适配器供给；
   登出后的新授权拒绝旧版本，已经接受的后台工作继续。见 [ADR-0027](docs/adr/0027-current-session-authority.md)。
+- **Identity → Costing / Pricing 操作面**：`CurrentAccessV1` 绑定主体、会话与代码声明的单操作键；
+  普通角色许可、根旁路和当前会话来自 Identity 的同一次已提交读取，不缓存最终允许。
+  撤回成功后的新授权拒绝，已经受理的后台工作继续。见 [ADR-0028](docs/adr/0028-current-operation-authority.md)。
 - **不变量**：跨上下文引用是**被测试禁止**的（`Contexts_MustNotReferenceOtherContexts`，
   两层都查：编译产物 + `csproj`），且**八条不变量全部反向验证过**。
 

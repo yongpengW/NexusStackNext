@@ -18,7 +18,7 @@ namespace NexusStackNext.BuildingBlocks.Web;
 public sealed record AuthorizationRequirement(AuthorizationMode Mode, PermissionKey? PermissionKey = null);
 
 /// <summary>
-/// 请求授权过滤器：把预计算的权限集合落到**每个上下文自己的**请求管线上（票据 11）。
+/// 请求授权过滤器：把本次权威会话与操作判定落到每个上下文自己的请求管线上。
 ///
 /// <para><b>认证与授权分离</b>（ADR-0003）：网关验签、上下文授权。这个过滤器只依赖
 /// "已认证的身份"与一个权限检查端口——**它不解析令牌**，也不认识 JWT。</para>
@@ -33,8 +33,8 @@ public sealed record AuthorizationRequirement(AuthorizationMode Mode, Permission
 /// </summary>
 /// <param name="sessions">当前会话的权威校验端口。</param>
 /// <param name="currentUser">已认证身份。</param>
-/// <param name="checker">权限判定。</param>
-public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, ICurrentUser currentUser, IPermissionChecker checker) : IEndpointFilter
+/// <param name="access">本次会话与操作的权威判定。</param>
+public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, ICurrentUser currentUser, IRequestAccessValidator access) : IEndpointFilter
 {
     /// <inheritdoc />
     public async ValueTask<object?> InvokeAsync(
@@ -64,6 +64,20 @@ public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, IC
         var isAuthenticated = currentUser.UserId is not null;
         var isRoot = false;
 
+        if (requirement.Mode == AuthorizationMode.PermissionKey)
+        {
+            if (!isAuthenticated) { return Unauthorized(); }
+            if (requirement.PermissionKey is not { } key) { return Forbidden("端点没有声明操作权限。"); }
+            var decision = await access.ValidateAsync(currentUser.UserId!, currentUser.SessionVersion, key, http.RequestAborted).ConfigureAwait(false);
+            if (decision.IsFailure)
+            {
+                return decision.Error == SessionValidationErrors.Invalid ? Unauthorized()
+                    : Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: SessionValidationErrors.Unavailable.Message,
+                        extensions: new Dictionary<string, object?> { ["errorCode"] = SessionValidationErrors.Unavailable.Code });
+            }
+            return decision.Value ? await next(context).ConfigureAwait(false) : Forbidden("当前身份没有访问该资源的权限。");
+        }
+
         // **撤销检查排在权限之前。** 一个已被撤销的令牌不该继续走后面的判定——
         // 它连"这个身份现在还算不算数"都没过。
         if (isAuthenticated)
@@ -78,33 +92,6 @@ public sealed class NexusStackAuthorizationFilter(ISessionValidator sessions, IC
                         extensions: new Dictionary<string, object?> { ["errorCode"] = SessionValidationErrors.Unavailable.Code });
             }
             isRoot = session.Value.IsRoot;
-        }
-
-        if (requirement.Mode == AuthorizationMode.PermissionKey && isAuthenticated && !isRoot)
-        {
-            var checkedPermissions = await checker
-                .ReadAsync(currentUser!.UserId!, http.RequestAborted)
-                .ConfigureAwait(false);
-
-            if (checkedPermissions.IsFailure)
-            {
-                // **查不出权限就是拒绝。** 一次数据库抖动不该变成一次越权。
-                return Forbidden(checkedPermissions.Error.Message);
-            }
-
-            var decision = AccessPolicy.Decide(
-                isAuthenticated,
-                isRoot,
-                checkedPermissions.Value,
-                requirement.PermissionKey,
-                requirement.Mode);
-
-            return decision switch
-            {
-                AccessDecision.Allowed => await next(context).ConfigureAwait(false),
-                AccessDecision.Unauthenticated => Unauthorized(),
-                _ => Forbidden("当前身份没有访问该资源的权限。"),
-            };
         }
 
         // 其余三档靠身份本身就够，不需要回源查权限。
@@ -176,7 +163,7 @@ public static class AuthorizationServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        // 过滤器依赖 `IPermissionChecker`（通常是 Scoped），所以它自己也必须是 Scoped——
+        // 过滤器依赖当前请求的授权端口，所以它自己也必须是 Scoped——
         // 注册成 Singleton 会变成捕获依赖。
         services.AddScoped<NexusStackAuthorizationFilter>();
 

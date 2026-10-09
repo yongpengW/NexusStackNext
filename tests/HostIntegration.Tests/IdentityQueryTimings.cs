@@ -4,6 +4,7 @@ using System.Globalization;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using NexusStackNext.Auditing.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Domain.Authorization;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Infrastructure.Persistence;
 using Xunit.Abstractions;
@@ -91,15 +92,19 @@ internal sealed class IdentityQueryTimings(ITestOutputHelper output) :
 
     // A test-only decorator of the public reader port identifies its real provider child span.
     // It does not inspect SQL, connection tags or parameters, and does not change the decision.
-    internal sealed class SessionReader(ISessionStateReader inner) : ISessionStateReader, IDisposable
+    internal sealed class AuthorityReader(ISessionStateReader sessions, IAccessStateReader access) : ISessionStateReader, IAccessStateReader
     {
         public async Task<Result<SessionState?>> ReadAsync(long userId, CancellationToken cancellationToken = default)
         {
             using var activity = new Activity(SessionReadActivity).SetIdFormat(ActivityIdFormat.W3C).Start();
-            return await inner.ReadAsync(userId, cancellationToken);
+            return await sessions.ReadAsync(userId, cancellationToken);
         }
 
-        public void Dispose() { if (inner is IDisposable disposable) { disposable.Dispose(); } }
+        public async Task<Result<AccessState?>> ReadAsync(long userId, PermissionKey required, CancellationToken cancellationToken = default)
+        {
+            using var activity = new Activity(SessionReadActivity).SetIdFormat(ActivityIdFormat.W3C).Start();
+            return await access.ReadAsync(userId, required, cancellationToken);
+        }
     }
 
     public void Dispose()

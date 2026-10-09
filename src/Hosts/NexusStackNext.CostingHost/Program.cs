@@ -89,9 +89,9 @@ try
             ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
         };
     });
-    // 样板只向已认证的根操作者开放；后续业务角色必须由本上下文定义。
+    // 会话与操作许可由 Identity 裁决，端点声明操作键，业务对象规则仍由本上下文拥有。
     builder.Services.AddAuthorizationBuilder().AddPolicy("costing-operator", policy =>
-        policy.RequireAuthenticatedUser().AddRequirements(new CurrentRootSessionRequirement()));
+        policy.RequireAuthenticatedUser().AddRequirements(new CurrentOperationRequirement()));
     var app = builder.Build();
     app.UseRouting();
     app.UseCorrelationId();

@@ -98,6 +98,7 @@ internal sealed class IdentityCommandHandler<TCommand>(
         catch (IdentityAuditCapacityException error) { return Result.Failure(error.Reason); }
         catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
         catch (IdentityWriteConflictException) when (command is IExpectedUserVersion) { return Result.Failure(UserLifecycleErrors.Conflict); }
+        catch (IdentityWriteConflictException) when (command is ReplaceRoleMenusCommand) { return Result.Failure(AuthorizationManagementErrors.RoleConflict); }
     }
 }
 

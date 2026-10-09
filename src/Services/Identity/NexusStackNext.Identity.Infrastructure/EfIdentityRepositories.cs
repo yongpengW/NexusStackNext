@@ -210,8 +210,10 @@ public static class IdentityEntityFrameworkServiceCollectionExtensions
 
         services.AddScoped<IUserRepository, EfUserRepository>();
         services.AddScoped<IUserDirectory, EfUserDirectory>();
-        services.AddSingleton<ISessionStateReader>(provider => new PostgresSessionStateReader(connectionString,
+        services.AddSingleton<PostgresSessionStateReader>(provider => new PostgresSessionStateReader(connectionString,
             provider.GetService<IdentitySessionReadOptions>() ?? new()));
+        services.AddSingleton<ISessionStateReader>(provider => provider.GetRequiredService<PostgresSessionStateReader>());
+        services.AddSingleton<IAccessStateReader>(provider => provider.GetRequiredService<PostgresSessionStateReader>());
         services.AddScoped<IRoleRepository, EfRoleRepository>();
         services.AddScoped<IApiResourceRepository, EfApiResourceRepository>();
         services.AddScoped<IMenuTreeRepository, EfMenuTreeRepository>();

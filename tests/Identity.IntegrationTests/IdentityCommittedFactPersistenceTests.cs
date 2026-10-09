@@ -325,8 +325,11 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
     {
         await fixture.ResetAsync();
         await using var provider = IdentityTestHost.Build(fixture.Database.ConnectionString);
+        var menu = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+            .SendAsync(new CreateMenuCommand("Audit resource menu", 1, null)));
+        Assert.True(menu.IsSuccess);
         var created = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
-            .SendAsync(new CreateApiResourceCommand("/private-audit-resource/{id}", "GET", 75701)));
+            .SendAsync(new CreateApiResourceCommand("/private-audit-resource/{id}", "GET", menu.Value.MenuId)));
         Assert.True(created.IsSuccess);
         var rejected = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
             .SendAsync(new CreateApiResourceCommand("", "GET", null)));
@@ -334,13 +337,17 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
         await using var scope = provider.CreateAsyncScope();
         var pending = await scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)
             .ReadPendingAsync(100, DateTimeOffset.UtcNow);
-        var entry = Assert.Single(pending);
-        var fact = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>().Deserialize<IdentityEntityCommittedV1>(entry.Payload);
+        Assert.Equal(3, pending.Count); // MenuTree creation and node addition, plus the one accepted API registration.
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        Assert.Equal(new[] { "created", "node-added" }, pending.Select(entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload))
+            .Where(fact => fact.SubjectType == "menu-tree").Select(fact => fact.Operation).Order(StringComparer.Ordinal));
+        var entry = Assert.Single(pending, entry => serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload).SubjectType == "api-resource");
+        var fact = serializer.Deserialize<IdentityEntityCommittedV1>(entry.Payload);
         Assert.Equal("api-resource", fact.SubjectType);
         Assert.Equal(created.Value.ApiResourceId.ToString(System.Globalization.CultureInfo.InvariantCulture), fact.SubjectId);
         Assert.Equal("registered", fact.Operation);
         Assert.Equal(1, fact.Version);
-        Assert.Equal(new IdentitySubjectReference("menu", 75701), fact.RelatedSubject);
+        Assert.Equal(new IdentitySubjectReference("menu", menu.Value.MenuId), fact.RelatedSubject);
         Assert.DoesNotContain("private-audit-resource", entry.Payload, StringComparison.Ordinal);
     }
 
@@ -590,13 +597,16 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
     {
         await fixture.ResetAsync();
         await using var provider = IdentityTestHost.Build(fixture.Database.ConnectionString);
+        var menu = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
+            .SendAsync(new CreateMenuCommand("Audit role menu", 1, null)));
+        Assert.True(menu.IsSuccess);
         var role = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
             .SendAsync(new CreateRoleCommand("audit-role", "Private role title")));
         Assert.True(role.IsSuccess);
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var granted = await IdentityTestHost.InScopeAsync(provider, services => services.GetRequiredService<ISender>()
-                .SendAsync(new GrantMenuToRoleCommand(role.Value, 701)));
+                .SendAsync(new GrantMenuToRoleCommand(role.Value, menu.Value.MenuId)));
             Assert.True(granted.IsSuccess);
         }
         await using var scope = provider.CreateAsyncScope();
@@ -608,7 +618,7 @@ public sealed class IdentityCommittedFactPersistenceTests(IdentityDatabaseFixtur
         Assert.Equal(new[] { "created", "menu-granted" }, facts.Select(fact => fact.Operation));
         Assert.Equal(new long[] { 1, 2 }, facts.Select(fact => fact.Version));
         Assert.All(facts, fact => Assert.Equal(role.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), fact.SubjectId));
-        Assert.Equal(new IdentitySubjectReference("menu", 701), facts[1].RelatedSubject);
+        Assert.Equal(new IdentitySubjectReference("menu", menu.Value.MenuId), facts[1].RelatedSubject);
         Assert.All(pending, entry => Assert.DoesNotContain("Private role title", entry.Payload, StringComparison.Ordinal));
     }
 

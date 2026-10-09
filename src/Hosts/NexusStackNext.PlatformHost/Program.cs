@@ -212,8 +212,8 @@ app.MapHealthChecks("/health/logging", new HealthCheckOptions
 // 所以它们并到一个进程里**不需要改任何路由**——网关的路由表也只改目标地址。
 //
 // **授权由模块自己声明**，宿主不必记得替每个模块挂一遍。两种机制，按需要选：
-//   · Identity / Platform / Auditing 挂 `NexusStackAuthorizationFilter`——它要算**权限键**（路由模板:方法）
-//     并比对预计算集合，还要查会话版本（撤销），那是 RBAC 的落点；
+//   · Identity / Platform / Auditing 挂 `NexusStackAuthorizationFilter`——按端点声明的权限键（路由模板:方法）
+//     一次读取 Identity 当前已提交会话与许可，不使用诊断权限缓存；
 //   · Files 通过同一过滤器检查有效会话，再判断归属；Scheduling 声明自己的端点授权要求。
 // 两者都是**进程内的**判定：直连后端也绕不过去。（"边缘是唯一入口"是编排的事实，
 // 不是代码的事实——见 AGENTS.md 的部署不变量。）

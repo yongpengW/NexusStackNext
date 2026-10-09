@@ -65,6 +65,14 @@ _Avoid_: root 声明、允许缓存、用户资料、任务执行凭据
 "某个角色的授权集合发生了变化"这一事实。它只表达"变了"，不表达"该谁做什么"。
 _Avoid_: 权限更新、刷新权限
 
+**Current access decision**:
+同一次已提交视图中，当前有效会话对代码声明 Permission key 的许可；包括当前根旁路和有效角色／菜单／API 链。
+只属于本次请求，不从跨请求缓存取得。普通操作撤回不改 Session version，恢复授予可继续使用原有效凭据。
+_Avoid_: 缓存权限集合、对象所有权、持久允许凭据
+
+角色菜单集合按 Role 的 Version 条件替换；用户角色归属按 User 的 Version 条件撤回，只改变拥有该集合的聚合。
+行为及目录生命周期的后续范围见[ADR-0028](../../../docs/adr/0028-current-operation-authority.md)。
+
 **FactCapacityPolicy**:
 本上下文允许保留的业务事实条数、总载荷和单条载荷的额度。
 它治理身份事实的接受能力，不代替 Permission，也不改变已经成立的身份事实。

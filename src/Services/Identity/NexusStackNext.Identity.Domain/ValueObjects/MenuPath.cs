@@ -103,8 +103,8 @@ public sealed class MenuPath : ValueObject
 /// <summary>
 /// API 路由模板，规范化后用于权限键。
 /// <para>
-/// 权限键的格式 <c>路由模板:HTTP方法</c> 沿用参照仓库已验证的预计算设计
-/// （<c>UserContextCacheService.cs:96-119</c>）：鉴权时是一次哈希集合查找，而不是每请求查库。
+/// 权限键的格式 <c>路由模板:HTTP方法</c> 沿用参照仓库的约定。
+/// 当前准入由 Identity 权威读取判定，预计算集合只承担诊断投影。
 /// 把它放在值对象里，是为了让"大小写与格式"只有一处定义——散在各处迟早会不一致。
 /// </para>
 /// </summary>

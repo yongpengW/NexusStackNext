@@ -78,3 +78,10 @@ _Avoid_: CostDelivery、成本计算重试、中央审计完成
 **RetryRevision**:
 所属事实消息的恢复代次。每次实际恢复加一，与观察到的停止时刻一起拒绝过期请求；不属于成本或任务版本。
 _Avoid_: CostRevision、聚合 Version、ExecutionEpoch
+
+**Operation permission**:
+由端点代码的路由模板与方法声明，Identity 每次以当前会话及有效角色链裁决；读、写、任务管理及交付管理分别授予。
+操作许可不改变业务对象的版本／执行代次，也不作为后台已接受任务的执行凭据。
+_Avoid_: 根声明、任务所有权、缓存允许
+
+接口与并发边界见[ADR-0028](../../../docs/adr/0028-current-operation-authority.md)。

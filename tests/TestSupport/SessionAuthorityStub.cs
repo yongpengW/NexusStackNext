@@ -42,6 +42,7 @@ internal sealed class SessionAuthorityStub(WebApplication app) : IAsyncDisposabl
         host.UseAuthentication();
         host.UseAuthorization();
         host.MapGet("/api/identity/session/v1", response ?? CurrentAsync).RequireAuthorization();
+        host.MapGet("/api/identity/access/v1", response ?? AccessAsync).RequireAuthorization();
         try { await host.StartAsync(); return new(host); }
         catch { await host.DisposeAsync(); throw; }
     }
@@ -56,6 +57,19 @@ internal sealed class SessionAuthorityStub(WebApplication app) : IAsyncDisposabl
             success = true,
             code = 200,
             data = new { contractVersion = 1, subject, sessionVersion = 0L.ToString(CultureInfo.InvariantCulture), isRoot = subject is not ("43" or "test-reader") },
+        }));
+    }
+
+    private static Task<IResult> AccessAsync(HttpContext context)
+    {
+        var subject = context.User.FindFirst("sub")?.Value;
+        var version = context.User.FindFirst(NexusStackClaims.Session)?.Value;
+        if (subject is not ("42" or "43" or "admin" or "test-operator" or "test-reader") || version != "0") { return Task.FromResult<IResult>(Results.Unauthorized()); }
+        return Task.FromResult<IResult>(Results.Json(new
+        {
+            success = true,
+            code = 200,
+            data = new { contractVersion = 1, subject, sessionVersion = "0", permissionKey = context.Request.Query["permissionKey"].ToString(), isAllowed = subject is not ("43" or "test-reader") },
         }));
     }
 
