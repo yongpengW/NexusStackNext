@@ -42,6 +42,7 @@ public sealed class UserLifecycleGatewayJourneyTests(JourneyDatabaseTemplates da
             await AssertRevokedAsync(ordinary, old);
             await platform.CrashAsync();
             await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "lifecycle-root-password", settings: settings, listenAddress: platform.Client.BaseAddress);
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
             using var enabled = await root.PostAsJsonAsync(Path($"/api/identity/users/{id}/enable"), new { expectedVersion = await VersionAsync(root, id) });
             Assert.Equal(HttpStatusCode.NoContent, enabled.StatusCode);
             await AssertRevokedAsync(ordinary, old);
