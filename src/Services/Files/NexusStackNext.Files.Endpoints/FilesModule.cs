@@ -53,6 +53,13 @@ public static class FilesModule
         services.AddSingleton(new FileUploadLimits(
             configuration.GetValue<long?>("Files:Upload:MaxBytes") ?? 64 * 1024 * 1024,
             configuration.GetValue<int?>("Files:Upload:MaxConcurrentUploads") ?? 4));
+        services.AddSingleton(new GeneratedFileOptions(
+            configuration.GetValue<long?>("Files:Generated:MaxBytes") ?? 32 * 1024 * 1024,
+            configuration.GetValue<int?>("Files:Generated:MaxConcurrentUploads") ?? 1,
+            configuration.GetValue<int?>("Files:Generated:UploadTimeoutSeconds") ?? 30,
+            configuration.GetValue<int?>("Files:Generated:StageLifetimeSeconds") ?? 86400,
+            configuration.GetValue<int?>("Files:Generated:DownloadLifetimeSeconds") ?? 604800));
+        services.AddScoped<GeneratedFileService>();
         services.AddSingleton(new FileRecoveryOptions(
             configuration.GetValue<int?>("Files:Cleanup:IntervalSeconds") ?? 30,
             configuration.GetValue<int?>("Files:Cleanup:BatchSize") ?? 64,
@@ -262,6 +269,13 @@ public static class FilesModule
                 : responses.Ok(new FileMetadataResponse(file.Id.Value, file.Name.Value, file.ContentType, file.Size, file.IsStored, file.UploadedAt, EntityAuditMetadata.From(file)));
         }).Produces<ApiResponse<FileMetadataResponse>>().ProducesApiErrors(400, 401, 403, 404, 500).RequireAuthorization();
 
+        fileEndpoints.MapGet("/{id:long}/availability", async (long id, GeneratedFileService files,
+            ICurrentUser user, ApiResponses responses, CancellationToken token) =>
+        {
+            var current = await files.OwnedAvailabilityAsync(new StoredFileId(id), user.UserId!, token).ConfigureAwait(false);
+            return current is null ? Failure(new Error("files.not_found", "成果不存在。")) : (IResult)responses.Ok(current);
+        }).Produces<ApiResponse<GeneratedFileAvailabilityV1>>().ProducesApiErrors(401, 403, 404, 503);
+
         // 删除：先软删元数据，再删字节（顺序的理由见 FileService）。
         fileEndpoints.MapDelete("/{id:long}", async (
             ApiResponses responses,
@@ -307,12 +321,14 @@ public static class FilesModule
     /// 本模块自己的错误码 → 状态码映射。
     /// <para>文件不存在、资源超限与普通校验错误有各自的 HTTP 语义。</para>
     /// </summary>
-    private static IResult Failure(Error error) => Results.Problem(
+    internal static IResult Failure(Error error) => Results.Problem(
         title: error.Message,
         statusCode: error.Code switch
         {
             "files.not_found" or "files.delivery_not_found" or "files.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
-            "files.content_missing" => StatusCodes.Status503ServiceUnavailable,
+            "files.content_missing" or "files.candidate.unavailable" => StatusCodes.Status503ServiceUnavailable,
+            "files.candidate.conflict" or "files.candidate.closed" or "files.candidate.not_sealed" => StatusCodes.Status409Conflict,
+            "files.upload_timeout" => StatusCodes.Status408RequestTimeout,
             "files.audit_policy.conflict" or "files.delivery_conflict" or "files.delivery_recovery.request_conflict" => StatusCodes.Status409Conflict,
             "files.audit_policy.control_exhausted" or "files.delivery_recovery.exhausted" => StatusCodes.Status503ServiceUnavailable,
             "files.audit_capacity.exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,

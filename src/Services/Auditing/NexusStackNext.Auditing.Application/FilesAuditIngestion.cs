@@ -23,7 +23,7 @@ public sealed class FilesAuditIngestion(AuditIngestion ingestion, IIntegrationEv
         try { message = serializer.Deserialize<StoredFileCommittedV1>(envelope.Payload); }
         catch (Exception error) when (error is JsonException or InvalidOperationException or ArgumentException) { return false; }
         if (message.EventId != envelope.MessageId || message.FileId <= 0
-            || message.Operation is not ("registered" or "stored" or "deletion-requested" or "cleanup-deferred" or "bytes-removed")) { return false; }
+            || message.Operation is not ("registered" or "stored" or "published" or "expired" or "deletion-requested" or "cleanup-deferred" or "bytes-removed")) { return false; }
         if (message.Execution is { } execution && (!execution.IsValid()
             || execution.TraceId != message.TraceId || (execution.CorrelationId is not null && execution.CorrelationId != message.CorrelationId))) { return false; }
         var fact = new AuditFact(message.EventId, EventName, "files", "files.stored-file." + message.Operation,

@@ -309,16 +309,6 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         await using var context = new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
             .UseNexusStackPostgres(database.ConnectionString, FilesDbContext.SchemaName).Options);
         var migrator = context.GetService<IMigrator>();
-        // Empty control history permits a rollback; arrange actual pre-policy business state there.
-        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token), deadline.Token);
-        await using (var connection = new NpgsqlConnection(database.ConnectionString))
-        {
-            await connection.OpenAsync(deadline.Token);
-            await using var arrange = new NpgsqlCommand("""
-                UPDATE files.fact_capacity SET "MaxRecords" = 2, "MaxPayloadBytes" = 8192, "MaxRecordPayloadBytes" = 2048
-                """, connection);
-            Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
-        }
         await using var storage = FilesCommittedAuditTests.BuildStorage(database.ConnectionString);
         await using var scope = storage.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<IStoredFileRepository>();
@@ -333,6 +323,17 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         Assert.Equal(2, originalFacts.Count);
         var capacityReader = new PostgresCommittedFactCapacityReader<FilesDbContext>(context, "files", new());
         var originalCapacity = (await capacityReader.ReadAsync(deadline.Token)).Value;
+        // Arrange through the current public repository before removing newer columns. The rollback
+        // preserves this ordinary file and its facts as real pre-policy state; no control history exists.
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261004065631_FactCapacityWaitBudget", deadline.Token), deadline.Token);
+        await using (var connection = new NpgsqlConnection(database.ConnectionString))
+        {
+            await connection.OpenAsync(deadline.Token);
+            await using var arrange = new NpgsqlCommand("""
+                UPDATE files.fact_capacity SET "MaxRecords" = 2, "MaxPayloadBytes" = 8192, "MaxRecordPayloadBytes" = 2048
+                """, connection);
+            Assert.Equal(1, await arrange.ExecuteNonQueryAsync(deadline.Token));
+        }
         await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         Assert.False(context.Database.HasPendingModelChanges());
         await using var app = new PersistentIdentityApp(database.ConnectionString, "files-upgrade-root", schedulingWorkerEnabled: false);
@@ -362,6 +363,10 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("files_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004155433_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));
+        // EF can finish newer Down migrations before the protected policy migration refuses.
+        // Restore those optional columns before using the current model; policy history must survive both paths.
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
+        Assert.False(context.Database.HasPendingModelChanges());
         using var after = await client.GetAsync(path, deadline.Token);
         Assert.Equal(HttpStatusCode.OK, after.StatusCode);
         var retained = await after.Content.ReadApiDataAsync();

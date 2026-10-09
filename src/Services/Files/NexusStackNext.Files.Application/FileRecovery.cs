@@ -45,8 +45,9 @@ public sealed class FileRecoveryOptions
 /// <param name="options">轮次与重试上限。</param>
 /// <param name="orphans">持有写入保护的孤儿回收适配器。</param>
 /// <param name="observations">逐文件后台执行观察。</param>
+/// <param name="generated">私有生成成果的到期裁决；普通文件不受此期限影响。</param>
 public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, IClock clock, FileRecoveryOptions options, IOrphanFileStore orphans,
-    IBackgroundExecutionObservation? observations = null)
+    IBackgroundExecutionObservation? observations = null, IGeneratedFileRepository? generated = null)
 {
     /// <summary>尝试清理一次；存储失败留下下一次重试时间。</summary>
     /// <param name="file">已经软删除的文件。</param>
@@ -94,6 +95,27 @@ public sealed class FileRecovery(IFileStore store, IStoredFileRepository files, 
     /// <returns>恢复任务。</returns>
     public async Task RunOnceAsync(CancellationToken cancellationToken = default)
     {
+        if (generated is not null)
+        {
+            foreach (var candidate in await generated.ReadExpiredCandidatesAsync(options.BatchSize, cancellationToken).ConfigureAwait(false))
+            {
+                try
+                {
+                    if (observations is null)
+                    { await generated.ExpireCandidateAsync(candidate.Candidate!.Producer, candidate.Candidate.UploadId, cancellationToken).ConfigureAwait(false); }
+                    else
+                    {
+                        await observations.ObserveAsync(new RecoveryExecutionDescriptor("files.candidate.expire", "stored-file", "int64", candidate.Id.Value.ToString(CultureInfo.InvariantCulture)),
+                            () => Task.FromResult(new BackgroundExecutionInput<StoredFile>(candidate, null)),
+                            async current => (await generated.ExpireCandidateAsync(current.Candidate!.Producer, current.Candidate.UploadId, cancellationToken).ConfigureAwait(false)).IsSuccess,
+                            completed => completed ? BackgroundExecutionOutcome.Completed : BackgroundExecutionOutcome.Deferred,
+                            cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (FileAuditCapacityException) { }
+                catch (FileMetadataConflictException) { }
+            }
+        }
         var pending = await files.PendingDeletionsAsync(clock.UtcNow, options.BatchSize, cancellationToken).ConfigureAwait(false);
         foreach (var file in pending)
         {

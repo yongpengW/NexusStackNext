@@ -12,7 +12,7 @@ using NexusStackNext.Files.Domain.Stored;
 namespace NexusStackNext.Files.Infrastructure;
 
 /// <summary>仅用于开发测试的文件元数据仓储；查询返回快照，提交时比较版本。</summary>
-public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutboxStore
+public sealed partial class InMemoryStoredFileRepository : IStoredFileRepository, IOutboxStore, IGeneratedFileRepository
 {
     private readonly FilesMemoryState _state;
     private readonly StoredFileCommittedFacts _facts;
@@ -52,7 +52,8 @@ public sealed class InMemoryStoredFileRepository : IStoredFileRepository, IOutbo
         using (_state.Capacity.Enter(cancellationToken))
         {
             return Task.FromResult(
-                _state.Files.TryGetValue(id.Value, out var file) && !file.IsDeleted ? file.Snapshot() : null);
+                _state.Files.TryGetValue(id.Value, out var file) && !file.IsDeleted
+                    && (file.Candidate is null || (file.Candidate.PublishedAt is not null && _clock.UtcNow < file.Candidate.ExpiresAt)) ? file.Snapshot() : null);
         }
     }
 
@@ -249,6 +250,7 @@ public static class FilesMemoryServiceCollectionExtensions
             provider.GetRequiredService<StoredFileCommittedFacts>(), provider.GetRequiredService<IClock>(),
             provider.GetService<ICurrentUser>(), provider.GetService<IExecutionContext>()));
         services.AddScoped<IStoredFileRepository>(provider => provider.GetRequiredService<InMemoryStoredFileRepository>());
+        services.AddScoped<IGeneratedFileRepository>(provider => provider.GetRequiredService<InMemoryStoredFileRepository>());
         services.AddKeyedScoped<IOutboxStore>(FilesPersistenceServiceCollectionExtensions.OutboxKey, (provider, _) => provider.GetRequiredService<InMemoryStoredFileRepository>());
         return services;
     }

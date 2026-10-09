@@ -17,6 +17,7 @@
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Certificate" />
     <ProjectReference Include="../../Auditing/NexusStackNext.Auditing.Contracts/NexusStackNext.Auditing.Contracts.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Web/BuildingBlocks.Web.csproj" />
   </ItemGroup>

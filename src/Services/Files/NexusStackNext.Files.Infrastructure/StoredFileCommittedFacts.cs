@@ -18,6 +18,8 @@ internal sealed class StoredFileCommittedFacts(IClock clock, IIntegrationEventSe
         var operations = new List<string>();
         if (before is null) { operations.Add("registered"); }
         if (after.IsStored && (before is null || before.StorageKey != after.StorageKey || before.Size != after.Size)) { operations.Add("stored"); }
+        if (after.Candidate?.PublishedAt is not null && before?.Candidate?.PublishedAt is null) { operations.Add("published"); }
+        if (after.Candidate?.ExpiredAt is not null && before?.Candidate?.ExpiredAt is null) { operations.Add("expired"); }
         if (after.IsDeleted && before?.IsDeleted != true) { operations.Add("deletion-requested"); }
         if (after.NextCleanupAttemptAt is not null && before?.NextCleanupAttemptAt != after.NextCleanupAttemptAt) { operations.Add("cleanup-deferred"); }
         if (after.BytesRemovedAt is not null && before?.BytesRemovedAt != after.BytesRemovedAt) { operations.Add("bytes-removed"); }

@@ -20,6 +20,7 @@
   <ItemGroup Label="宿主">
     <!-- OpenAPI：.NET 10 内置，不引入第三方（参照仓库用的是 Swashbuckle）。 -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.Certificate" Version="10.0.12" />
   <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
     <!-- API 参考界面（只要 UI，文档仍由内置 OpenApi 生成）。MIT 许可，满足 ADR-0008。 -->
     <PackageVersion Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
