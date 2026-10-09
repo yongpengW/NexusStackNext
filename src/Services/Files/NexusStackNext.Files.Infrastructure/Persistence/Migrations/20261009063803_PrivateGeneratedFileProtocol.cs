@@ -154,6 +154,18 @@ namespace NexusStackNext.Files.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql("""
+                SET LOCAL lock_timeout = '2s';
+                SET LOCAL statement_timeout = '5s';
+                LOCK TABLE files.stored_files IN ACCESS EXCLUSIVE MODE;
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM files.stored_files WHERE "Candidate_Producer" IS NOT NULL) THEN
+                        RAISE EXCEPTION USING ERRCODE = 'P0001', CONSTRAINT = 'files_candidate_history_exists',
+                            MESSAGE = 'Accepted generated file history prevents destructive rollback.';
+                    END IF;
+                END $$;
+                """);
             migrationBuilder.DropIndex(
                 name: "IX_stored_files_Candidate_Producer_Candidate_PublicationId",
                 schema: "files",

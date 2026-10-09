@@ -59,4 +59,6 @@ HTTP 失败或 COMMIT 结果未知不立即删除字节；继续沿用[已有写
 
 普通宿主不自动迁移。部署前按[Files 独立迁移入口](private-files.md)执行 `--migrate-files`，增量 `20261009063803_PrivateGeneratedFileProtocol` 在 Files 原存储表追加可空字段、唯一身份及截止索引，保留旧普通文件和审计，不重置已合并迁移历史。开发过程的阶段迁移在提交前收拢为这一份，减少重复模型快照。模板配置默认关闭生产者入口，不提供证书、私钥或连接秘密。
 
+存在任何候选历史时，协议迁移拒绝降级，返回约束名 `files_candidate_history_exists`；包括已删除和到期墓碑。检查前在同一事务取得排他表锁，锁等待最多两秒、语句最多五秒，避免与新登记竞争丢失身份。普通文件且没有候选的库仍可降级。EF 多步降级可能先完成较新的迁移再被旧历史保护拒绝；恢复最新结构后再启动当前模型，不能把一次拒绝理解为整条降级链已原子撤销。
+
 实现与取舍见 [Files ADR-0005](../src/Services/Files/docs/adr/0005-private-generated-files-have-durable-publication-receipts.md)。测试面为真实 HTTPS/HTTP、实际字节、独立迁移与进程恢复；业务结论不靠直接查表。冻结候选整组回归与最终交付证据以 #149 的最新原生记录为准。

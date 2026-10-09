@@ -6,9 +6,13 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.Files.Contracts;
+using NexusStackNext.Files.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
 using Npgsql;
 
@@ -41,16 +45,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
         using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
         var uploadId = Guid.Parse("9360c6b4-2a3a-499d-bd2a-4a663c078cbc");
-        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), new
-        {
-            ownerId = owner,
-            sourceExportId = Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
-            sha256 = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
-            length = 3,
-            format = "csv",
-            formatVersion = 1,
-            columnSetVersion = 1,
-        });
+        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description(owner));
         Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
         var receipt = await registered.Content.ReadApiDataAsync();
         var fileId = receipt.GetProperty("fileId").ReadHttpInt64();
@@ -208,16 +203,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
         using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
         var uploadId = Guid.Parse("2878cd7f-06cc-4d8a-bfbd-21910266b12c");
-        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), new
-        {
-            ownerId = owner,
-            sourceExportId = Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
-            sha256 = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
-            length = 3,
-            format = "csv",
-            formatVersion = 1,
-            columnSetVersion = 1,
-        });
+        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description(owner));
         Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
         var first = await registered.Content.ReadApiDataAsync();
         using var corruptBytes = new ByteArrayContent([1, 2, 4]);
@@ -245,16 +231,11 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
         using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
         var uploadId = Guid.Parse("2532b8a8-f6c4-4d99-a717-3660c64c2e61");
-        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), new
+        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description(owner) with
         {
-            ownerId = owner,
-            sourceExportId = Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
             // Golden digest of a 32 MiB all-zero fixture, fixed independently of the upload implementation.
-            sha256 = "83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302",
-            length = 32 * 1024 * 1024,
-            format = "csv",
-            formatVersion = 1,
-            columnSetVersion = 1,
+            Sha256 = "83ee47245398adee79bd9c0a8bc57b821e92aba10f5f9ade8a5d1fae4d8c4302",
+            Length = 32 * 1024 * 1024,
         });
         Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
         using var bytes = new ByteArrayContent(new byte[32 * 1024 * 1024]);
@@ -362,16 +343,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         Assert.Equal(HttpStatusCode.Conflict, duplicatePublication.StatusCode);
         using var recovery = await producer.GetAsync(new Uri($"/internal/files/v1/publications/{winner}", UriKind.Relative));
         Assert.Equal(fileId, (await recovery.Content.ReadApiDataAsync()).GetProperty("fileId").ReadHttpInt64());
-        using var conflictDescription = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), new
-        {
-            ownerId = "different-owner",
-            sourceExportId = Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
-            sha256 = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
-            length = 3,
-            format = "csv",
-            formatVersion = 1,
-            columnSetVersion = 1,
-        });
+        using var conflictDescription = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description("different-owner"));
         Assert.Equal(HttpStatusCode.Conflict, conflictDescription.StatusCode);
     }
 
@@ -387,16 +359,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
         var uploadId = Guid.Parse("916a4b23-1a28-4b57-a09d-6d043ae146dc");
         var path = new Uri($"/internal/files/v1/uploads/{uploadId}/content", UriKind.Relative);
-        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), new
-        {
-            ownerId = owner,
-            sourceExportId = Guid.Parse("ec2fe299-030a-44ab-929d-57904c2484a4"),
-            sha256 = "039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
-            length = 3,
-            format = "csv",
-            formatVersion = 1,
-            columnSetVersion = 1,
-        });
+        using var registered = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative), Description(owner));
         Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
         var original = await registered.Content.ReadApiDataAsync();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
@@ -867,7 +830,11 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
     {
         await using var database = await databases.CreateAsync();
         using var certificates = new GeneratedFileCertificates();
-        var settings = new Dictionary<string, string>(certificates.Settings) { ["Files__Generated__StageLifetimeSeconds"] = "4" };
+        var settings = new Dictionary<string, string>(certificates.Settings)
+        {
+            ["Files__Generated__StageLifetimeSeconds"] = "4",
+            ["Files__Cleanup__OrphanAgeSeconds"] = "3600",
+        };
         await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
             settings: settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
         await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
@@ -894,21 +861,48 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         await using var transaction = await blocker.BeginTransactionAsync();
         await using (var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(149149, 2)", blocker, transaction)) { await hold.ExecuteNonQueryAsync(); }
         var publishing = producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/publish", UriKind.Relative), new { publicationId = Guid.NewGuid() });
+        var cleanupPid = 0;
         try
         {
             using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(8));
             await using var signal = new NpgsqlCommand("""
-                SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
-                    AND query ILIKE 'COMMIT%' AND wait_event = 'advisory')
-                AND EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
-                    AND query LIKE '%hashtextextended%' AND wait_event = 'advisory')
+                SELECT waiting.pid FROM pg_locks waiting
+                JOIN pg_stat_activity publisher ON publisher.pid = ANY(pg_blocking_pids(waiting.pid))
+                WHERE waiting.locktype = 'advisory' AND NOT waiting.granted
+                    AND waiting.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    AND waiting.classid::bigint = ((hashtextextended(@identity, 149149) >> 32) & 4294967295)
+                    AND waiting.objid::bigint = (hashtextextended(@identity, 149149) & 4294967295)
+                    AND waiting.objsubid = 1
+                    AND publisher.datname = current_database() AND publisher.query ILIKE 'COMMIT%'
+                    AND publisher.wait_event = 'advisory' AND @barrier = ANY(pg_blocking_pids(publisher.pid))
+                LIMIT 1
                 """, observer);
+            signal.Parameters.AddWithValue("identity", "pricing/" + uploadId.ToString("N"));
+            signal.Parameters.AddWithValue("barrier", blocker.ProcessID);
             // Cleanup has selected the old stage deadline and is waiting on the publisher's transaction lock.
-            while (!(bool)(await signal.ExecuteScalarAsync(budget.Token))!) { await Task.Delay(10, budget.Token); }
+            while (true)
+            {
+                if (await signal.ExecuteScalarAsync(budget.Token) is int pid) { cleanupPid = pid; break; }
+                await Task.Delay(10, budget.Token);
+            }
         }
-        finally { await transaction.RollbackAsync(); }
+        finally
+        {
+            await transaction.RollbackAsync();
+            if (cleanupPid == 0) { using var rejected = await publishing; }
+        }
         using var published = await publishing;
         Assert.Equal(HttpStatusCode.OK, published.StatusCode);
+        using var cleanupBudget = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        await using var completed = new NpgsqlCommand("""
+            SELECT NOT EXISTS (SELECT 1 FROM pg_locks WHERE pid = @cleanup AND locktype = 'advisory'
+                AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                AND classid::bigint = ((hashtextextended(@identity, 149149) >> 32) & 4294967295)
+                AND objid::bigint = (hashtextextended(@identity, 149149) & 4294967295) AND objsubid = 1)
+            """, observer);
+        completed.Parameters.AddWithValue("identity", "pricing/" + uploadId.ToString("N"));
+        completed.Parameters.AddWithValue("cleanup", cleanupPid);
+        while (!(bool)(await completed.ExecuteScalarAsync(cleanupBudget.Token))!) { await Task.Delay(10, cleanupBudget.Token); }
         using var receipt = await producer.GetAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/availability", UriKind.Relative));
         Assert.Equal("Available", (await receipt.Content.ReadApiDataAsync()).GetProperty("state").GetString());
         using var download = await host.Client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));
@@ -958,6 +952,167 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
             Assert.True(JsonElement.DeepEquals(sealedReceipt, await recovered.Content.ReadApiDataAsync()));
         }
         finally { foreach (var response in seals) { response.Dispose(); } }
+    }
+
+    [PostgresFact]
+    public Task Staged_candidate_prevents_schema_rollback_and_private_receipt_survives_restart() =>
+        AssertCandidateRollbackRefusedAsync(deleteAfterPublication: false);
+
+    [PostgresFact]
+    public Task Deleted_candidate_prevents_schema_rollback_and_original_receipts_survive_restart() =>
+        AssertCandidateRollbackRefusedAsync(deleteAfterPublication: true);
+
+    [PostgresFact]
+    public async Task Registration_committing_while_schema_rollback_waits_cannot_lose_its_upload_identity()
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
+        await using var observer = new NpgsqlConnection(database.ConnectionString);
+        await observer.OpenAsync();
+        await using (var setup = new NpgsqlCommand("""
+            CREATE FUNCTION files.pause_generated_registration_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW."Payload"::jsonb->>'operation' = 'registered' THEN
+                    PERFORM set_config('lock_timeout', '10s', true);
+                    PERFORM pg_advisory_xact_lock(149149, 3);
+                END IF;
+                RETURN NEW;
+            END $$;
+            CREATE CONSTRAINT TRIGGER pause_generated_registration_commit AFTER INSERT ON files.outbox
+            DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION files.pause_generated_registration_commit();
+            """, observer)) { await setup.ExecuteNonQueryAsync(); }
+        await using var blocker = new NpgsqlConnection(database.ConnectionString);
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using (var hold = new NpgsqlCommand("SELECT pg_advisory_xact_lock(149149, 3)", blocker, transaction)) { await hold.ExecuteNonQueryAsync(); }
+        await using var context = new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
+            .UseNpgsql(database.ConnectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "files")).Options);
+        var migrator = context.GetService<IMigrator>();
+        var uploadId = Guid.NewGuid();
+        var path = new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative);
+        var registering = producer.PostAsJsonAsync(path, Description(owner));
+        Task? migrating = null;
+        var released = false;
+        JsonElement original = default;
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+        try
+        {
+            await using var committing = new NpgsqlCommand("""
+                SELECT pid FROM pg_stat_activity WHERE datname = current_database() AND query ILIKE 'COMMIT%'
+                    AND wait_event = 'advisory' AND @barrier = ANY(pg_blocking_pids(pid)) LIMIT 1
+                """, observer);
+            committing.Parameters.AddWithValue("barrier", blocker.ProcessID);
+            int writerPid;
+            while (true)
+            {
+                if (await committing.ExecuteScalarAsync(budget.Token) is int pid) { writerPid = pid; break; }
+                await Task.Delay(10, budget.Token);
+            }
+            migrating = JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync("20261005051650_ConditionalFactRecovery", budget.Token), budget.Token);
+            await using var waiting = new NpgsqlCommand("""
+                SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'relation' AND NOT granted
+                    AND relation = 'files.stored_files'::regclass
+                    AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                    AND @writer = ANY(pg_blocking_pids(pid)))
+                """, observer);
+            waiting.Parameters.AddWithValue("writer", writerPid);
+            while (!(bool)(await waiting.ExecuteScalarAsync(budget.Token))!) { await Task.Delay(10, budget.Token); }
+            await transaction.RollbackAsync();
+            released = true;
+            using var registered = await registering;
+            Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
+            original = await registered.Content.ReadApiDataAsync();
+            var refusal = await Assert.ThrowsAsync<PostgresException>(() => migrating);
+            Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
+            Assert.Equal("files_candidate_history_exists", refusal.ConstraintName);
+        }
+        finally
+        {
+            try { if (!released) { await transaction.RollbackAsync(); } }
+            finally
+            {
+                try
+                {
+                    // Assertions above observe the outcomes. Drain both tasks without replacing the primary failure.
+                    await Task.WhenAll(registering, migrating ?? Task.CompletedTask).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                    if (registering.IsCompletedSuccessfully) { using var completedRegistration = await registering; }
+                }
+                finally
+                {
+                    using var cleanupBudget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: cleanupBudget.Token), cleanupBudget.Token);
+                }
+            }
+        }
+        using var replayed = await producer.PostAsJsonAsync(path, Description(owner));
+        Assert.Equal(HttpStatusCode.Accepted, replayed.StatusCode);
+        Assert.True(JsonElement.DeepEquals(original, await replayed.Content.ReadApiDataAsync()));
+        Assert.Empty(await context.Database.GetPendingMigrationsAsync());
+    }
+
+    private async Task AssertCandidateRollbackRefusedAsync(bool deleteAfterPublication)
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        using var storage = new JourneyFileStorage();
+        var uploadId = Guid.NewGuid();
+        var publicationId = Guid.NewGuid();
+        JsonElement originalUpload;
+        JsonElement originalPublication = default;
+        long id;
+        await using (var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password", filesRoot: storage.Root,
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler()))
+        {
+            await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+            var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+            using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
+            id = await StageAsync(producer, uploadId, owner);
+            using var staged = await producer.GetAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, staged.StatusCode);
+            originalUpload = await staged.Content.ReadApiDataAsync();
+            if (deleteAfterPublication)
+            {
+                using var published = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/publish", UriKind.Relative), new { publicationId });
+                Assert.Equal(HttpStatusCode.OK, published.StatusCode);
+                originalPublication = await published.Content.ReadApiDataAsync();
+                await DeleteAndWaitAsync(host.Client, id);
+            }
+        }
+        using var budget = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        await using (var context = new FilesDbContext(new DbContextOptionsBuilder<FilesDbContext>()
+            .UseNpgsql(database.ConnectionString, options => options.MigrationsHistoryTable("__EFMigrationsHistory", "files")).Options))
+        {
+            var migrator = context.GetService<IMigrator>();
+            var refusal = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(
+                () => migrator.MigrateAsync("20261005051650_ConditionalFactRecovery", budget.Token), budget.Token));
+            Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
+            Assert.Equal("files_candidate_history_exists", refusal.ConstraintName);
+            Assert.Contains("20261009063803_PrivateGeneratedFileProtocol", await context.Database.GetAppliedMigrationsAsync(budget.Token));
+        }
+        await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password", filesRoot: storage.Root,
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(restarted.Client, "journey-root", "generated-files-root-password");
+        using var recoveringProducer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = restarted.Client.BaseAddress };
+        using var recovered = await recoveringProducer.GetAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+        Assert.True(JsonElement.DeepEquals(originalUpload, await recovered.Content.ReadApiDataAsync()));
+        using var forbidden = await restarted.Client.GetAsync(new Uri($"/api/files/{id}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.NotFound, forbidden.StatusCode);
+        if (deleteAfterPublication)
+        {
+            using var historical = await recoveringProducer.GetAsync(new Uri($"/internal/files/v1/publications/{publicationId}", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.OK, historical.StatusCode);
+            Assert.True(JsonElement.DeepEquals(originalPublication, await historical.Content.ReadApiDataAsync()));
+            using var terminal = await recoveringProducer.GetAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/availability", UriKind.Relative));
+            var state = await terminal.Content.ReadApiDataAsync();
+            Assert.Equal("Deleted", state.GetProperty("state").GetString());
+            Assert.True(state.GetProperty("cleanupCompleted").GetBoolean());
+        }
     }
 
     private static async Task DeleteAndWaitAsync(HttpClient owner, long id)
