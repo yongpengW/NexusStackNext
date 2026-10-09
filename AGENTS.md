@@ -46,7 +46,7 @@ These are not style preferences — each one exists because the previous codebas
 `InvariantCoverage_IsCompleteAndPointsAtRealTests` 失败。
 
 不变量 **4（一个聚合 = 一个事务）没有结构测试**——编译器与程序集引用都管不了它，
-行为由事务管线与九个聚合的版本号测试守着。
+行为由事务管线与十个聚合的版本号测试守着。
 
 不变量 **6（ID 不由环境态生成）原本也没有**，而表里当时给的理由是
 "结构性保证来自不变量 3 的测试（碰不到基础设施就调不到静态生成器）"——
@@ -65,7 +65,7 @@ These are not style preferences — each one exists because the previous codebas
 
 空操作若自增，乐观并发会在**没有冲突的情况下**误报冲突，
 而误报的代价是调用方开始重试或干脆忽略冲突——那时这个机制就废了，且废得很安静。
-**编译器管不了这条**，所以九个聚合每个都有一条"改状态 +1 / 空操作不变"的测试。
+**编译器管不了这条**，所以十个聚合每个都有一条"改状态 +1 / 空操作不变"的测试。
 
 **依赖方向：端口在里，实现在外。**
 

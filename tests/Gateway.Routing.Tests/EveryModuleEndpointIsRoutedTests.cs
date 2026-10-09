@@ -58,18 +58,19 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
     {
         var routes = LoadRoutes(routeFile);
         var allEndpoints = ModuleEndpoints();
-        Assert.Contains(allEndpoints, endpoint => endpoint.Module == "PricingModule");
-        Assert.Contains(allEndpoints, endpoint => endpoint.Module == "CostingModule");
+        Assert.Contains(allEndpoints, endpoint => endpoint is { Context: "Pricing", Module: "PricingModule" });
+        Assert.Contains(allEndpoints, endpoint => endpoint is { Context: "Pricing", Module: "PricingExportsModule" });
+        Assert.Contains(allEndpoints, endpoint => endpoint is { Context: "Costing", Module: "CostingModule" });
         // 默认编排不启动 Pricing；启用样板时，必须同时保留全部平台路由。
-        var endpoints = allEndpoints.Where(endpoint => (includePricing || endpoint.Module != "PricingModule")
-            && (includeCosting || endpoint.Module != "CostingModule")).ToList();
+        var endpoints = allEndpoints.Where(endpoint => (includePricing || endpoint.Context != "Pricing")
+            && (includeCosting || endpoint.Context != "Costing")).ToList();
 
         Assert.NotEmpty(routes);
         Assert.NotEmpty(endpoints);
 
         var orphans = new List<string>();
 
-        foreach (var (module, method, path) in endpoints)
+        foreach (var (_, module, method, path) in endpoints)
         {
             var covered = routes.Any(route =>
                 RouteCovers(route.Path, path) && RouteAllowsMethod(route, method));
@@ -126,10 +127,10 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
     }
 
     /// <summary>把每个模块的 <c>MapGroup</c> 前缀与端点拼成完整路径。</summary>
-    private static List<(string Module, string Method, string Path)> ModuleEndpoints()
+    private static List<(string Context, string Module, string Method, string Path)> ModuleEndpoints()
     {
         var servicesRoot = Path.Combine(RepositoryRoot(), "src", "Services");
-        var found = new List<(string, string, string)>();
+        var found = new List<(string, string, string, string)>();
 
         foreach (var module in Directory.EnumerateFiles(servicesRoot, "*Module.cs", SearchOption.AllDirectories))
         {
@@ -139,6 +140,7 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
             }
 
             var name = Path.GetFileNameWithoutExtension(module);
+            var context = Path.GetRelativePath(servicesRoot, module).Split(Path.DirectorySeparatorChar)[0];
             var text = File.ReadAllText(module);
 
             foreach (Match group in Regex.Matches(text, @"(\w+)\s*=\s*endpoints\.MapGroup\(""([^""]+)""\)"))
@@ -149,14 +151,14 @@ public sealed class EveryModuleEndpointIsRoutedOrDeclaredInternalTests
                 foreach (Match endpoint in Regex.Matches(
                     text, $@"{Regex.Escape(variable)}\.Map(Get|Post|Put|Delete)\(""([^""]*)"""))
                 {
-                    found.Add((name, endpoint.Groups[1].Value.ToUpperInvariant(), prefix + endpoint.Groups[2].Value));
+                    found.Add((context, name, endpoint.Groups[1].Value.ToUpperInvariant(), prefix + endpoint.Groups[2].Value));
                 }
             }
 
             // 直接挂在 endpoints 上的绝对路径。
             foreach (Match endpoint in Regex.Matches(text, @"endpoints\.Map(Get|Post|Put|Delete)\(""(/api/[^""]*)"""))
             {
-                found.Add((name, endpoint.Groups[1].Value.ToUpperInvariant(), endpoint.Groups[2].Value));
+                found.Add((context, name, endpoint.Groups[1].Value.ToUpperInvariant(), endpoint.Groups[2].Value));
             }
         }
 

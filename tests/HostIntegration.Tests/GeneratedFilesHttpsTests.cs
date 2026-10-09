@@ -9,11 +9,18 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.BuildingBlocks.Application;
+using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
 using NexusStackNext.Files.Contracts;
 using NexusStackNext.Files.Infrastructure.Persistence;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.Pricing.Application;
+using NexusStackNext.Pricing.Infrastructure;
+using NexusStackNext.TestSupport;
 using Npgsql;
 
 namespace NexusStackNext.HostIntegration.Tests;
@@ -21,6 +28,130 @@ namespace NexusStackNext.HostIntegration.Tests;
 [Collection(JourneyDatabaseDefinition.Name)]
 public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
 {
+    [PostgresFact]
+    public async Task Pricing_https_adapter_rejects_server_outside_its_explicit_private_trust_roots()
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        using var unrelated = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        var options = certificates.PricingClientOptions(host.Client.BaseAddress!);
+        options.RootCertificatePaths = [unrelated.Settings["Files__Producer__RootCertificatePaths__0"]];
+        await using var services = new ServiceCollection().AddPricingExportFiles(options, "Testing").BuildServiceProvider();
+        using var content = new MemoryStream([1, 2, 3]);
+        var attempted = await services.GetRequiredService<IExportFiles>().StageAsync(new ExportFileUpload(Guid.NewGuid(), Description("probe-owner")), content);
+        Assert.Equal("pricing.export.files_unavailable", attempted.Error.Code);
+    }
+
+    [PostgresFact]
+    public async Task Pricing_export_generates_frozen_csv_through_https_and_completes_original_publication()
+    {
+        await using var platform = await databases.CreateAsync();
+        await using var pricing = await databases.CreateAsync("pricing");
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(platform.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        var services = new ServiceCollection().AddNexusStackApplication();
+        services.AddSingleton<ICurrentUser>(new FixedCurrentUser(owner));
+        services.AddPricingPostgres(pricing.ConnectionString).AddPricingExportPersistence();
+        await using var ownerApp = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+        PricingExportStatus accepted;
+        await using (var scope = ownerApp.CreateAsyncScope())
+        {
+            var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+            var item = Guid.Parse("11111111-1111-1111-1111-111111111111");
+            Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 80m, 0.2m))).IsSuccess);
+            accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item]))).Value;
+            Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 1, 120m, 0.2m))).IsSuccess);
+        }
+        var workerServices = new ServiceCollection().AddNexusStackApplication();
+        workerServices.AddSingleton<ICurrentUser>(new FixedCurrentUser(null));
+        workerServices.AddPricingPostgres(pricing.ConnectionString).AddPricingExportPersistence().AddPricingExportProcessing()
+            .AddPricingExportFiles(certificates.PricingClientOptions(host.Client.BaseAddress!), "Testing");
+        await using var workers = workerServices.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+        await using var work = workers.CreateAsyncScope();
+        var worker = work.ServiceProvider.GetRequiredService<ISender>();
+        var generation = (await worker.SendAsync(new ClaimPricingExport())).Value!;
+        var generated = await worker.SendAsync(new GeneratePricingExport(generation));
+        Assert.True(generated.IsSuccess, generated.Error?.Code);
+        Assert.Equal("Publishing", generated.Value.State);
+        var delivery = (await worker.SendAsync(new ClaimPricingExportPublication())).Value!;
+        var completed = await worker.SendAsync(new PublishPricingExport(delivery));
+        Assert.True(completed.IsSuccess, completed.Error?.Code);
+        Assert.Equal("Succeeded", completed.Value.State);
+        Assert.Equal(accepted.SnapshotDigest, completed.Value.SnapshotDigest);
+        Assert.Null(completed.Value.Audit!.UpdatedBy);
+        using var downloaded = await host.Client.GetAsync(new Uri($"/api/files/{completed.Value.FileId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, downloaded.StatusCode);
+        const string expected = "ItemId,Version,Cost,FeeRate,InputRevision,CalculatedRevision,CostingRevision,BreakEvenPrice,CalculationState\r\n"
+            + "11111111-1111-1111-1111-111111111111,1,80.0000,0.2000,1,0,0,,Pending\r\n";
+        Assert.Equal(Encoding.UTF8.GetBytes(expected), await downloaded.Content.ReadAsByteArrayAsync());
+        Assert.Equal(completed.Value, (await worker.SendAsync(new PublishPricingExport(delivery))).Value);
+    }
+
+    [PostgresFact]
+    public async Task Pricing_https_adapter_seals_original_bytes_and_recovers_same_publication_after_content_deletion()
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        await using var services = new ServiceCollection().AddPricingExportFiles(certificates.PricingClientOptions(host.Client.BaseAddress!), "Testing").BuildServiceProvider();
+        var files = services.GetRequiredService<IExportFiles>();
+        var upload = new ExportFileUpload(Guid.NewGuid(), Description(owner));
+        using var content = new MemoryStream([1, 2, 3]);
+        var staged = await files.StageAsync(upload, content);
+        Assert.True(staged.IsSuccess, staged.Error?.Code);
+        Assert.Equal("pricing", staged.Value.Producer);
+        Assert.Equal(upload.Description, staged.Value.Description);
+        Assert.Equal("Staged", staged.Value.Stage);
+        Assert.True(content.CanRead);
+        Assert.Equal(staged.Value, (await files.StageAsync(upload, content)).Value);
+        var intent = new ExportFilePublication(upload.UploadId, staged.Value.FileId, Guid.NewGuid(), upload.Description);
+        var published = await files.PublishAsync(intent);
+        Assert.True(published.IsSuccess, published.Error?.Code);
+        Assert.Equal("pricing", published.Value.Producer);
+        Assert.Equal(intent.PublicationId, published.Value.PublicationId);
+        Assert.Equal("Available", (await files.AvailabilityAsync(upload.UploadId, staged.Value.FileId)).Value.State);
+        using var download = await host.Client.GetAsync(new Uri($"/api/files/{staged.Value.FileId}", UriKind.Relative));
+        Assert.Equal(new byte[] { 1, 2, 3 }, await download.Content.ReadAsByteArrayAsync());
+        await DeleteAndWaitAsync(host.Client, staged.Value.FileId);
+        Assert.Equal("Deleted", (await files.AvailabilityAsync(upload.UploadId, staged.Value.FileId)).Value.State);
+        Assert.Equal(published.Value, (await files.PublishAsync(intent)).Value);
+    }
+
+    [PostgresFact]
+    public async Task Producer_identity_is_persisted_in_both_upload_and_publication_receipts()
+    {
+        await using var database = await databases.CreateAsync();
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(database.ConnectionString, "generated-files-root-password",
+            settings: certificates.Settings, listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await PlatformSettingsAccessTests.LoginAsync(host.Client, "journey-root", "generated-files-root-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
+        var uploadId = Guid.NewGuid();
+        await StageAsync(producer, uploadId, owner);
+        using var uploaded = await producer.GetAsync(new Uri($"/internal/files/v1/uploads/{uploadId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, uploaded.StatusCode);
+        var staged = await uploaded.Content.ReadApiDataAsync();
+        Assert.True(staged.TryGetProperty("producer", out var producerIdentity), "Upload receipt must identify the authenticated producer.");
+        Assert.Equal("pricing", producerIdentity.GetString());
+        var publicationId = Guid.NewGuid();
+        using var published = await producer.PostAsJsonAsync(new Uri($"/internal/files/v1/uploads/{uploadId}/publish", UriKind.Relative),
+            new GeneratedFilePublicationV1(publicationId));
+        Assert.Equal(HttpStatusCode.OK, published.StatusCode);
+        var publication = await published.Content.ReadApiDataAsync();
+        Assert.Equal("pricing", publication.GetProperty("producer").GetString());
+        using var replay = await producer.GetAsync(new Uri($"/internal/files/v1/publications/{publicationId}", UriKind.Relative));
+        Assert.True(JsonElement.DeepEquals(publication, await replay.Content.ReadApiDataAsync()));
+    }
+
     [PostgresFact]
     public async Task Explicit_private_intermediate_chain_allows_only_the_mapped_producer()
     {

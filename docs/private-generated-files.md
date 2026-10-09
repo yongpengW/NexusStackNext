@@ -31,6 +31,8 @@ Contracts 属于 Files。调用方只依赖 `NexusStackNext.Files.Contracts`，�
 
 UploadId 和 PublicationId 均由来源持久工作提供，且非空；两者分别在 Producer 命名空间内唯一。同身份同描述/字节保留原 FileId、时间及期限，异描述、Owner、来源或内容为 409，不能用另一发布身份替换同一成果。其他 Producer 只能看到不存在。UploadReceipt 的 Pending/Staged 是封存历史，PublicationReceipt 是首次发布历史，均不表示现在可下载。
 
+两类回执明确返回原候选的 `producer`，来源于首次证书认证并持久保存的命名空间。它不是正文指定的身份；调用方除验证 Owner、来源导出、摘要、长度、版本及候选身份外，还须与自身预期 Producer 对照，空值或不匹配均不能当作成功。
+
 Availability 为 Pending / Staged / Available / Expired / Deleted / StorageUnavailable。`cleanupCompleted` 单独表示已提交字节清除完成，默认 false；到期、删除、404 均不能替代它。发布回执在到期/删除后仍可恢复，重放不得续期或复活。
 
 ## 预算与恢复

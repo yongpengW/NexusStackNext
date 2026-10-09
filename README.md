@@ -48,6 +48,10 @@ tests/
 运行与故障恢复见 [成本与定价协作](docs/costing-pricing-cooperation.md)。多机高可用在全部能力之后单独安排。
 
 Pricing 普通查询可启用 Redis：共享缓存、同事务失效意图、迟到回填保护，以及有并发预算的故障回源。
+
+Pricing 可显式启用[私有报价 CSV 导出](docs/pricing-private-exports.md)：本地冻结精确快照，
+有界后台生成，经 Files 私有 HTTPS 协议可靠发布，并提供当前用户自己的下载中心。
+默认关闭；实现与完整故障验收分别由 #150 / #151 承载，阶段完成以原生票据为准。
 这是最终一致查询缓存；配置、TTL、容量与恢复边界见 [定价查询缓存](docs/pricing-query-cache.md)。
 
 HTTP 的全部 Int64 以字符串返回，保留 NS / PoS 的浏览器精度保护。客户端迁移、OpenAPI 与 Node.js 24 测试要求见 [HTTP Int64 契约](docs/http-int64-contract.md)。

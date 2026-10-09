@@ -2,5 +2,6 @@
   <ItemGroup>
     <ProjectReference Include="../NexusStackNext.Pricing.Domain/NexusStackNext.Pricing.Domain.csproj" />
     <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../Files/NexusStackNext.Files.Contracts/NexusStackNext.Files.Contracts.csproj" />
   </ItemGroup>
 </Project>

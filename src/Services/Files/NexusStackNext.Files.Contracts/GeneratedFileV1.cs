@@ -20,7 +20,11 @@ public sealed record GeneratedFileDescriptionV1(string OwnerId, Guid SourceExpor
 /// <param name="SealedAt">首次完整封存时间。</param>
 /// <param name="Description">不可变完整描述。</param>
 public sealed record GeneratedFileReceiptV1(long FileId, Guid UploadId, string Stage, DateTimeOffset AcceptedAt,
-    DateTimeOffset StageExpiresAt, DateTimeOffset? SealedAt, GeneratedFileDescriptionV1 Description);
+    DateTimeOffset StageExpiresAt, DateTimeOffset? SealedAt, GeneratedFileDescriptionV1 Description)
+{
+    /// <summary>首次登记持久保存的证书生产者命名空间；调用方必须与预期来源校验。</summary>
+    public string Producer { get; init; } = string.Empty;
+}
 
 /// <summary>发布请求；不能用另一身份替换成果。</summary>
 /// <param name="PublicationId">生产者唯一发布身份。</param>
@@ -34,7 +38,11 @@ public sealed record GeneratedFilePublicationV1(Guid PublicationId);
 /// <param name="ExpiresAt">首次下载截止时间。</param>
 /// <param name="Description">不可变完整描述。</param>
 public sealed record GeneratedFilePublicationReceiptV1(long FileId, Guid UploadId, Guid PublicationId,
-    DateTimeOffset PublishedAt, DateTimeOffset ExpiresAt, GeneratedFileDescriptionV1 Description);
+    DateTimeOffset PublishedAt, DateTimeOffset ExpiresAt, GeneratedFileDescriptionV1 Description)
+{
+    /// <summary>原候选持久保存的证书生产者命名空间，不由发布请求指定。</summary>
+    public string Producer { get; init; } = string.Empty;
+}
 
 /// <summary>当前可用性，不替代历史发布裁决。</summary>
 /// <param name="FileId">原文件。</param>

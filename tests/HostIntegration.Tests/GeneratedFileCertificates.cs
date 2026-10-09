@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using NexusStackNext.Pricing.Infrastructure;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
@@ -84,6 +85,23 @@ internal sealed class GeneratedFileCertificates : IDisposable
     }
 
     public X509Certificate2 CreateUnapprovedProducer() => CreateLeaf("unapproved", "1.3.6.1.5.5.7.3.2", server: false);
+
+    public PricingExportFilesOptions PricingClientOptions(Uri baseAddress)
+    {
+        var certificatePath = Path.Combine(_directory, "pricing-client.pem");
+        var keyPath = Path.Combine(_directory, "pricing-client-key.pem");
+        File.WriteAllText(certificatePath, Producer.ExportCertificatePem());
+        using var key = Producer.GetRSAPrivateKey()!;
+        File.WriteAllText(keyPath, key.ExportPkcs8PrivateKeyPem());
+        return new PricingExportFilesOptions
+        {
+            BaseAddress = baseAddress.AbsoluteUri,
+            ClientCertificatePath = certificatePath,
+            ClientKeyPath = keyPath,
+            RootCertificatePaths = [Settings["Files__Producer__RootCertificatePaths__0"]],
+            RevocationMode = X509RevocationMode.NoCheck,
+        };
+    }
 
     public X509Certificate2 CreateRejectedProducer(string reason) => reason switch
     {
