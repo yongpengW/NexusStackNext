@@ -1,5 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,6 +9,7 @@ using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
@@ -17,6 +20,53 @@ namespace NexusStackNext.HostIntegration.Tests;
 [Collection(JourneyDatabaseDefinition.Name)]
 public sealed class PricingExportResourceRecoveryTests(JourneyDatabaseTemplates databases)
 {
+    [PostgresFact]
+    public async Task Pending_xlsx_with_different_zip_bytes_keeps_its_original_upload_identity_and_cannot_be_overwritten_or_retried_as_new_content()
+    {
+        await using var platform = await databases.CreateAsync();
+        await using var pricing = await databases.CreateAsync("pricing");
+        using var certificates = new GeneratedFileCertificates();
+        await using var host = await PlatformHostProcess.StartAsync(platform.ConnectionString, "export-test-password", settings: certificates.Settings,
+            listenAddress: new Uri("https://127.0.0.1:0"), httpHandler: certificates.CreateHandler());
+        await UserLifecycleHttpTests.LoginAsync(host.Client, "journey-root", "export-test-password");
+        var owner = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
+        await using var transport = new ServiceCollection().AddPricingExportFiles(certificates.PricingClientOptions(host.Client.BaseAddress!), "Testing").BuildServiceProvider();
+        using var storage = new JourneyFileStorage();
+        await using var app = Application(pricing.ConnectionString, owner, transport.GetRequiredService<IExportFiles>(), new PricingExportOptions { TemporaryDirectory = storage.Root });
+        await using var scope = app.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var item = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 80m, 0.2m))).IsSuccess);
+        var accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item], Format: "xlsx"))).Value;
+        var lease = (await sender.SendAsync(new ClaimPricingExport())).Value!;
+        using var content = new MemoryStream();
+        await PricingXlsxV1.WriteAsync([new(new(item), 1, 80m, 0.2m, 1, 0, 0, null)], content);
+        var original = content.ToArray();
+        // Standard ZIP comment changes bytes without changing the frozen worksheet values.
+        Assert.Equal(new byte[] { 0x50, 0x4b, 0x05, 0x06 }, original[^22..^18]);
+        var comment = Encoding.UTF8.GetBytes("Original pending workbook");
+        original[^2] = checked((byte)comment.Length);
+        var different = original.Concat(comment).ToArray();
+        PricingWorkbookAssertions.FrozenPendingQuote(different);
+        var description = new GeneratedFileDescriptionV1(owner, accepted.ExportId, Convert.ToHexStringLower(SHA256.HashData(different)), different.Length, "xlsx", 1, 1);
+        using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
+        var path = new Uri($"/internal/files/v1/uploads/{lease.UploadId}", UriKind.Relative);
+        using var registered = await producer.PostAsJsonAsync(path, description);
+        Assert.Equal(HttpStatusCode.Accepted, registered.StatusCode);
+        var receipt = await registered.Content.ReadApiDataAsync();
+        Assert.Equal("Pending", receipt.GetProperty("stage").GetString());
+        var generated = await sender.SendAsync(new GeneratePricingExport(lease));
+        Assert.Equal("pricing.export.candidate_bytes_conflict", generated.Error.Code);
+        Assert.True((await sender.SendAsync(new FailPricingExport(accepted.ExportId, lease.Epoch, generated.Error.Code))).IsSuccess);
+        var failed = (await sender.QueryAsync(new GetPricingExport(accepted.ExportId))).Value;
+        Assert.Equal("Failed", failed.State);
+        Assert.Null(failed.FileId);
+        Assert.Equal("pricing.export.retry_conflict", (await sender.SendAsync(new RetryPricingExport(accepted.ExportId, failed.Version))).Error.Code);
+        using var unchanged = await producer.GetAsync(path);
+        Assert.True(System.Text.Json.JsonElement.DeepEquals(receipt, await unchanged.Content.ReadApiDataAsync()));
+        Assert.Empty(Directory.EnumerateFiles(storage.Root, "*.xlsx.tmp", SearchOption.AllDirectories));
+    }
+
     [PostgresFact]
     public async Task Unavailable_configured_temp_storage_leaves_no_selected_file_and_releases_slot_so_original_lease_can_recover()
     {
@@ -54,7 +104,7 @@ public sealed class PricingExportResourceRecoveryTests(JourneyDatabaseTemplates 
         Assert.True(recovered.IsSuccess, recovered.Error?.Code);
         Assert.Equal("Publishing", recovered.Value.State);
         Assert.Equal(accepted.SnapshotDigest, recovered.Value.SnapshotDigest);
-        Assert.Empty(Directory.EnumerateFiles(storage.Root, "*.csv.tmp", SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(storage.Root, "*.tmp", SearchOption.AllDirectories));
     }
 
     private static ServiceProvider Application(string connectionString, string owner, IExportFiles files, PricingExportOptions options)
@@ -67,7 +117,12 @@ public sealed class PricingExportResourceRecoveryTests(JourneyDatabaseTemplates 
     }
 
     [PostgresFact]
-    public async Task Actual_generation_output_limit_releases_temp_file_and_slot_without_selecting_an_artifact()
+    public Task Actual_generation_output_limit_releases_temp_file_and_slot_without_selecting_an_artifact() => VerifyOutputLimitAsync("csv");
+
+    [PostgresFact]
+    public Task Xlsx_output_limit_releases_temp_file_and_slot_without_selecting_a_partial_workbook() => VerifyOutputLimitAsync("xlsx");
+
+    private async Task VerifyOutputLimitAsync(string format)
     {
         await using var platform = await databases.CreateAsync();
         await using var pricing = await databases.CreateAsync("pricing");
@@ -78,13 +133,21 @@ public sealed class PricingExportResourceRecoveryTests(JourneyDatabaseTemplates 
         var ownerId = new JwtSecurityTokenHandler().ReadJwtToken(host.Client.DefaultRequestHeaders.Authorization!.Parameter!).Subject;
         await using var transport = new ServiceCollection().AddPricingExportFiles(certificates.PricingClientOptions(host.Client.BaseAddress!), "Testing").BuildServiceProvider();
         using var storage = new JourneyFileStorage();
+        long maximum = 1;
+        if (format == "xlsx")
+        {
+            using var complete = new MemoryStream();
+            await PricingXlsxV1.WriteAsync([new(new(Guid.Parse("11111111-1111-1111-1111-111111111111")), 1, 80m, 0.2m, 1, 0, 0, null)], complete);
+            // Permit all package entries but cut the last byte of the standard ZIP end record.
+            maximum = complete.Length - 1;
+        }
         await using var app = Application(pricing.ConnectionString, ownerId, transport.GetRequiredService<IExportFiles>(),
-            new PricingExportOptions { MaxOutputBytes = 1, TemporaryDirectory = storage.Root });
+            new PricingExportOptions { MaxOutputBytes = maximum, TemporaryDirectory = storage.Root });
         await using var scope = app.CreateAsyncScope();
         var sender = scope.ServiceProvider.GetRequiredService<ISender>();
-        var item = Guid.NewGuid();
+        var item = Guid.Parse("11111111-1111-1111-1111-111111111111");
         Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 80m, 0.2m))).IsSuccess);
-        var accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item]))).Value;
+        var accepted = (await sender.SendAsync(new AcceptPricingExport(Guid.NewGuid(), [item], Format: format))).Value;
         var lease = (await sender.SendAsync(new ClaimPricingExport())).Value!;
         Assert.Equal("pricing.export.output_limit", (await sender.SendAsync(new GeneratePricingExport(lease))).Error.Code);
         Assert.Equal("pricing.export.output_limit", (await sender.SendAsync(new GeneratePricingExport(lease))).Error.Code);
@@ -93,7 +156,10 @@ public sealed class PricingExportResourceRecoveryTests(JourneyDatabaseTemplates 
         Assert.Null(status.FileId);
         Assert.Null(status.PublicationId);
         Assert.Equal(0, status.ConfirmedGeneratedRows);
-        Assert.Empty(Directory.EnumerateFiles(storage.Root, "*.csv.tmp", SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(storage.Root, "*.tmp", SearchOption.AllDirectories));
+        using var producer = new HttpClient(certificates.CreateHandler(certificates.Producer)) { BaseAddress = host.Client.BaseAddress };
+        using var absent = await producer.GetAsync(new Uri($"/internal/files/v1/uploads/{lease.UploadId}", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode);
         Assert.True((await sender.SendAsync(new CancelPricingExport(accepted.ExportId, status.Version))).IsSuccess);
     }
 

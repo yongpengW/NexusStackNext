@@ -77,7 +77,8 @@ internal sealed class PricingExportPublicationExecution(PricingDbContext databas
             var intent = await database.ExportPublications.SingleOrDefaultAsync(x => x.ExportId == export.Id, budget.Token).ConfigureAwait(false);
             if (intent is null || intent.PublicationId != command.Lease.PublicationId) { return Lost<PricingExportStatus>(); }
             var receipt = command.Receipt;
-            var expected = new GeneratedFileDescriptionV1(export.OwnerId, export.Id.Value, export.SnapshotDigest, export.SnapshotLength, "csv", 1, 1);
+            var expected = export.ArtifactDigest is { } digest && export.ArtifactLength is { } length
+                ? new GeneratedFileDescriptionV1(export.OwnerId, export.Id.Value, digest, length, export.Format, 1, 1) : null;
             if (receipt is null || receipt.Producer != intent.Producer || receipt.FileId != intent.FileId || receipt.UploadId != intent.UploadId
                 || receipt.PublicationId != intent.PublicationId || receipt.Description != expected || receipt.PublishedAt == default || receipt.ExpiresAt <= receipt.PublishedAt)
             { return Result.Failure<PricingExportStatus>(new Error("pricing.export.invalid_receipt", "成果回执与原发布意图不一致。")); }

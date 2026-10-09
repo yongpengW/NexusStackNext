@@ -2,7 +2,6 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
-using NexusStackNext.Files.Contracts;
 using NexusStackNext.Pricing.Application;
 using Npgsql;
 
@@ -97,13 +96,15 @@ internal sealed class PricingExportExecution(PricingDbContext database, PricingE
                 .SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
             if (export is null) { return Failure("pricing.export.lease_lost", "当前执行权已失效。"); }
             var receipt = command.Receipt;
-            var expected = new GeneratedFileDescriptionV1(export.OwnerId, export.Id.Value, export.SnapshotDigest, export.SnapshotLength, "csv", 1, 1);
+            var description = receipt?.Description;
             if (receipt is null || receipt.FileId <= 0 || receipt.UploadId != export.UploadId || receipt.Producer != "pricing"
                 || receipt.Stage != "Staged" || receipt.AcceptedAt == default || receipt.StageExpiresAt <= receipt.AcceptedAt
-                || receipt.SealedAt is null || receipt.SealedAt < receipt.AcceptedAt || receipt.SealedAt >= receipt.StageExpiresAt || receipt.Description != expected)
+                || receipt.SealedAt is null || receipt.SealedAt < receipt.AcceptedAt || receipt.SealedAt >= receipt.StageExpiresAt
+                || description is null || description.OwnerId != export.OwnerId || description.SourceExportId != export.Id.Value
+                || description.Format != export.Format || description.FormatVersion != 1 || description.ColumnSetVersion != 1)
             { return Failure("pricing.export.invalid_receipt", "成果回执与原快照不一致。"); }
             var now = await database.DatabaseTimeAsync(budget.Token).ConfigureAwait(false);
-            var selected = export.SelectPublication(command.Epoch, now, receipt.FileId, command.PublicationId, receipt.Producer);
+            var selected = export.SelectPublication(command.Epoch, now, receipt.FileId, command.PublicationId, receipt.Producer, description.Sha256, description.Length);
             if (selected.IsFailure) { return Result.Failure<PricingExportStatus>(selected.Error); }
             if (selected.Value)
             {

@@ -74,7 +74,7 @@ PricingHost 默认 `Pricing:Exports:Enabled=false`。启用时显式装配端口
 
 CSV 是 UTF-8、无 BOM、CRLF 换行，列与次序固定。Int64 输出完整十进制文本，金额输出四位小数；空值为空单元格。数据只包含固定类型及固定枚举，没有用户自由文本或公式列。例：`9223372036854775807` 在 CSV 中保持十九位字符。
 
-双击 CSV 让 Excel 自动识别类型，不能保证原精度。Excel 数值最多保留十五位有效数字；给字段加引号也不能保证关闭类型推断。保留标识、版本、修订号或金额精确文本时，使用“从文本/CSV”导入，在加载前将对应列指定为文本；不要先转换为数值再改文本。参见 [Microsoft 的大数字说明](https://support.microsoft.com/en-us/excel/keeping-leading-zeros-and-large-numbers)。当前交付是 CSV，没有声称提供 Excel 工作簿。
+双击 CSV 让 Excel 自动识别类型，不能保证原精度。Excel 数值最多保留十五位有效数字；给字段加引号也不能保证关闭类型推断。保留标识、版本、修订号或金额精确文本时，使用“从文本/CSV”导入，在加载前将对应列指定为文本；不要先转换为数值再改文本。参见 [Microsoft 的大数字说明](https://support.microsoft.com/en-us/excel/keeping-leading-zeros-and-large-numbers)。CSV 行为保持；需要直接打开且保留精确文本的工作簿时，使用显式 `format=xlsx`，见 [XLSX 契约及容量](pricing-private-xlsx.md)。
 
 每个请求、快照行数、单个生成文件、执行代次和每宿主生成名额都有界。待处理委托总数、全部冻结快照的数据库占用及永久身份历史没有全局配额；这些限制不能推导出系统总磁盘占用有界。上线容量规划需要单独处理准入配额和保留策略，同时保持旧身份不会重新接纳。
 

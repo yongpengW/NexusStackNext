@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
-internal enum GeneratedFileFaultPoint { BeforeContent, AfterPublication }
+internal enum GeneratedFileFaultPoint { BeforeContent, AfterContent, AfterPublication }
 
 // Real HTTPS on both sides. The fixture accepts only its exact temporary producer credential;
 // the actual Files host still verifies that credential and persists the real operation.
@@ -88,9 +88,13 @@ internal sealed class GeneratedFileReplyFault(WebApplication application, HttpCl
             // Buffer only the protocol reply (up to 16 KiB); artifact bytes pass in the request stream.
             var body = await response.Content.ReadAsByteArrayAsync(context.RequestAborted);
             Assert.InRange(body.Length, 0, 16_384);
-            if (point == GeneratedFileFaultPoint.AfterPublication && HttpMethods.IsPost(context.Request.Method)
-                && path.EndsWith("/publish", StringComparison.Ordinal) && response.IsSuccessStatusCode && Interlocked.Exchange(ref _armed, 0) == 1)
+            if (((point == GeneratedFileFaultPoint.AfterPublication && HttpMethods.IsPost(context.Request.Method)
+                    && path.EndsWith("/publish", StringComparison.Ordinal))
+                || (point == GeneratedFileFaultPoint.AfterContent && HttpMethods.IsPut(context.Request.Method)
+                    && path.EndsWith("/content", StringComparison.Ordinal)))
+                && response.IsSuccessStatusCode && Interlocked.Exchange(ref _armed, 0) == 1)
             {
+                if (point == GeneratedFileFaultPoint.AfterContent) { ObservedUploadId = Guid.Parse(path.Split('/')[^2]); }
                 _arrived.TrySetResult();
                 await _release.Task.WaitAsync(TimeSpan.FromSeconds(20), context.RequestAborted);
                 context.Abort();

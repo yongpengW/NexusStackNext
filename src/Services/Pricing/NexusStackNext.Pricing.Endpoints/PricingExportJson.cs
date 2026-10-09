@@ -7,7 +7,7 @@ namespace NexusStackNext.Pricing.Endpoints;
 
 internal static class PricingExportJson
 {
-    private static readonly HashSet<string> Fields = new(StringComparer.Ordinal) { "requestId", "itemIds", "calculationState", "formatVersion", "columnSetVersion" };
+    private static readonly HashSet<string> Fields = new(StringComparer.Ordinal) { "requestId", "itemIds", "calculationState", "format", "formatVersion", "columnSetVersion" };
 
     public static async Task<Result<AcceptPricingExport>> ReadAsync(HttpRequest request, CancellationToken token)
     {
@@ -55,7 +55,13 @@ internal static class PricingExportJson
             {
                 if (root.TryGetProperty(field, out var version) && (version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 1)) { return Invalid(); }
             }
-            return Result.Success(new AcceptPricingExport(requestId, Array.AsReadOnly(ids), state));
+            var format = "csv";
+            if (root.TryGetProperty("format", out var selectedFormat))
+            {
+                if (selectedFormat.ValueKind != JsonValueKind.String || selectedFormat.GetString() is not ("csv" or "xlsx")) { return Invalid(); }
+                format = selectedFormat.GetString()!;
+            }
+            return Result.Success(new AcceptPricingExport(requestId, Array.AsReadOnly(ids), state, Format: format));
         }
         catch (JsonException) { return Invalid(); }
     }

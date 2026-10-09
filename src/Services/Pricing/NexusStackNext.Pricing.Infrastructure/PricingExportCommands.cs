@@ -24,10 +24,10 @@ internal sealed class PricingExportCommands(PricingDbContext database, ICurrentU
         { return Failure("pricing.export.unauthenticated", "导出需要当前有效身份。"); }
         if (command.RequestId == Guid.Empty || command.ItemIds is null || command.ItemIds.Count > 5000
             || command.ItemIds.Contains(Guid.Empty) || command.CalculationState is not ("Any" or "Pending" or "Stale" or "Current")
-            || command.FormatVersion != 1 || command.ColumnSetVersion != 1)
+            || command.FormatVersion != 1 || command.ColumnSetVersion != 1 || command.Format is not ("csv" or "xlsx"))
         { return Failure("pricing.export.invalid", "导出请求或筛选无效。"); }
         var ids = command.ItemIds.Distinct().OrderBy(static id => id.ToString("D"), StringComparer.Ordinal).ToArray();
-        var canonical = "pricing-export-request/v1\ncsv/1/columns/1\n" + command.CalculationState + "\n"
+        var canonical = "pricing-export-request/v1\n" + command.Format + "/1/columns/1\n" + command.CalculationState + "\n"
             + string.Join(',', ids.Select(static id => id.ToString("D")));
         var requestDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -71,7 +71,7 @@ internal sealed class PricingExportCommands(PricingDbContext database, ICurrentU
             var snapshotDigest = Convert.ToHexStringLower(SHA256.HashData(csv.GetBuffer().AsSpan(0, checked((int)csv.Length))));
             var acceptedAt = await database.DatabaseTimeAsync(budget.Token).ConfigureAwait(false);
             var accepted = PricingExport.Accept(new PricingExportId(Guid.NewGuid()), owner, command.RequestId, canonical,
-                requestDigest, snapshotDigest, csv.Length, acceptedAt, observed[0].FrozenAt, rows);
+                requestDigest, snapshotDigest, csv.Length, acceptedAt, observed[0].FrozenAt, rows, command.Format);
             if (accepted.IsFailure) { return Result.Failure<PricingExportStatus>(accepted.Error); }
             database.Exports.Add(accepted.Value);
             var origin = execution.Capture();
@@ -108,6 +108,9 @@ internal sealed class PricingExportCommands(PricingDbContext database, ICurrentU
         export.State, export.AcceptedAt, export.FrozenAt, export.RowCount, export.RequestDigest, export.SnapshotDigest)
     {
         Audit = EntityAuditMetadata.From(export),
+        Format = export.Format,
+        ArtifactDigest = export.ArtifactDigest,
+        ArtifactLength = export.ArtifactLength,
         Epoch = export.Epoch,
         Attempts = export.Attempts,
         LeaseUntil = export.LeaseUntil,

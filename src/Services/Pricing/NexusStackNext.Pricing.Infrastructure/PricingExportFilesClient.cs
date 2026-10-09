@@ -101,6 +101,29 @@ internal sealed class PricingExportFilesClient : IExportFiles, IDisposable
         }
     }
 
+    public async Task<Result<GeneratedFileReceiptV1?>> FindAsync(ExportFileLookup lookup, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(lookup);
+        if (lookup.UploadId == Guid.Empty || lookup.SourceExportId == Guid.Empty || string.IsNullOrWhiteSpace(lookup.OwnerId)
+            || lookup.Format is not ("csv" or "xlsx")) { return Invalid<GeneratedFileReceiptV1?>(); }
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(_timeout);
+        try
+        {
+            var found = await RequestAsync<GeneratedFileReceiptV1>(HttpMethod.Get, $"/internal/files/v1/uploads/{lookup.UploadId:D}", null, budget.Token).ConfigureAwait(false);
+            if (found.IsFailure) { return found.Error.Code == "pricing.export.file_not_found" ? Result.Success<GeneratedFileReceiptV1?>(null) : Result.Failure<GeneratedFileReceiptV1?>(found.Error); }
+            var description = found.Value.Description;
+            return description is not null && description.OwnerId == lookup.OwnerId && description.SourceExportId == lookup.SourceExportId
+                && description.Format == lookup.Format && description.FormatVersion == 1 && description.ColumnSetVersion == 1
+                && description.Length is >= 1 and <= 33_554_432 && description.Sha256 is { Length: 64 }
+                && description.Sha256.All(static character => character is >= '0' and <= '9' or >= 'a' and <= 'f')
+                && Matches(found.Value, new ExportFileUpload(lookup.UploadId, description))
+                ? Result.Success<GeneratedFileReceiptV1?>(found.Value) : Invalid<GeneratedFileReceiptV1?>();
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+        { cancellationToken.ThrowIfCancellationRequested(); return Unavailable<GeneratedFileReceiptV1?>(); }
+    }
+
     public async Task<Result<GeneratedFileReceiptV1>> StageAsync(ExportFileUpload upload, Stream content, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(upload);

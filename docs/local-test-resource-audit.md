@@ -1,5 +1,15 @@
 # 本机并行类的资源审查
 
+## 票据57：私有 XLSX
+
+继续本机与共用测试服务，整体目标仍暂停，并发清单、所有权、重操作许可与 CI 四隔离组不变。
+沿既有 GeneratedFilesHttpsTests / PricingExportJourneyTests 的每例私有数据库、文件根、TLS 和回环端口；
+新增 XLSX 的暂存后进程退出只终止本例进程树，临时目录以唯一身份创建并由本例清理。
+PricingExportResourceRecoveryTests 继续未声明类独占回退，Pending 候选故障只作用于本例 UploadId。
+最大容量测量不连接服务，仅有一个 5000 行的生成流和最多 32 MiB 的 DeleteOnClose 临时文件；
+采样任务在 finally 取消并等待完成，固定数字报告另行白名单上传，不改变原四报告和统一门禁。
+这些资源依据不代替最终票据资格记录。
+
 ## 票据151：私有 CSV 故障旅程
 
 继续本机开发与共用测试库，整体目标仍暂停。本轮没有修改并发清单、调度、负载所有权或 CI 隔离。

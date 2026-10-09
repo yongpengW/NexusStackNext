@@ -9,11 +9,12 @@ namespace NexusStackNext.Pricing.Application;
 /// <param name="RequestId">同一用户在重试间保留的非空标识。</param>
 /// <param name="ItemIds">白名单对象筛选；空集合表示全部报价。</param>
 /// <param name="CalculationState">Any、Pending、Stale 或 Current。</param>
-/// <param name="FormatVersion">固定 CSV 格式版本 1。</param>
+/// <param name="FormatVersion">所选格式的版本 1。</param>
 /// <param name="ColumnSetVersion">固定列集版本 1。</param>
+/// <param name="Format">csv 或 xlsx；省略时保留原 CSV 契约。</param>
 [BackgroundWorkAcceptance]
 public sealed record AcceptPricingExport(Guid RequestId, IReadOnlyList<Guid> ItemIds, string CalculationState = "Any",
-    int FormatVersion = 1, int ColumnSetVersion = 1) : ICommand<PricingExportStatus>;
+    int FormatVersion = 1, int ColumnSetVersion = 1, string Format = "csv") : ICommand<PricingExportStatus>;
 
 /// <summary>读取当前用户自己的一次导出，不返回冻结报价载荷。</summary>
 /// <param name="ExportId">导出标识。</param>
@@ -70,7 +71,7 @@ public sealed record PricingExportLease(Guid ExportId, long Epoch, Guid UploadId
 [CommandObservationSuppression("续租只协调执行权，实际生成有独立任务观察。")]
 public sealed record RenewPricingExport(Guid ExportId, long Epoch) : ICommand<PricingExportLease>;
 
-/// <summary>当前执行者条件提交唯一发布意图；只接纳与冻结描述完全一致的封存回执。</summary>
+/// <summary>当前执行者条件提交唯一发布意图；只接纳原格式与成果身份一致的封存回执。</summary>
 /// <param name="ExportId">导出标识。</param>
 /// <param name="Epoch">当前生成代次。</param>
 /// <param name="PublicationId">拟提交并在重试间保留的发布身份。</param>
@@ -148,6 +149,12 @@ public sealed record PricingExportStatus(Guid ExportId, Guid RequestId, long Ver
 {
     /// <summary>原行审计信息。</summary>
     public EntityAuditMetadata? Audit { get; init; }
+    /// <summary>首次接受的 csv 或 xlsx 格式。</summary>
+    public string Format { get; init; } = "csv";
+    /// <summary>选定成果的实际文件摘要；选定前为空。</summary>
+    public string? ArtifactDigest { get; init; }
+    /// <summary>选定成果的实际文件字节数；选定前为空。</summary>
+    public long? ArtifactLength { get; init; }
     /// <summary>成功领取的单调执行代次。</summary>
     public long Epoch { get; init; }
     /// <summary>本预算内的领取次数。</summary>

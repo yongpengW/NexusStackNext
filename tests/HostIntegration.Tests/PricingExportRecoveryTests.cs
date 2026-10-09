@@ -179,6 +179,8 @@ public sealed class PricingExportRecoveryTests(JourneyDatabaseTemplates database
     // 在公开文件端口丢弃已经实际提交的回执；不伪造 Files 状态，也不检查调用次数。
     private sealed class LostReplyFiles(IExportFiles inner, string phase) : IExportFiles
     {
+        public Task<Result<GeneratedFileReceiptV1?>> FindAsync(ExportFileLookup lookup, CancellationToken cancellationToken = default)
+            => inner.FindAsync(lookup, cancellationToken);
         public async Task<Result<GeneratedFileReceiptV1>> StageAsync(ExportFileUpload upload, Stream content, CancellationToken cancellationToken = default)
         {
             var committed = await inner.StageAsync(upload, content, cancellationToken);

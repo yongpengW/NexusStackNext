@@ -136,6 +136,33 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: 保存 XLSX 最大样本容量测量
+        if: matrix.shard == 0
+        shell: pwsh
+        run: |
+          # 产品工程固定在0组；只上传白名单数字，原始测试日志仍私有。
+          $source = 'tests/Pricing.IntegrationTests/bin/Release/net10.0/pricing-xlsx-capacity.json'
+          $data = Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable
+          $numeric = @('schema','rows','outputBytes','expandedBytes','temporaryFilePeakBytes','baselineWorkingSetBytes','peakWorkingSetBytes','elapsedMilliseconds')
+          if ($data.Count -ne 9 -or $data.os -cne 'linux' -or $data.schema -ne 1 -or $data.rows -ne 5000) { throw 'Invalid XLSX capacity evidence.' }
+          $safe = [ordered]@{ os = 'linux' }
+          foreach ($key in $numeric) {
+            $value = $data[$key]
+            if ($value -isnot [long] -and $value -isnot [int]) { throw 'Invalid XLSX capacity number.' }
+            if ($value -lt 1 -or $value -gt 8589934592) { throw 'XLSX capacity number outside permitted range.' }
+            $safe[$key] = $value
+          }
+          if ($safe.outputBytes -gt 33554432 -or $safe.temporaryFilePeakBytes -gt 33554432 -or $safe.expandedBytes -gt 16777216 -or $safe.peakWorkingSetBytes -lt $safe.baselineWorkingSetBytes) { throw 'XLSX capacity boundary failed.' }
+          $safe | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'pricing-xlsx-capacity.json') -Encoding utf8NoBOM
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.shard == 0
+        with:
+          name: pricing-xlsx-capacity
+          path: ${{ runner.temp }}/pricing-xlsx-capacity.json
+          if-no-files-found: error
+          retention-days: 7
+
   repository-checks:
     # 与产品测试并行；不启动服务，也不读取仓库的私有开发配置。
     name: 仓库与工具检查

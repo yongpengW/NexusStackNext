@@ -18,6 +18,27 @@ public sealed class PricingExportAcceptanceTests(PricingDatabaseFixture database
     public Task DisposeAsync() => Task.CompletedTask;
 
     [PostgresFact]
+    public async Task Changing_only_export_format_conflicts_with_the_original_request_but_new_identity_keeps_the_same_snapshot()
+    {
+        await using var app = CreateApplication("export-owner");
+        await using var scope = app.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var item = Guid.NewGuid();
+        Assert.True((await sender.SendAsync(new UpdatePricingCost(Guid.NewGuid(), item, 0, 80m, 0.2m))).IsSuccess);
+        var request = new AcceptPricingExport(Guid.NewGuid(), [item]);
+        var csv = (await sender.SendAsync(request)).Value;
+        var conflict = await sender.SendAsync(request with { Format = "xlsx" });
+        Assert.True(conflict.IsFailure);
+        Assert.Equal("pricing.export.request_conflict", conflict.Error.Code);
+        Assert.Equal(csv, (await sender.SendAsync(request with { Format = "csv" })).Value);
+        var xlsxRequest = request with { RequestId = Guid.NewGuid(), Format = "xlsx" };
+        var xlsx = (await sender.SendAsync(xlsxRequest)).Value;
+        Assert.NotEqual(csv.RequestDigest, xlsx.RequestDigest);
+        Assert.Equal(csv.SnapshotDigest, xlsx.SnapshotDigest);
+        Assert.Equal(xlsx, (await sender.SendAsync(xlsxRequest)).Value);
+    }
+
+    [PostgresFact]
     public async Task Inclusive_date_filters_keep_exact_boundaries_instead_of_truncating_sub_microsecond_input()
     {
         await using var app = CreateApplication("export-owner");

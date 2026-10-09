@@ -14,7 +14,7 @@ internal static class PricingExportReadModel
                e."RequestDigest", e."SnapshotDigest", e."RequestDigestVersion", e."SnapshotDigestVersion", e."SnapshotLength",
                e."CreatedAt", e."CreatedBy", e."UpdatedAt", e."UpdatedBy", e."Epoch", e."Attempts", e."RetryRevision",
                e."LeaseUntil", e."MaxLeaseUntil", e."ErrorCode", e."FileId", e."UploadId", e."PublicationId",
-               e."PublishedAt" AS "PublishedAtTicks", e."ExpiresAt" AS "ExpiresAtTicks",
+               e."PublishedAt" AS "PublishedAtTicks", e."ExpiresAt" AS "ExpiresAtTicks", e."Format", e."ArtifactDigest", e."ArtifactLength",
                p."State" AS "DeliveryState", p."Epoch" AS "DeliveryEpoch", p."Attempts" AS "DeliveryAttempts",
                p."RetryRevision" AS "DeliveryRetryRevision", p."LeaseUntil" AS "DeliveryLeaseUntil", p."MaxLeaseUntil" AS "DeliveryMaxLeaseUntil",
                p."StoppedAt" AS "DeliveryStoppedAt", p."CompletedAt" AS "DeliveryCompletedAt", p."ErrorCode" AS "DeliveryErrorCode"
@@ -45,6 +45,9 @@ internal sealed class PricingExportMetadata
     public int RequestDigestVersion { get; set; }
     public int SnapshotDigestVersion { get; set; }
     public long SnapshotLength { get; set; }
+    public string Format { get; set; } = "csv";
+    public string? ArtifactDigest { get; set; }
+    public long? ArtifactLength { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string? CreatedBy { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -73,6 +76,9 @@ internal sealed class PricingExportMetadata
     public PricingExportStatus Status() => new(ExportId, RequestId, Version, State, AcceptedAt, FrozenAt, RowCount, RequestDigest, SnapshotDigest)
     {
         Audit = new EntityAuditMetadata(CreatedAt, CreatedBy, UpdatedAt, UpdatedBy),
+        Format = Format,
+        ArtifactDigest = ArtifactDigest,
+        ArtifactLength = ArtifactLength,
         Epoch = Epoch,
         Attempts = Attempts,
         RetryRevision = RetryRevision,
