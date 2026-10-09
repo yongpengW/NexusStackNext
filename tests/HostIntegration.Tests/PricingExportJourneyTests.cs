@@ -30,9 +30,9 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
 
     [PostgresFact]
     public Task Ordinary_owner_recovers_original_staged_xlsx_after_process_death_even_when_rendering_directory_is_unusable() =>
-        VerifyPrivateExportJourneyAsync("xlsx", GeneratedFileFaultPoint.AfterContent);
+        VerifyPrivateExportJourneyAsync("xlsx", GeneratedFileFaultPoint.AfterContent, failAtTail: true);
 
-    private async Task VerifyPrivateExportJourneyAsync(string format, GeneratedFileFaultPoint faultPoint)
+    private async Task VerifyPrivateExportJourneyAsync(string format, GeneratedFileFaultPoint faultPoint, bool failAtTail = false)
     {
         await using var platformDatabase = await databases.CreateAsync();
         await using var pricingDatabase = await databases.CreateAsync("pricing");
@@ -65,6 +65,13 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             ["Pricing__Exports__Files__RevocationMode"] = "NoCheck",
             ["Pricing__Exports__Execution__TemporaryDirectory"] = temporaryDirectory,
         };
+        if (failAtTail)
+        {
+            using var complete = new MemoryStream();
+            await PricingXlsxV1.WriteAsync([new(new(Guid.Parse("11111111-1111-1111-1111-111111111111")), 1, 80m, 0.2m, 1, 0, 0, null)], complete);
+            // All entries fit, but the worker cannot write the last ZIP end-record byte.
+            pricingSettings["Pricing__Exports__Execution__MaxOutputBytes"] = (complete.Length - 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
         await using var pricing = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
             settings: pricingSettings);
         var document = await pricing.Client.GetFromJsonAsync<JsonElement>(Relative("/openapi/v1.json"));
@@ -76,6 +83,7 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         Assert.Equal(new[] { "calculationState", "columnSetVersion", "format", "formatVersion", "itemIds", "requestId" },
             schema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
         var routeFile = Path.Combine(Path.GetTempPath(), "nsn-export-routes-" + Guid.NewGuid().ToString("N") + ".json");
+        BusinessProcess? recoveredAfterTail = null;
         try
         {
             var routes = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.business.json")))!;
@@ -155,6 +163,36 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
             using (var invalid = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"))) { Assert.Equal(HttpStatusCode.Unauthorized, invalid.StatusCode); }
             await UserLifecycleHttpTests.LoginAsync(owner, "export-owner", "export-owner-test-password");
             using var wait = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            if (failAtTail)
+            {
+                JsonElement failed;
+                while (true)
+                {
+                    using var status = await owner.GetAsync(Relative($"/api/pricing/exports/{exportId}"), wait.Token);
+                    Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+                    failed = await status.Content.ReadApiDataAsync();
+                    if (failed.GetProperty("state").GetString() == "Failed") { break; }
+                    Assert.Contains(failed.GetProperty("state").GetString(), new[] { "Queued", "Generating" });
+                    await Task.Delay(100, wait.Token);
+                }
+                Assert.Equal("pricing.export.output_limit", failed.GetProperty("errorCode").GetString());
+                Assert.Equal(original.GetProperty("snapshotDigest").GetString(), failed.GetProperty("snapshotDigest").GetString());
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("fileId").ValueKind);
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("publicationId").ValueKind);
+                Assert.Equal(JsonValueKind.Null, failed.GetProperty("artifactDigest").ValueKind);
+                Assert.Empty(Directory.EnumerateFiles(temporaryDirectory));
+                await pricing.CrashAsync();
+                pricingSettings.Remove("Pricing__Exports__Execution__MaxOutputBytes");
+                pricingSettings["Kestrel__Endpoints__Public__Url"] = pricing.Client.BaseAddress!.AbsoluteUri;
+                recoveredAfterTail = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", pricingDatabase.ConnectionString,
+                    settings: pricingSettings);
+                using var retry = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/retry"),
+                    new { expectedVersion = failed.GetProperty("version").GetString() }, wait.Token);
+                Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+                var retried = await retry.Content.ReadApiDataAsync();
+                Assert.Equal(exportId, retried.GetProperty("exportId").GetGuid());
+                Assert.Equal(original.GetProperty("snapshotDigest").GetString(), retried.GetProperty("snapshotDigest").GetString());
+            }
             try { await fault.WaitForFaultAsync(); }
             catch (TimeoutException)
             {
@@ -189,8 +227,9 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
                 using var cancel = await owner.PostAsJsonAsync(Relative($"/api/pricing/exports/{exportId}/cancel"), new { expectedVersion = selected.GetProperty("version").GetString() });
                 Assert.Equal(HttpStatusCode.Conflict, cancel.StatusCode);
             }
-            var restartAddress = pricing.Client.BaseAddress!;
-            await pricing.CrashAsync();
+            var activePricing = recoveredAfterTail ?? pricing;
+            var restartAddress = activePricing.Client.BaseAddress!;
+            await activePricing.CrashAsync();
             fault.Release();
             // Process exit precedes observable deletion on some Windows file systems.
             // Observe kernel delete-on-close within a fixed budget; never delete the bytes to make this pass.
@@ -297,6 +336,7 @@ public sealed class PricingExportJourneyTests(JourneyDatabaseTemplates databases
         }
         finally
         {
+            if (recoveredAfterTail is not null) { await recoveredAfterTail.DisposeAsync(); }
             File.Delete(routeFile);
             if (File.Exists(temporaryDirectory)) { File.Delete(temporaryDirectory); }
             else if (Directory.Exists(temporaryDirectory)) { Directory.Delete(temporaryDirectory, recursive: true); }

@@ -45,7 +45,7 @@ UploadId 绑定原文件实际摘要。恢复先查原回执：Staged 直接选�
 | 关闭失败、取消、残缺 ZIP | 调用方拥有的故障输出流，PricingExportXlsxTests |
 | 本人 XLSX 下载、MIME/附件/缓存 | 真 HTTPS，GeneratedFilesHttpsTests |
 | 原快照、丢发布响应、进程死亡、另一用户/撤销会话/删除 | 真网关与三独立宿主，PricingExportJourneyTests |
-| 暂存后进程死亡且临时目录不可写 | 真 HTTPS 断点及 OS 进程结束，原回执恢复，PricingExportJourneyTests |
+| 末尾 ZIP 字节预算失败、本人恢复、暂存后进程死亡且临时目录不可写 | 真网关重试、HTTPS 断点及 OS 进程结束，同一快照和原回执恢复，PricingExportJourneyTests |
 | Pending 原身份字节冲突、到期不复活、资源释放 | 真 HTTPS / ISender，GeneratedFilesHttpsTests 与 PricingExportResourceRecoveryTests |
 | 旧 CSV 回填、历史拒降级、空库回退再升级 | 真实迁移命令及公开查询，PricingExportMigrationTests |
 

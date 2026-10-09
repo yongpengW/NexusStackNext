@@ -1,5 +1,4 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using System.Net.Security;
@@ -7,8 +6,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Xml;
-using System.Xml.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -134,21 +131,7 @@ public sealed class GeneratedFilesHttpsTests(JourneyDatabaseTemplates databases)
         else
         {
             Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloaded.Content.Headers.ContentType!.MediaType);
-            using var stream = new MemoryStream(bytes);
-            using var zip = new ZipArchive(stream, ZipArchiveMode.Read);
-            using var xml = zip.GetEntry("xl/worksheets/sheet1.xml")!.Open();
-            using var reader = XmlReader.Create(xml, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 16_777_216 });
-            var sheet = XDocument.Load(reader);
-            XNamespace names = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-            var rows = sheet.Descendants(names + "row").ToArray();
-            Assert.Equal(2, rows.Length);
-            Assert.Equal(new[] { "11111111-1111-1111-1111-111111111111", "1", "80.0000", "0.2000", "1", "0", "0", "", "Pending" },
-                rows[1].Elements(names + "c").Select(cell =>
-                {
-                    Assert.Equal("inlineStr", cell.Attribute("t")!.Value);
-                    Assert.Empty(cell.Elements(names + "f"));
-                    return Assert.Single(cell.Descendants(names + "t")).Value;
-                }));
+            PricingWorkbookAssertions.FrozenPendingQuote(bytes);
         }
         Assert.Equal(completed.Value, (await worker.SendAsync(new PublishPricingExport(delivery))).Value);
     }
