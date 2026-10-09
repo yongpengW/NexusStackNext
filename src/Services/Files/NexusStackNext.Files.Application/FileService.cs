@@ -159,7 +159,8 @@ public sealed class FileService(
         StoredFile? file;
         try { file = await files.FindAsync(id, cancellationToken).ConfigureAwait(false); }
         catch (CommittedFactCapacityBusyException) { return Result.Failure<(StoredFile, Stream)>(CommittedFactCapacityBusyException.Reason); }
-        if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal))
+        if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal)
+            || (file.Candidate is not null && file.Candidate.PublishedAt is null))
         {
             return Result.Failure<(StoredFile, Stream)>(new Error(
                 "files.not_found",
@@ -233,7 +234,8 @@ public sealed class FileService(
     {
         var file = await files.FindAsync(id, cancellationToken).ConfigureAwait(false)
             ?? await files.FindDeletedAsync(id, cancellationToken).ConfigureAwait(false);
-        if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal))
+        if (file is null || !string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal)
+            || (file.Candidate is not null && file.Candidate.PublishedAt is null))
         {
             return Result.Failure<bool>(new Error("files.not_found", $"文件不存在：{id.Value}。"));
         }
@@ -263,6 +265,7 @@ public sealed class FileService(
         ArgumentNullException.ThrowIfNull(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerId);
         var file = await files.FindDeletedAsync(id, cancellationToken).ConfigureAwait(false);
-        return file is not null && string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal) ? file.BytesRemovedAt is not null : null;
+        return file is not null && string.Equals(file.OwnerId, ownerId, StringComparison.Ordinal)
+            && (file.Candidate is null || file.Candidate.PublishedAt is not null) ? file.BytesRemovedAt is not null : null;
     }
 }

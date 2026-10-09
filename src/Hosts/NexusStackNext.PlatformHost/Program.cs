@@ -119,6 +119,7 @@ builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule(builder.Configuration, builder.Environment);
 builder.Services.AddAuditingModule(builder.Configuration, builder.Environment);
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
+builder.AddFilesProducerAccess();
 builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "platform");
 
 // ---------- 认证（ADR-0003：网关验签、上下文授权）----------
@@ -222,5 +223,6 @@ app.MapPlatformEndpoints();
 app.MapSchedulingEndpoints();
 app.MapAuditingEndpoints();
 app.MapFilesEndpoints();
+if (builder.Configuration.GetValue<bool>("Files:Producer:Enabled")) { app.MapGeneratedFilesEndpoints(); }
 
 app.Run();

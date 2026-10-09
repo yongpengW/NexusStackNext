@@ -9,10 +9,14 @@ using NexusStackNext.Files.Infrastructure.Persistence;
 
 namespace NexusStackNext.Files.Infrastructure;
 
-internal sealed class EfStoredFileRepository(FilesDbContext context, StoredFileCommittedFacts facts) : IStoredFileRepository
+internal sealed partial class EfStoredFileRepository(FilesDbContext context, StoredFileCommittedFacts facts) : IStoredFileRepository, IGeneratedFileRepository
 {
-    public Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
-        context.Files.AsNoTracking().SingleOrDefaultAsync(file => file.Id == id && !file.IsDeleted, cancellationToken);
+    public async Task<StoredFile?> FindAsync(StoredFileId id, CancellationToken cancellationToken = default)
+    {
+        var file = await context.Files.AsNoTracking().SingleOrDefaultAsync(file => file.Id == id && !file.IsDeleted, cancellationToken).ConfigureAwait(false);
+        if (file?.Candidate is not { } candidate) { return file; }
+        return candidate.PublishedAt is not null && await ReadNowAsync(cancellationToken).ConfigureAwait(false) < candidate.ExpiresAt ? file : null;
+    }
 
     public Task<StoredFile?> FindDeletedAsync(StoredFileId id, CancellationToken cancellationToken = default) =>
         context.Files.AsNoTracking().SingleOrDefaultAsync(file => file.Id == id && file.IsDeleted, cancellationToken);
@@ -53,6 +57,7 @@ internal sealed class EfStoredFileRepository(FilesDbContext context, StoredFileC
                 var entry = context.Attach(file);
                 entry.State = EntityState.Modified;
                 entry.Property(item => item.Version).OriginalValue = originalVersion.Value;
+                if (file.Candidate is not null) { entry.Reference(item => item.Candidate).TargetEntry!.State = EntityState.Modified; }
             }
             var origin = context.Entry(file).Property<ExecutionOrigin?>(FilesDbContext.DeletionOriginProperty);
             if (file.IsDeleted && before?.IsDeleted != true) { origin.CurrentValue = deletionOrigin; }
@@ -107,7 +112,9 @@ public static class FilesPersistenceServiceCollectionExtensions
         services.AddDbContext<FilesDbContext>((provider, options) => options
             .UseNexusStackPostgres(connectionString, FilesDbContext.SchemaName)
             .UseNexusStackInterceptors(provider));
-        services.AddScoped<IStoredFileRepository, EfStoredFileRepository>();
+        services.AddScoped<EfStoredFileRepository>();
+        services.AddScoped<IStoredFileRepository>(provider => provider.GetRequiredService<EfStoredFileRepository>());
+        services.AddScoped<IGeneratedFileRepository>(provider => provider.GetRequiredService<EfStoredFileRepository>());
         services.AddScoped<IFileAuditDelivery, EfFileAuditDelivery>();
         services.AddScoped<StoredFileCommittedFacts>();
         services.AddKeyedScoped<IOutboxStore, EfOutboxStore<FilesDbContext>>(OutboxKey);

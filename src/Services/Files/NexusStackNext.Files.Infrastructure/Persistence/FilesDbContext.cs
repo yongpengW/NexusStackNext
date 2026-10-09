@@ -48,6 +48,19 @@ public sealed class FilesDbContext(DbContextOptions<FilesDbContext> options)
         file.HasIndex(item => new { item.NextCleanupAttemptAt, item.Id })
             .HasFilter("\"IsDeleted\" AND \"BytesRemovedAt\" IS NULL");
         file.Ignore(item => item.IsStored);
+        file.Property<DateTimeOffset?>("CandidateDeadline")
+            .HasComputedColumnSql("COALESCE(\"Candidate_ExpiresAt\", \"Candidate_StageExpiresAt\")", stored: true);
+        file.HasIndex("CandidateDeadline", nameof(StoredFile.Id))
+            .HasFilter("NOT \"IsDeleted\" AND \"Candidate_Producer\" IS NOT NULL");
+        file.OwnsOne(item => item.Candidate, candidate =>
+        {
+            candidate.Property(item => item.Producer).HasMaxLength(32).IsRequired();
+            candidate.Property(item => item.OwnerId).HasMaxLength(128).IsRequired();
+            candidate.Property(item => item.Sha256).HasMaxLength(64).IsRequired();
+            candidate.Property(item => item.Format).HasMaxLength(8).IsRequired();
+            candidate.HasIndex(item => new { item.Producer, item.UploadId }).IsUnique();
+            candidate.HasIndex(item => new { item.Producer, item.PublicationId }).IsUnique();
+        });
         var retired = modelBuilder.Entity<RetiredStorageKey>();
         retired.ToTable("retired_storage_keys");
         retired.HasKey(item => item.StorageKey);

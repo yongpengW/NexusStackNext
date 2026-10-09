@@ -16,9 +16,10 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     internal string FilesRoot { get; }
 
     private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
-        IReadOnlyDictionary<string, string>? settings, Uri? listenAddress)
+        IReadOnlyDictionary<string, string>? settings, Uri? listenAddress, HttpMessageHandler? httpHandler)
     {
-        Client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        Client = httpHandler is null ? new HttpClient() : new HttpClient(httpHandler);
+        Client.Timeout = TimeSpan.FromSeconds(3);
         var start = new ProcessStartInfo("dotnet")
         {
             RedirectStandardOutput = true,
@@ -61,9 +62,10 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     }
 
     public static async Task<PlatformHostProcess> StartAsync(string connectionString, string? rootPassword = null, string? filesRoot = null,
-        int cleanupBatchSize = 64, IReadOnlyDictionary<string, string>? settings = null, bool requireReady = true, Uri? listenAddress = null)
+        int cleanupBatchSize = 64, IReadOnlyDictionary<string, string>? settings = null, bool requireReady = true, Uri? listenAddress = null,
+        HttpMessageHandler? httpHandler = null)
     {
-        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize, settings, listenAddress);
+        var host = new PlatformHostProcess(connectionString, rootPassword, filesRoot, cleanupBatchSize, settings, listenAddress, httpHandler);
         try
         {
             var elapsed = Stopwatch.StartNew();

@@ -6,7 +6,21 @@
   "WorkerId": "101",
 
   "Files": {
-    "StorageRoot": ""
+    "StorageRoot": "",
+    "Producer": {
+      "Enabled": false,
+      "RootCertificatePaths": [],
+      "IntermediateCertificatePaths": [],
+      "Certificates": [],
+      "RevocationMode": "Online"
+    },
+    "Generated": {
+      "MaxBytes": 33554432,
+      "MaxConcurrentUploads": 1,
+      "UploadTimeoutSeconds": 30,
+      "StageLifetimeSeconds": 86400,
+      "DownloadLifetimeSeconds": 604800
+    }
   },
 
   "Serilog": {

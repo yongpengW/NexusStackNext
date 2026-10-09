@@ -98,6 +98,7 @@ public sealed class StoredFile : AuditedAggregateRoot<StoredFileId>
         IsDeleted = source.IsDeleted;
         BytesRemovedAt = source.BytesRemovedAt;
         NextCleanupAttemptAt = source.NextCleanupAttemptAt;
+        Candidate = source.Candidate?.Snapshot();
     }
 
     /// <summary>取得独立快照；修改它不会改变尚未提交的仓储状态。</summary>
@@ -133,6 +134,75 @@ public sealed class StoredFile : AuditedAggregateRoot<StoredFileId>
 
     /// <summary>是否已有可读取的内容。</summary>
     public bool IsStored => StorageKey is not null;
+
+    /// <summary>受限生产者的候选；普通文件没有候选协议。</summary>
+    public FileCandidate? Candidate { get; private set; }
+
+    /// <summary>登记私有生成成果；封存不授予下载权。</summary>
+    /// <param name="id">文件标识。</param>
+    /// <param name="candidate">已验证的候选描述。</param>
+    /// <param name="at">所属数据库提供的接受时间。</param>
+    /// <returns>新聚合。</returns>
+    public static StoredFile RegisterCandidate(StoredFileId id, FileCandidate candidate, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        return new StoredFile(id, FileName.Create("export.csv").Value, "text/csv; charset=utf-8", candidate.OwnerId, at)
+        { Candidate = candidate.Snapshot() };
+    }
+
+    /// <summary>对完整验证的实际字节作封存裁决；重复封存不改变版本。</summary>
+    /// <param name="storageKey">受保护的存储句柄。</param>
+    /// <param name="length">实际完整长度。</param>
+    /// <param name="sha256">实际完整摘要。</param>
+    /// <param name="at">所属数据库提供的裁决时间。</param>
+    /// <returns>成功，或内容不符/候选已关闭。</returns>
+    public Result SealCandidate(string storageKey, long length, string sha256, DateTimeOffset at)
+    {
+        if (Candidate is null || Candidate.Length != length || Candidate.Sha256 != sha256)
+        { return Result.Failure(new Error("files.candidate.conflict", "内容与上传描述不符。")); }
+        if (Candidate.SealedAt is not null) { return Result.Success(); }
+        if (IsDeleted || at >= Candidate.StageExpiresAt)
+        { return Result.Failure(new Error("files.candidate.closed", "候选已关闭。")); }
+        if (string.IsNullOrWhiteSpace(storageKey))
+        { return Result.Failure(new Error("files.storage_key.empty", "存储句柄不能为空。")); }
+        StorageKey = storageKey;
+        Size = length;
+        Candidate.Seal(at);
+        return Changed();
+    }
+
+    /// <summary>首次裁定候选发布；同身份重放保留历史裁决，不能复活字节。</summary>
+    /// <param name="publicationId">生产者唯一发布身份。</param>
+    /// <param name="at">所属数据库时间。</param>
+    /// <param name="expiresAt">首次发布期限。</param>
+    /// <returns>成功，或候选不能发布。</returns>
+    public Result PublishCandidate(Guid publicationId, DateTimeOffset at, DateTimeOffset expiresAt)
+    {
+        if (Candidate is null || publicationId == Guid.Empty || expiresAt <= at)
+        { return Result.Failure(new Error("files.candidate.invalid", "发布描述无效。")); }
+        if (Candidate.PublicationId is { } original)
+        {
+            return original == publicationId ? Result.Success()
+                : Result.Failure(new Error("files.candidate.conflict", "该成果已经通过另一身份发布。"));
+        }
+        if (IsDeleted || at >= Candidate.StageExpiresAt)
+        { return Result.Failure(new Error("files.candidate.closed", "候选已关闭。")); }
+        if (Candidate.SealedAt is null || !IsStored)
+        { return Result.Failure(new Error("files.candidate.not_sealed", "候选尚未完整封存。")); }
+        Candidate.Publish(publicationId, at, expiresAt);
+        return Changed();
+    }
+
+    /// <summary>到期后裁决不可逆清理；发布/到期竞争由所属仓储重新读取并串行裁决。</summary>
+    /// <param name="at">所属数据库时间。</param>
+    /// <returns>成功；未到期或已删除为空操作。</returns>
+    public Result ExpireCandidate(DateTimeOffset at)
+    {
+        if (Candidate is null || IsDeleted || at < (Candidate.ExpiresAt ?? Candidate.StageExpiresAt)) { return Result.Success(); }
+        Candidate.Expire(at);
+        IsDeleted = true;
+        return Changed();
+    }
 
     /// <summary>登记一个待写入的文件。</summary>
     /// <param name="id">标识。</param>
@@ -171,6 +241,7 @@ public sealed class StoredFile : AuditedAggregateRoot<StoredFileId>
     /// <returns>成功，或参数非法。</returns>
     public Result MarkStored(string? storageKey, long size)
     {
+        if (Candidate is not null) { return Result.Failure(new Error("files.candidate.protocol_required", "候选必须通过封存协议写入。")); }
         if (string.IsNullOrWhiteSpace(storageKey))
         {
             return Result.Failure(new Error("files.storage_key.empty", "存储句柄不能为空。"));

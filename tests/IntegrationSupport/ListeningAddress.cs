@@ -18,7 +18,7 @@ internal sealed class ListeningAddress
             const string marker = "Now listening on: ";
             var index = line.IndexOf(marker, StringComparison.Ordinal);
             if (index >= 0 && Uri.TryCreate(line[(index + marker.Length)..].Trim(), UriKind.Absolute, out var address)
-                && address.Scheme == "http" && address.Host == "127.0.0.1" && address.Port > 0
+                && address.Scheme is "http" or "https" && address.Host == "127.0.0.1" && address.Port > 0
                 && address.AbsolutePath == "/" && address.Query.Length == 0 && address.Fragment.Length == 0 && address.UserInfo.Length == 0)
             {
                 _bound.TrySetResult(address);
