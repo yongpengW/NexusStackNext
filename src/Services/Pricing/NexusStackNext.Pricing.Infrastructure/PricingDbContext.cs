@@ -16,6 +16,8 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     public DbSet<RecalculationEntry> Tasks => Set<RecalculationEntry>();
     public DbSet<DurableTaskAttempt> Attempts => Set<DurableTaskAttempt>();
     public DbSet<PriceCacheInvalidation> CacheInvalidations => Set<PriceCacheInvalidation>();
+    public DbSet<PricingExport> Exports => Set<PricingExport>();
+    public DbSet<PricingExportPublication> ExportPublications => Set<PricingExportPublication>();
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -38,6 +40,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         modelBuilder.ConfigureCommittedFactCapacity();
         modelBuilder.ConfigureFactCapacityPolicy();
         modelBuilder.ConfigurePricingAuditRecovery();
+        modelBuilder.ConfigurePricingExports();
         var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
         invalidation.ToTable("cache_invalidations");
         invalidation.HasKey(x => new { x.ItemId, x.Version });
@@ -150,6 +153,8 @@ public static class PricingDatabase
             _ = await context.Inbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.Outbox.AnyAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.CacheInvalidations.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.Exports.AnyAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.ExportPublications.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

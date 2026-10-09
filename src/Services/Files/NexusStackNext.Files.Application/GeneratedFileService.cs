@@ -181,10 +181,12 @@ public sealed class GeneratedFileService(IGeneratedFileRepository files, IFileSt
     }
 
     internal static GeneratedFileReceiptV1 Receipt(StoredFile file) => new(file.Id.Value, file.Candidate!.UploadId,
-        file.Candidate.SealedAt is null ? "Pending" : "Staged", file.UploadedAt, file.Candidate.StageExpiresAt, file.Candidate.SealedAt, Description(file.Candidate));
+        file.Candidate.SealedAt is null ? "Pending" : "Staged", file.UploadedAt, file.Candidate.StageExpiresAt, file.Candidate.SealedAt, Description(file.Candidate))
+    { Producer = file.Candidate.Producer };
 
     private static GeneratedFilePublicationReceiptV1 PublicationReceipt(StoredFile file) => new(file.Id.Value, file.Candidate!.UploadId,
-        file.Candidate.PublicationId!.Value, file.Candidate.PublishedAt!.Value, file.Candidate.ExpiresAt!.Value, Description(file.Candidate));
+        file.Candidate.PublicationId!.Value, file.Candidate.PublishedAt!.Value, file.Candidate.ExpiresAt!.Value, Description(file.Candidate))
+    { Producer = file.Candidate.Producer };
 
     private static GeneratedFileDescriptionV1 Description(FileCandidate candidate) => new(candidate.OwnerId, candidate.SourceExportId,
         candidate.Sha256, candidate.Length, candidate.Format, candidate.FormatVersion, candidate.ColumnSetVersion);

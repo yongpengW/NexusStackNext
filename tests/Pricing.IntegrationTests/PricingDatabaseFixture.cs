@@ -33,7 +33,7 @@ public sealed class PricingDatabaseFixture : IAsyncLifetime
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
         // DELETE 触发行级容量释放；TRUNCATE Outbox 会留下与实际记录不符的占用。
-        await using var command = new NpgsqlCommand("DELETE FROM pricing.outbox; TRUNCATE pricing.tasks, pricing.quotes, pricing.inbox, pricing.cache_invalidations CASCADE", connection);
+        await using var command = new NpgsqlCommand("DELETE FROM pricing.outbox; TRUNCATE pricing.tasks, pricing.quotes, pricing.inbox, pricing.cache_invalidations, pricing.exports CASCADE", connection);
         await command.ExecuteNonQueryAsync();
     }
 

@@ -33,6 +33,11 @@
 
 ### 已经成立的
 
+- **Pricing → Files（可选导出）**：Pricing 自己冻结报价、持有导出及原发布意图；
+  通过 Files.Contracts 的真实受认证 HTTPS 暂存/发布协议提交固定 CSV，双方独立数据库。
+  Files 拥有字节、下载归属与到期历史，Pricing 不共享其路径、令牌或表；
+  历史成功与当前下载可用性分别查询。启用与阶段资格见 [Pricing 私有报价导出](docs/pricing-private-exports.md)。
+
 - **Scheduling → Costing**：通过 Scheduling.Contracts 的 `ScheduleTriggeredV1` 交付已登记的发生；
   计划、发生和 Outbox 同事务。Costing 事务保存 Inbox、稳定接受/拒绝回执及自己的重算任务，
   消费尝试有独立操作；新任务以首次成功受理为直接来源，上游调度为父级，重复投递不改写来源。

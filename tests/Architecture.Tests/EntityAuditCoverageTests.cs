@@ -26,7 +26,7 @@ public sealed class EntityAuditCoverageTests
             Assert.Contains(aggregates, type => type.FullName == lifecycle);
         }
         var business = aggregates.Where(type => !lifecycleTypes.Contains(type.FullName, StringComparer.Ordinal)).ToArray();
-        Assert.Equal(9, business.Length);
+        Assert.Equal(10, business.Length);
         Assert.All(business, type => Assert.True(typeof(IAuditedEntity).IsAssignableFrom(type), type.FullName + " 缺少行审计契约。"));
     }
 }

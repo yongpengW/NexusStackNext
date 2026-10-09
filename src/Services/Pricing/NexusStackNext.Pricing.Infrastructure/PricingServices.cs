@@ -46,7 +46,8 @@ public static class PricingServices
     /// <param name="options">有界执行策略。</param>
     /// <param name="cacheOptions">可选缓存和回源预算。</param>
     /// <returns>容器。</returns>
-    public static IServiceCollection AddPricingPostgres(this IServiceCollection services, string connectionString, PricingTaskOptions? options = null, PricingCacheOptions? cacheOptions = null)
+    public static IServiceCollection AddPricingPostgres(this IServiceCollection services, string connectionString, PricingTaskOptions? options = null,
+        PricingCacheOptions? cacheOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);

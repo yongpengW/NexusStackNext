@@ -11,14 +11,17 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
     private readonly Task<string> _errors;
     private readonly ListeningAddress _listening = new();
     private readonly JourneyFileStorage _files = new();
+    private readonly string _clientScheme;
 
     public HttpClient Client { get; }
+    internal Uri? HttpsAddress => _listening.ForScheme("https");
     internal string FilesRoot { get; }
 
     private PlatformHostProcess(string connectionString, string? rootPassword, string? filesRoot, int cleanupBatchSize,
         IReadOnlyDictionary<string, string>? settings, Uri? listenAddress, HttpMessageHandler? httpHandler)
     {
         Client = httpHandler is null ? new HttpClient() : new HttpClient(httpHandler);
+        _clientScheme = listenAddress?.Scheme ?? "http";
         Client.Timeout = TimeSpan.FromSeconds(3);
         var start = new ProcessStartInfo("dotnet")
         {
@@ -72,7 +75,7 @@ internal sealed class PlatformHostProcess : IAsyncDisposable
             int? lastStatus = null;
             while (elapsed.Elapsed < TimeSpan.FromSeconds(20) && !host._process.HasExited)
             {
-                if (host.Client.BaseAddress is null && host._listening.Address is { } address)
+                if (host.Client.BaseAddress is null && host._listening.ForScheme(host._clientScheme) is { } address)
                 {
                     host.Client.BaseAddress = address;
                 }

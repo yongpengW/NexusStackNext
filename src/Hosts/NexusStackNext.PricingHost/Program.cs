@@ -52,6 +52,8 @@ try
     builder.Services.AddNexusStackApplication();
     builder.Services.AddIdentitySessionAuthority(builder.Configuration);
     builder.Services.AddPricingModule(builder.Configuration);
+    var exportsEnabled = builder.Configuration.GetValue<bool>("Pricing:Exports:Enabled");
+    if (exportsEnabled) { builder.Services.AddPricingExports(builder.Configuration, builder.Environment.EnvironmentName); }
     builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "pricing");
     var rabbit = builder.Configuration.GetSection("RabbitMQ").Get<RabbitMqOptions>();
     if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
@@ -94,6 +96,7 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
     app.MapPricingEndpoints();
+    if (exportsEnabled) { app.MapPricingExportEndpoints(); }
     app.MapOpenApi();
     app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = _ => false });
     app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
@@ -110,6 +113,6 @@ try
 }
 catch (Exception)
 {
-    Console.Error.WriteLine("Pricing startup failed; check ConnectionStrings:Pricing, migrate-pricing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt, IdentitySession and Pricing:Tasks configuration.");
+    Console.Error.WriteLine("Pricing startup failed; check ConnectionStrings:Pricing, migrate-pricing, ConnectionStrings:OperationJournal, migrate-operation-journal, Jwt, IdentitySession, Pricing:Tasks and Pricing:Exports configuration.");
     return 1;
 }

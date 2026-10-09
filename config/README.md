@@ -17,7 +17,14 @@
 **为什么只有三个**：五个平台能力（Identity / Platform / Scheduling / Auditing / Files）
 是通用子域，一起演进、一起部署，因此是**一个进程、一个库**（库内按 schema 分开）——
 见 [ADR-0013](../docs/adr/0013-platform-capabilities-are-one-host.md)。
-未来的**业务上下文**各自独立成服务，那时才各自需要自己的应用与库。
+Costing / Pricing **业务上下文**各自独立成服务，使用各自的应用配置与数据库。
+
+## 独立 Pricing 的可选导出片段
+
+`nexusstack_pricing.exports.template.json` 仅补充独立 Pricing 应用的导出配置，默认关闭；
+它不包含 Pricing 数据库、JWT、IdentitySession 或日志配置，不能作为完整宿主配置。
+不要将服务地址、客户端证书、私钥或独立连接串放入共享基座。
+启用步骤及恢复语义见 [Pricing 私有报价导出](../docs/pricing-private-exports.md)。
 
 ## 两条不要越过的线
 

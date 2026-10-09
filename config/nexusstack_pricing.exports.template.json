@@ -1,0 +1,24 @@
+{
+  "Pricing": {
+    "Exports": {
+      "Enabled": false,
+      "Worker": { "Enabled": true },
+      "Execution": {
+        "LeaseDuration": "00:00:30",
+        "MaxExecutionDuration": "00:02:00",
+        "MaxAttempts": 3,
+        "MaxOutputBytes": 33554432,
+        "PollInterval": "00:00:01"
+      },
+      "Files": {
+        "BaseAddress": "",
+        "ClientCertificatePath": "",
+        "ClientKeyPath": "",
+        "RootCertificatePaths": [],
+        "IntermediateCertificatePaths": [],
+        "RevocationMode": "Online",
+        "Timeout": "00:00:20"
+      }
+    }
+  }
+}

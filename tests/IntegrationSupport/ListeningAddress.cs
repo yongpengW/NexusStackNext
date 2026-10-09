@@ -6,8 +6,10 @@ namespace NexusStackNext.IntegrationSupport;
 internal sealed class ListeningAddress
 {
     private readonly TaskCompletionSource<Uri> _bound = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Uri> _schemes = new(StringComparer.Ordinal);
 
     internal Uri? Address => _bound.Task.IsCompletedSuccessfully ? _bound.Task.Result : null;
+    internal Uri? ForScheme(string scheme) => _schemes.TryGetValue(scheme, out var address) ? address : null;
 
     internal async Task<string> CaptureAsync(StreamReader output)
     {
@@ -22,6 +24,7 @@ internal sealed class ListeningAddress
                 && address.AbsolutePath == "/" && address.Query.Length == 0 && address.Fragment.Length == 0 && address.UserInfo.Length == 0)
             {
                 _bound.TrySetResult(address);
+                _schemes.TryAdd(address.Scheme, address);
             }
         }
         return captured.ToString();
