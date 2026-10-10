@@ -54,8 +54,10 @@ Memory 是进程内演示实现，重启会清空；PostgreSQL 计量随记录�
 
 ## 剩余工作
 
-操作观察的定期整组清理与去重期限见[中央操作观察保留](central-audit-retention.md)。事实归档的
-完整性校验、事实去重凭据寿命，以及新增入口遗漏防线仍在父票开放。不能把源副本清理当作中央归档，
-也不能仅凭日志年龄授予删除已提交事实的资格。
+操作观察的定期整组清理与去重期限见[中央操作观察保留](central-audit-retention.md)。用户于2026-10-10确认
+中央事实及对应Inbox/指纹长期保留，归档删除暂缓；记录年龄、来源副本清理或普通导出都不授予删除资格。
+有限接纳额度继续生效，运维按实际保留量规划容量。决定见
+[Auditing ADR-0009](../src/Services/Auditing/docs/adr/0009-facts-remain-online-with-deduplication.md)。
+新增入口遗漏检查由[审计义务清单](https://github.com/yongpengW/NexusStackNext/issues/160)验收，登记不代替业务行为证明。
 
 决定见 [Auditing ADR-0007](../src/Services/Auditing/docs/adr/0007-central-admission-preserves-evidence.md)。
