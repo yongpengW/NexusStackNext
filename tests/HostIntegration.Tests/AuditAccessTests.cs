@@ -28,6 +28,8 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
         using var anonymousOperations = await client.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymousOperations.StatusCode);
+        using var anonymousCapacity = await client.GetAsync(new Uri("/api/auditing/capacity", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Unauthorized, anonymousCapacity.StatusCode);
         using var anonymousIdentity = await client.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.Unauthorized, anonymousIdentity.StatusCode);
         await PlatformSettingsAccessTests.LoginAsync(direct, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
@@ -36,6 +38,11 @@ public sealed class AuditAccessTests
         Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
         using var operations = await client.GetAsync(new Uri("/api/auditing/operations", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, operations.StatusCode);
+        using var capacity = await client.GetAsync(new Uri("/api/auditing/capacity", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.OK, capacity.StatusCode);
+        var capacityData = await capacity.Content.ReadApiDataAsync();
+        Assert.Equal(1000000, capacityData.GetProperty("facts").GetProperty("instanceLimit").ReadHttpInt64());
+        Assert.Equal(2000000, capacityData.GetProperty("observations").GetProperty("instanceLimit").ReadHttpInt64());
         using var deliveries = await client.GetAsync(new Uri("/api/platform/audit-deliveries", UriKind.Relative));
         Assert.Equal(HttpStatusCode.OK, deliveries.StatusCode);
         using var identities = await client.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
