@@ -1,7 +1,7 @@
 using NexusStackNext.BuildingBlocks.Domain;
-using NexusStackNext.Files.Contracts;
 
-namespace NexusStackNext.Pricing.Application;
+
+namespace NexusStackNext.Files.Contracts;
 
 /// <summary>跨宿主私有成果协议；只接受冻结描述和固定身份，不携带用户令牌。</summary>
 public interface IExportFiles

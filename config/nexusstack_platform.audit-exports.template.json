@@ -1,0 +1,22 @@
+{
+  "Auditing": {
+    "Exports": {
+      "Enabled": false,
+      "Worker": { "Enabled": true },
+      "Execution": {
+        "LeaseDuration": "00:02:00",
+        "MaxAttempts": 3,
+        "MaxOutputBytes": 33554432,
+        "PollInterval": "00:00:01"
+      },
+      "Files": {
+        "BaseAddress": "https://files.internal.invalid:7443",
+        "ClientCertificatePath": "/run/certificates/auditing-client.crt",
+        "ClientKeyPath": "/run/certificates/auditing-client.key",
+        "RootCertificatePaths": [ "/run/certificates/internal-root.crt" ],
+        "IntermediateCertificatePaths": [],
+        "RevocationMode": "Online"
+      }
+    }
+  }
+}

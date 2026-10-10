@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;

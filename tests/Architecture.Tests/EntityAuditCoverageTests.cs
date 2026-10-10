@@ -1,5 +1,6 @@
 using System.Reflection;
 using NexusStackNext.Auditing.Domain.Entries;
+using NexusStackNext.Auditing.Domain.Exports;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.Costing.Domain;
 using NexusStackNext.Files.Domain.Stored;
@@ -55,6 +56,8 @@ public sealed class EntityAuditCoverageTests
             [nameof(PricingExport.Accept), nameof(PricingExport.Cancel), nameof(PricingExport.TryClaim), nameof(PricingExport.Renew), nameof(PricingExport.SelectPublication),
                 nameof(PricingExport.RecordPublicationProgress), nameof(PricingExport.CompletePublication), nameof(PricingExport.FailGeneration), nameof(PricingExport.RetryGeneration)]),
         [typeof(AuditEntry)] = new("不可变审计记录例外：中央Inbox/指纹与接收时间证明摄入，不对审计写入递归生成事实。", [], [nameof(AuditEntry.Record)]),
+        [typeof(AuditExport)] = new("技术生命周期例外：调查导出保存冻结证据与本人委托，不对导出递归生成业务事实；操作观察和行审计仍保留。", [],
+            [nameof(AuditExport.Accept), nameof(AuditExport.Cancel), nameof(AuditExport.TryClaim), nameof(AuditExport.SelectPublication), nameof(AuditExport.Complete), nameof(AuditExport.Fail), nameof(AuditExport.Retry), nameof(AuditExport.ExpireSnapshot)]),
     };
 
     [Fact]
@@ -115,7 +118,7 @@ public sealed class EntityAuditCoverageTests
             Assert.Contains(aggregates, type => type.FullName == lifecycle);
         }
         var business = aggregates.Where(type => !lifecycleTypes.Contains(type.FullName, StringComparer.Ordinal)).ToArray();
-        Assert.Equal(10, business.Length);
+        Assert.Equal(11, business.Length);
         Assert.All(business, type => Assert.True(typeof(IAuditedEntity).IsAssignableFrom(type), type.FullName + " 缺少行审计契约。"));
     }
 }

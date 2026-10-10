@@ -92,7 +92,8 @@ public static class AuditingPersistenceServiceCollectionExtensions
         services.AddSingleton((capacity ?? new()).Validate());
         services.AddScoped<PostgresAuditCapacity>();
         services.AddScoped<IAuditStorageCapacityReader>(provider => provider.GetRequiredService<PostgresAuditCapacity>());
-        services.AddDbContext<AuditingDbContext>(options => options.UseNexusStackPostgres(connectionString, AuditingDbContext.SchemaName));
+        services.AddDbContext<AuditingDbContext>((provider, options) => options.UseNexusStackPostgres(connectionString, AuditingDbContext.SchemaName)
+            .UseNexusStackAuditInterceptor(provider));
         services.AddScoped<IAuditEntryStore, EfAuditEntryStore>();
         services.AddScoped<IOperationObservationStore, EfOperationObservationStore>();
         services.AddScoped<AuditIngestion>();

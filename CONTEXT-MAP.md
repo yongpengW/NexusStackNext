@@ -33,6 +33,10 @@
 
 ### 已经成立的
 
+- **Auditing → Files（可选调查导出）**：Auditing 冻结已收到的事实或操作证据，持有本人委托及原发布意图；
+  经 Files.Contracts 的证书 HTTPS 协议交付固定 XLSX。Files 独占字节、当前可用性与下载归属，
+  下载同时重新验证 Identity 当前导出许可。双方不读取对方表，启用与限制见[审计调查导出](docs/audit-private-exports.md)。
+
 - **Pricing → Files（可选导出）**：Pricing 自己冻结报价、持有导出及原发布意图；
   通过 Files.Contracts 的真实受认证 HTTPS 暂存/发布协议提交固定 CSV 或 XLSX，双方独立数据库。
   Files 拥有字节、下载归属与到期历史，Pricing 不共享其路径、令牌或表；

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using NexusStackNext.Auditing.Domain.Entries;
+using NexusStackNext.Auditing.Domain.Exports;
 using NexusStackNext.Auditing.Domain.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
@@ -20,10 +21,14 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
     /// <summary>与已提交事实分开保存的不可变执行观察。</summary>
     public DbSet<OperationObservation> OperationObservations => Set<OperationObservation>();
 
+    /// <summary>本上下文接受的私有调查导出。</summary>
+    public DbSet<AuditExport> Exports => Set<AuditExport>();
+
     /// <inheritdoc />
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
         ArgumentNullException.ThrowIfNull(modelBuilder);
+        modelBuilder.ConfigureAuditExports();
         modelBuilder.Entity<InboxMessage>().Property<string?>(PayloadHashProperty).HasMaxLength(64);
         var entry = modelBuilder.Entity<AuditEntry>();
         entry.ToTable("audit_entries", table => table.HasCheckConstraint("auditing_fact_policy_change_valid", """

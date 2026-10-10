@@ -1,6 +1,15 @@
 {
   "routes": [
     {
+      "routeId": "auditing-exports",
+      "clusterId": "platform-host",
+      "path": "/api/auditing/exports/{**catch-all}",
+      "methods": [ "GET", "POST" ],
+      "timeout": "00:00:35",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
       "routeId": "platform-audit-retry",
       "clusterId": "platform-host",
       "path": "/api/platform/audit-deliveries/{messageId}/retry",

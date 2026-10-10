@@ -14,7 +14,7 @@
 新增聚合、方法、同名重载或公共构造入口未登记，以及已删除对象仍有登记，都会使检查失败。
 属性与继承的基类方法不属于该入口清单；它不分析方法体，也不能推断新增分支是否应产生事实。
 
-`OperationEndpointInventoryTests` 启动正常平台、Costing、Pricing与网关装配，开启Files生产者及Pricing导出，
+`OperationEndpointInventoryTests` 启动正常平台、Costing、Pricing与网关装配，开启Files生产者、Pricing与Auditing导出，
 从实际路由读取HTTP写入口。每项明确事实验证或具体例外，入口新增/删除须同步审计决定；
 同时对全部端点发送HTTP验证操作观察或显式排除。这里的匿名请求多在授权处拒绝，不能证明受权写入产生事实，
 内部文件TLS协议仍由 `GeneratedFilesHttpsTests` 验证，业务提交仍由下方行为矩阵验证。

@@ -2,6 +2,7 @@ using System.Globalization;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.Pricing.Application;
 using Npgsql;
 

@@ -9,6 +9,7 @@ using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Domain;
 using NexusStackNext.BuildingBlocks.Web;
+using NexusStackNext.Files.Contracts;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
 
