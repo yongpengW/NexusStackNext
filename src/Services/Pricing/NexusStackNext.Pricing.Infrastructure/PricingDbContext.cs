@@ -18,6 +18,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     public DbSet<PriceCacheInvalidation> CacheInvalidations => Set<PriceCacheInvalidation>();
     public DbSet<PricingExport> Exports => Set<PricingExport>();
     public DbSet<PricingExportPublication> ExportPublications => Set<PricingExportPublication>();
+    public DbSet<PricingWebhookDelivery> WebhookDeliveries => Set<PricingWebhookDelivery>();
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -41,6 +42,16 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         modelBuilder.ConfigureFactCapacityPolicy();
         modelBuilder.ConfigurePricingAuditRecovery();
         modelBuilder.ConfigurePricingExports();
+        var webhook = modelBuilder.Entity<PricingWebhookDelivery>();
+        webhook.ToTable("webhook_deliveries");
+        webhook.HasKey(x => x.EventId);
+        webhook.Property(x => x.Payload).IsRequired();
+        webhook.Property(x => x.Endpoint).HasMaxLength(2048).IsRequired();
+        webhook.Property(x => x.TraceId).HasMaxLength(128).IsRequired();
+        webhook.Property(x => x.CorrelationId).HasMaxLength(128).IsRequired();
+        webhook.Property(x => x.State).HasMaxLength(24).IsRequired();
+        webhook.Property(x => x.LastError).HasMaxLength(64);
+        webhook.HasIndex(x => new { x.State, x.NextAttemptAt, x.CreatedAt });
         var invalidation = modelBuilder.Entity<PriceCacheInvalidation>();
         invalidation.ToTable("cache_invalidations");
         invalidation.HasKey(x => new { x.ItemId, x.Version });

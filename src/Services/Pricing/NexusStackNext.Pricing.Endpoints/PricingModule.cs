@@ -40,7 +40,8 @@ public static class PricingModule
         var cache = configuration.GetSection("Pricing:Cache").Get<PricingCacheOptions>();
         var capacityWrite = configuration.GetSection("Pricing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
         connection = capacityWrite.ConfigureConnection(connection);
-        services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache);
+        services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache,
+            configuration.GetSection("Pricing:Webhook").Get<PricingWebhookOptions>());
         var capacityRead = configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
         capacityRead.Validate();
         services.AddPricingFactCapacityReader(capacityRead);
@@ -64,6 +65,14 @@ public static class PricingModule
             var consumer = configuration.GetValue<string>("Pricing:Messaging:ConsumerName") ?? "pricing-cost";
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = consumer });
+            if (configuration.GetValue<bool>("Pricing:Webhook:Enabled"))
+            {
+                services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription
+                {
+                    EventName = PricingRecalculationCompletedV1.Name,
+                    ConsumerName = "pricing-webhook",
+                });
+            }
             services.AddHealthChecks().AddAsyncCheck("pricing-broker", async token =>
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("成本事件的 broker 或交换机不可用。"), tags: ["ready"]);
@@ -167,6 +176,18 @@ public static class PricingModule
             var result = await sender.QueryAsync(query, token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Page(result.Value.Items, result.Value.Total, new ApiPageRequest(query.Page, query.Limit)) : Failure(result.Error);
         }).RequirePermission("/api/pricing/tasks", "GET").Produces<ApiPage<RecalculationSummary>>();
+        group.MapGet("/webhooks/{eventId:guid}", async (Guid eventId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetPricingWebhook(eventId), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/pricing/webhooks/{eventId}", "GET").Produces<ApiResponse<PricingWebhookStatus>>().ProducesApiErrors(404);
+        group.MapPost("/webhooks/{eventId:guid}/retry", async (Guid eventId, RetryWebhookRequest request, ISender sender,
+            ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new RetryPricingWebhook(eventId, request.ExpectedAttemptCount), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/pricing/webhooks/{eventId}/retry", "POST")
+            .Produces<ApiResponse<PricingWebhookStatus>>(202).ProducesApiErrors(409, 415);
         group.MapPost("/tasks/{taskId:guid}/cancel", async (Guid taskId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new CancelPricingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
@@ -195,12 +216,15 @@ public static class PricingModule
             "pricing.not_found" or "pricing.delivery_not_found" or "pricing.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
             "pricing.delivery_recovery.exhausted" or "pricing.audit_policy.control_exhausted" or "pricing.query_busy" or "pricing.query_timeout" or "pricing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "pricing.delivery_conflict" or "pricing.delivery_recovery.request_conflict" or "pricing.audit_policy.conflict" or "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
+            "pricing.webhook.conflict" => StatusCodes.Status409Conflict,
+            "pricing.webhook.not_found" => StatusCodes.Status404NotFound,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }
 
 internal sealed record RetryRequest(long ExpectedEpoch);
 internal sealed record CancelRequest([property: JsonRequired] long ExpectedEpoch);
+internal sealed record RetryWebhookRequest([property: JsonRequired] int ExpectedAttemptCount);
 internal sealed record PricingConnection(string Value);
 
 internal sealed record RetryPricingAuditDeliveryRequest(Guid RequestId, DateTimeOffset ExpectedDeadLetteredAt, [property: JsonRequired] long ExpectedRetryRevision, string Reason);

@@ -1,5 +1,10 @@
 {
   "Pricing": {
+    "Webhook": {
+      "Enabled": false,
+      "Endpoint": "https://webhook.example.invalid/pricing",
+      "MaxAttempts": 5
+    },
     "Exports": {
       "Enabled": false,
       "Worker": { "Enabled": true },
