@@ -57,6 +57,17 @@ HTTP 失败或 COMMIT 结果未知不立即删除字节；继续沿用[已有写
 
 发布后，当前有效 Owner 通过既有 `/api/files/{fileId}`、`/metadata`、DELETE、`/deletion` 使用私有成果，另有 GET `/api/files/{fileId}/availability` 观察本人已发布成果的终态。根身份不隐式拥有他人文件，撤销会话为 401。他人、未知标识及从未发布的候选均为 404，包括其到期墓碑；生产者仍可恢复自己的历史和清理确认。登出不撤销已经由来源接受的服务委托。
 
+`auditing` 生产者的已发布字节下载还要求本次 Identity 权威读取允许 `/api/auditing/exports:POST`。
+Producer 来自 Files 已保存的证书身份，许可由 `Auditing.Contracts.AuditExportAccessV1` 固定声明；
+查询参数、请求头和普通审计调查许可不能替代它。撤权后，同一 JWT 和原 FileId 返回 403；
+重新授权可恢复尚未到期的原成果，进程重启不改变该规则。权威会话失效为 401、来源不可用为 503，
+拒绝或取消前不读取响应字节，并释放已打开的流；允许后由 HTTP 文件响应释放。
+元数据、可用性和删除仍遵循既有本人规则，普通上传与 `pricing` 成果不增加审计导出许可。
+这是 [#163](https://github.com/yongpengW/NexusStackNext/issues/163) 的下载前置能力；
+[#68](https://github.com/yongpengW/NexusStackNext/issues/68) 的审计快照、XLSX 生成和下载中心仍待实现。
+真实网关、证书 HTTPS、PostgreSQL 重启旅程及受控存储/权威故障由 `AuditExportDownloadAccessTests` 验证，
+最终交付资格以原生票据的双轴评审与完整 Linux CI 为准。
+
 候选沿用 StoredFile 行审计与 Files Outbox，新增固定 `published`、`expired` 生命周期动作；到期同时受理清理，字节移除另有事实。中央通过原 `StoredFileCommittedV1` 消息接收白名单动作，不查询 Files 表。不记录文件名、二进制、句柄、路径或秘密；服务和后台事实的用户 ActorId 保持 null，不从 Owner 伪造操作者。
 
 普通宿主不自动迁移。部署前按[Files 独立迁移入口](private-files.md)执行 `--migrate-files`，增量 `20261009063803_PrivateGeneratedFileProtocol` 在 Files 原存储表追加可空字段、唯一身份及截止索引，保留旧普通文件和审计，不重置已合并迁移历史。开发过程的阶段迁移在提交前收拢为这一份，减少重复模型快照。模板配置默认关闭生产者入口，不提供证书、私钥或连接秘密。

@@ -8,6 +8,7 @@ using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Security;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Domain;
+using NexusStackNext.BuildingBlocks.Domain.Authorization;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.BuildingBlocks.Web;
@@ -245,14 +246,32 @@ public static class FilesModule
             HttpResponse response,
             FileService files,
             ICurrentUser currentUser,
+            IRequestAccessValidator access,
             CancellationToken cancellationToken) =>
         {
             var opened = await files.OpenAsync(new StoredFileId(id), currentUser.UserId!, cancellationToken);
 
             if (opened.IsFailure) { return Failure(opened.Error); }
-            response.Headers.XContentTypeOptions = "nosniff";
-            response.Headers.CacheControl = "private, no-store";
-            return Results.File(opened.Value.Content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
+            Stream? content = opened.Value.Content;
+            try
+            {
+                if (opened.Value.File.Candidate?.Producer == AuditExportAccessV1.Producer)
+                {
+                    var permission = PermissionKey.From(AuditExportAccessV1.PermissionRoute, AuditExportAccessV1.PermissionMethod);
+                    var decision = await access.ValidateAsync(currentUser.UserId!, currentUser.SessionVersion, permission, cancellationToken).ConfigureAwait(false);
+                    if (decision.IsFailure) { return Failure(decision.Error); }
+                    if (!decision.Value) { return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "当前身份没有审计导出权限。"); }
+                }
+                response.Headers.XContentTypeOptions = "nosniff";
+                response.Headers.CacheControl = "private, no-store";
+                var result = Results.File(content, opened.Value.File.ContentType, opened.Value.File.Name.Value);
+                content = null; // 从这里起由 HTTP 文件响应释放；其余路径由 finally 释放。
+                return result;
+            }
+            finally
+            {
+                if (content is not null) { await content.DisposeAsync().ConfigureAwait(false); }
+            }
         }).Produces(200, contentType: "application/octet-stream").ProducesApiErrors(400, 401, 403, 404, 500, 503).RequireAuthorization();
 
         // 元数据（不碰字节）。
@@ -325,6 +344,8 @@ public static class FilesModule
         title: error.Message,
         statusCode: error.Code switch
         {
+            "identity.session.invalid" => StatusCodes.Status401Unauthorized,
+            "identity.session.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "files.not_found" or "files.delivery_not_found" or "files.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
             "files.content_missing" or "files.candidate.unavailable" => StatusCodes.Status503ServiceUnavailable,
             "files.candidate.conflict" or "files.candidate.closed" or "files.candidate.not_sealed" => StatusCodes.Status409Conflict,
