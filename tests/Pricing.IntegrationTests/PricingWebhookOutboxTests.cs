@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using NexusStackNext.Auditing.Contracts;
+using NexusStackNext.Auditing.Endpoints;
+using NexusStackNext.Auditing.Infrastructure;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
@@ -102,6 +106,9 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddNexusStackApplication();
+        var journalBuilder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
+        journalBuilder.Configuration["OperationJournal:Storage:Provider"] = "Memory";
+        services.AddOperationJournalModule(journalBuilder.Configuration, journalBuilder.Environment, "pricing");
         services.AddPricingPostgres(database.ConnectionString,
             webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
         services.AddSingleton<HttpClient>(new HttpClient(receiver));
@@ -119,6 +126,7 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             CalculatedRevision = 3,
             TraceId = "trace-delivery",
             CorrelationId = "correlation-delivery",
+            Execution = new ExecutionOrigin(Guid.NewGuid(), "pricing", Guid.NewGuid(), "pricing", "test-operator", "trace-delivery", "correlation-delivery"),
             OccurredAt = DateTimeOffset.UtcNow,
         };
         var envelope = new EventEnvelope
@@ -142,6 +150,15 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         Assert.True(status.IsSuccess);
         Assert.Equal("Succeeded", status.Value.State);
         Assert.Equal(1, status.Value.AttemptCount);
+
+        var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+        var observed = (await journal.ReadPendingAsync(10, DateTimeOffset.UtcNow))
+            .Select(entry => new SystemTextJsonIntegrationEventSerializer().Deserialize<OperationObservedV1>(entry.Payload)).ToArray();
+        var finished = Assert.Single(observed, item => item.Phase == "finished");
+        Assert.Equal("completed", finished.Outcome);
+        Assert.Equal("pricing.webhook.deliver", finished.Metadata!.Action);
+        Assert.Equal(message.Execution!.RootOperationId, finished.Metadata.RootOperationId);
+        Assert.Equal(message.Execution.CorrelationId, finished.Metadata.CorrelationId);
     }
 
     [PostgresFact]
@@ -158,6 +175,44 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             Assert.Equal("Failed", status.Value.State);
             Assert.Equal("invalid_ack", status.Value.LastError);
         }
+    }
+
+    [PostgresFact]
+    public async Task Http_sender_classifies_retryable_permanent_and_timeout_responses()
+    {
+        var cases = new[]
+        {
+            (Status: HttpStatusCode.TooManyRequests, Retryable: true),
+            (Status: HttpStatusCode.InternalServerError, Retryable: true),
+            (Status: HttpStatusCode.BadRequest, Retryable: false),
+        };
+        foreach (var testCase in cases)
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddNexusStackApplication();
+            services.AddPricingPostgres(database.ConnectionString,
+                webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+            services.AddSingleton<HttpClient>(new HttpClient(new StatusHandler(testCase.Status)));
+            await using var provider = services.BuildServiceProvider();
+            var sender = provider.GetRequiredService<IPricingWebhookSender>();
+            var result = await sender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
+            Assert.False(result.Succeeded);
+            Assert.Equal(testCase.Retryable, result.Retryable);
+            Assert.Equal((int)testCase.Status, result.StatusCode);
+        }
+
+        var timeoutServices = new ServiceCollection();
+        timeoutServices.AddLogging();
+        timeoutServices.AddNexusStackApplication();
+        timeoutServices.AddPricingPostgres(database.ConnectionString,
+            webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+        timeoutServices.AddSingleton<HttpClient>(new HttpClient(new HangingHandler()) { Timeout = TimeSpan.FromMilliseconds(20) });
+        await using var timeoutProvider = timeoutServices.BuildServiceProvider();
+        var timeoutSender = timeoutProvider.GetRequiredService<IPricingWebhookSender>();
+        var timeoutResult = await timeoutSender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
+        Assert.False(timeoutResult.Succeeded);
+        Assert.True(timeoutResult.Retryable);
     }
 
     [PostgresFact]
@@ -246,6 +301,21 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         {
             cancellation.Cancel();
             return Task.FromException<PricingWebhookSendResult>(new OperationCanceledException(cancellation.Token));
+        }
+    }
+
+    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(status));
+    }
+
+    private sealed class HangingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage();
         }
     }
 }

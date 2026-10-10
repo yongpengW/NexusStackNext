@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -29,7 +29,8 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
         var webhook = new EventSubscription { EventName = PricingRecalculationCompletedV1.Name, ConsumerName = prefix + "-webhook" };
         var committed = new EventSubscription { EventName = PriceQuoteCommittedV1.Name, ConsumerName = prefix + "-facts" };
         var topology = EventTopology.Create(broker.ExchangeName, [webhook, committed]);
-        await using var receiver = await WebhookReceiver.StartAsync();
+        var statePath = Path.Combine(Path.GetTempPath(), $"nsn-pricing-webhook-{Guid.NewGuid():N}.json");
+        var receiver = await WebhookReceiver.StartAsync(statePath, failFirst: true);
         var settingsEndpoint = new Uri("https://receiver.test/webhooks/pricing");
         try
         {
@@ -39,7 +40,7 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             services.AddNexusStackApplication();
             services.AddPricingPostgres(database.ConnectionString,
                 webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = settingsEndpoint.AbsoluteUri, MaxAttempts = 1 });
-            services.AddSingleton<HttpClient>(new HttpClient(new RewriteHandler(receiver.BaseAddress)));
+            services.AddSingleton<HttpClient>(new HttpClient(new RewriteHandler(() => receiver.BaseAddress)));
             await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
             await using var scope = provider.CreateAsyncScope();
             await using var consumerScope = provider.CreateAsyncScope();
@@ -64,6 +65,8 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             var eventId = receiver.EventId;
             stopped.Cancel();
             await consuming;
+            await receiver.DisposeAsync();
+            receiver = await WebhookReceiver.StartAsync(statePath, failFirst: false);
 
             var pending = await sender.QueryAsync(new GetPricingWebhook(eventId));
             Assert.True(pending.IsSuccess);
@@ -74,9 +77,15 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             Assert.True(await WaitForSuccessfulDeliveryAsync(runner));
             var succeeded = await sender.QueryAsync(new GetPricingWebhook(eventId));
             Assert.Equal("Succeeded", succeeded.Value.State);
-            Assert.Equal(2, receiver.Count(eventId));
+            Assert.Equal(2, receiver.RequestCount(eventId));
+            Assert.Equal(1, receiver.EffectCount(eventId));
         }
-        finally { await DeleteTopologyAsync(broker, topology); }
+        finally
+        {
+            await receiver.DisposeAsync();
+            try { File.Delete(statePath); } catch (IOException) { }
+            await DeleteTopologyAsync(broker, topology);
+        }
     }
 
     private static async Task WaitForWebhookAsync(ISender sender, IPricingWebhookDeliveryRunner runner, WebhookReceiver receiver)
@@ -123,32 +132,31 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
         catch (RabbitMQ.Client.Exceptions.BrokerUnreachableException) { }
     }
 
-    private sealed class RewriteHandler(Uri receiver) : HttpMessageHandler
+    private sealed class RewriteHandler(Func<Uri> receiver) : HttpMessageHandler
     {
         private readonly HttpClient _client = new();
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var target = new HttpRequestMessage(request.Method, new Uri(receiver, request.RequestUri!.PathAndQuery)) { Content = request.Content };
+            var target = new HttpRequestMessage(request.Method, new Uri(receiver(), request.RequestUri!.PathAndQuery)) { Content = request.Content };
             foreach (var header in request.Headers) { target.Headers.TryAddWithoutValidation(header.Key, header.Value); }
             return _client.SendAsync(target, cancellationToken);
         }
         protected override void Dispose(bool disposing) { if (disposing) { _client.Dispose(); } base.Dispose(disposing); }
     }
 
-    private sealed class WebhookReceiver(WebApplication app) : IAsyncDisposable
+    private sealed class WebhookReceiver(WebApplication app, PersistentWebhookStore store, bool failFirst) : IAsyncDisposable
     {
-        private readonly ConcurrentDictionary<Guid, int> _received = new();
         private readonly TaskCompletionSource<Guid> _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _failures = 1;
+        private int _failures = failFirst ? 1 : 0;
         public Uri BaseAddress { get; private set; } = null!;
         public Guid? FirstEventId { get; private set; }
         public Guid EventId => _firstFailure.Task.GetAwaiter().GetResult();
-        public static async Task<WebhookReceiver> StartAsync()
+        public static async Task<WebhookReceiver> StartAsync(string statePath, bool failFirst)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             var app = builder.Build();
-            var receiver = new WebhookReceiver(app);
+            var receiver = new WebhookReceiver(app, await PersistentWebhookStore.LoadAsync(statePath), failFirst);
             app.MapPost("/webhooks/pricing", receiver.AcceptAsync);
             await app.StartAsync();
             receiver.BaseAddress = new Uri(app.Urls.Single());
@@ -160,7 +168,7 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             Assert.NotNull(message);
             var id = message!.EventId;
             FirstEventId = id;
-            _received.AddOrUpdate(id, 1, static (_, count) => count + 1);
+            await store.RecordAsync(id);
             if (Interlocked.Decrement(ref _failures) >= 0)
             {
                 _firstFailure.TrySetResult(id);
@@ -170,8 +178,57 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             await response.WriteAsJsonAsync(new PricingWebhookAcceptedV1 { EventId = id, IdempotencyKey = message.IdempotencyKey, Accepted = true });
         }
         public Task<Guid> WaitForFirstFailureAsync() => _firstFailure.Task.WaitAsync(TimeSpan.FromSeconds(20));
-        public int Count(Guid eventId) => _received.GetValueOrDefault(eventId);
-        public async ValueTask DisposeAsync() { await app.StopAsync(); await app.DisposeAsync(); }
+        public int RequestCount(Guid eventId) => store.RequestCount(eventId);
+        public int EffectCount(Guid eventId) => store.EffectCount(eventId);
+        public async ValueTask DisposeAsync()
+        {
+            await app.StopAsync();
+            await app.DisposeAsync();
+            await store.DisposeAsync();
+        }
+    }
+
+    private sealed class PersistentWebhookStore : IAsyncDisposable
+    {
+        private readonly string _path;
+        private readonly SemaphoreSlim _gate = new(1, 1);
+        private readonly State _state;
+
+        private PersistentWebhookStore(string path, State state) { _path = path; _state = state; }
+
+        public static async Task<PersistentWebhookStore> LoadAsync(string path)
+        {
+            State state;
+            if (File.Exists(path))
+            {
+                await using var stream = File.OpenRead(path);
+                state = await JsonSerializer.DeserializeAsync<State>(stream) ?? new State();
+            }
+            else { state = new State(); }
+            return new PersistentWebhookStore(path, state);
+        }
+
+        public async Task RecordAsync(Guid eventId)
+        {
+            await _gate.WaitAsync();
+            try
+            {
+                _state.Requests[eventId] = _state.Requests.GetValueOrDefault(eventId) + 1;
+                _state.Effects.Add(eventId);
+                await File.WriteAllTextAsync(_path, JsonSerializer.Serialize(_state));
+            }
+            finally { _gate.Release(); }
+        }
+
+        public int RequestCount(Guid eventId) => _state.Requests.GetValueOrDefault(eventId);
+        public int EffectCount(Guid eventId) => _state.Effects.Contains(eventId) ? 1 : 0;
+        public ValueTask DisposeAsync() { _gate.Dispose(); return ValueTask.CompletedTask; }
+
+        private sealed class State
+        {
+            public Dictionary<Guid, int> Requests { get; init; } = [];
+            public HashSet<Guid> Effects { get; init; } = [];
+        }
     }
 
     private sealed class PricingWebhookBrokerFactAttribute : Xunit.FactAttribute
