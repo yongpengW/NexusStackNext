@@ -38,10 +38,16 @@ public static class PricingModule
         var connection = configuration.GetConnectionString("Pricing");
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Pricing，使用独立业务数据库。"); }
         var cache = configuration.GetSection("Pricing:Cache").Get<PricingCacheOptions>();
+        var webhook = configuration.GetSection("Pricing:Webhook").Get<PricingWebhookOptions>();
+        var messagingEnabled = configuration.GetValue<bool>("Pricing:Messaging:Enabled");
+        if (webhook?.Enabled == true && !messagingEnabled)
+        {
+            throw new InvalidOperationException("启用 Pricing Webhook 时必须同时启用 Pricing:Messaging:Enabled。");
+        }
         var capacityWrite = configuration.GetSection("Pricing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
         connection = capacityWrite.ConfigureConnection(connection);
         services.AddPricingPostgres(connection, configuration.GetSection("Pricing:Tasks").Get<PricingTaskOptions>(), cache,
-            configuration.GetSection("Pricing:Webhook").Get<PricingWebhookOptions>());
+            webhook);
         var capacityRead = configuration.GetSection("Pricing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
         capacityRead.Validate();
         services.AddPricingFactCapacityReader(capacityRead);

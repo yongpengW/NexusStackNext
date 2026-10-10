@@ -1,9 +1,12 @@
+using System.Net.Http.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.Pricing.Application;
+using NexusStackNext.Pricing.Contracts;
 
 namespace NexusStackNext.Pricing.Infrastructure;
 
@@ -15,6 +18,7 @@ internal sealed class PricingWebhookDelivery
     public required string Endpoint { get; set; }
     public required string TraceId { get; set; }
     public required string CorrelationId { get; set; }
+    public ExecutionOrigin? Execution { get; set; }
     public required DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? DeliveredAt { get; set; }
     public DateTimeOffset? NextAttemptAt { get; set; }
@@ -25,7 +29,7 @@ internal sealed class PricingWebhookDelivery
 }
 
 internal sealed class PricingWebhookDeliveryService(PricingDbContext database, PricingWebhookOptions options,
-    IPricingWebhookSender sender, IClock clock) : IPricingWebhookDeliveryRunner
+    IPricingWebhookSender sender, IClock clock, IBackgroundExecutionObservation observations) : IPricingWebhookDeliveryRunner
 {
     public async Task<int> DeliverPendingAsync(CancellationToken cancellationToken)
     {
@@ -37,7 +41,33 @@ internal sealed class PricingWebhookDeliveryService(PricingDbContext database, P
         var delivered = 0;
         foreach (var delivery in pending)
         {
-            var outcome = await sender.SendAsync(new(new Uri(delivery.Endpoint), delivery.Payload, delivery.EventId, delivery.TraceId), cancellationToken).ConfigureAwait(false);
+            PricingWebhookSendResult outcome;
+            try
+            {
+                outcome = await observations.ObserveAsync(
+                    new RecoveryExecutionDescriptor("pricing.webhook.deliver", "PricingWebhook", "guid", delivery.EventId.ToString("D")),
+                    () => Task.FromResult(new BackgroundExecutionInput<PricingWebhookSendRequest>(
+                        new(new Uri(delivery.Endpoint), delivery.Payload, delivery.EventId, delivery.TraceId), delivery.Execution)),
+                    request => sender.SendAsync(request, cancellationToken),
+                    static result => result.Succeeded ? BackgroundExecutionOutcome.Completed
+                        : result.Retryable ? BackgroundExecutionOutcome.Deferred : BackgroundExecutionOutcome.Failed,
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                database.ChangeTracker.Clear();
+                var canceled = await database.WebhookDeliveries.SingleOrDefaultAsync(x => x.EventId == delivery.EventId, CancellationToken.None).ConfigureAwait(false);
+                if (canceled is not null && canceled.State == "Pending")
+                {
+                    canceled.AttemptCount++;
+                    canceled.State = "Unknown";
+                    canceled.NextAttemptAt = null;
+                    canceled.LastError = "canceled";
+                    canceled.LastStatusCode = null;
+                    await database.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                throw;
+            }
             database.ChangeTracker.Clear();
             var current = await database.WebhookDeliveries.SingleOrDefaultAsync(x => x.EventId == delivery.EventId, cancellationToken).ConfigureAwait(false);
             if (current is null || current.State != "Pending") { continue; }
@@ -81,9 +111,22 @@ internal sealed class HttpPricingWebhookSender(HttpClient client) : IPricingWebh
             message.Headers.Add("X-NexusStack-Trace", request.TraceId);
             using var response = await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
             var status = (int)response.StatusCode;
-            return response.IsSuccessStatusCode
-                ? new PricingWebhookSendResult(true, false, status, null)
-                : new PricingWebhookSendResult(false, status == 408 || status == 429 || status >= 500, status, $"http_{status}");
+            if (!response.IsSuccessStatusCode)
+            {
+                return new PricingWebhookSendResult(false, status == 408 || status == 429 || status >= 500, status, $"http_{status}");
+            }
+            try
+            {
+                var acknowledgement = await response.Content.ReadFromJsonAsync<PricingWebhookAcceptedV1>(cancellationToken).ConfigureAwait(false);
+                return acknowledgement is { Accepted: true, EventId: var eventId, IdempotencyKey: var idempotencyKey }
+                    && eventId == request.IdempotencyKey && idempotencyKey == request.IdempotencyKey
+                    ? new PricingWebhookSendResult(true, false, status, null)
+                    : new PricingWebhookSendResult(false, false, status, "invalid_ack");
+            }
+            catch (Exception error) when (error is System.Text.Json.JsonException or NotSupportedException)
+            {
+                return new PricingWebhookSendResult(false, false, status, "invalid_ack");
+            }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

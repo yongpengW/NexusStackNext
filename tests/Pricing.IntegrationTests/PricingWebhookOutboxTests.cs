@@ -1,7 +1,10 @@
+using System.Net;
+using System.Net.Http.Json;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Application;
@@ -69,6 +72,7 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             CalculatedRevision = 3,
             TraceId = "trace-webhook",
             CorrelationId = "correlation-webhook",
+            Execution = new ExecutionOrigin(Guid.NewGuid(), "pricing", Guid.NewGuid(), "pricing", "test-operator", "trace-webhook", "correlation-webhook"),
             OccurredAt = DateTimeOffset.UtcNow,
         };
         var envelope = new EventEnvelope
@@ -88,18 +92,19 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         Assert.Equal("Pending", status.Value.State);
         Assert.Equal(message.ItemId, status.Value.ItemId);
         Assert.Equal(0, status.Value.AttemptCount);
+        Assert.Equal(message.Execution, status.Value.Execution);
     }
 
     [PostgresFact]
     public async Task Successful_delivery_uses_one_stable_idempotency_key_and_is_not_sent_again()
     {
-        var sender = new RecordingWebhookSender();
+        var receiver = new RecordingReceiver();
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddNexusStackApplication();
         services.AddPricingPostgres(database.ConnectionString,
             webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
-        services.AddSingleton<IPricingWebhookSender>(sender);
+        services.AddSingleton<HttpClient>(new HttpClient(receiver));
         await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var scope = provider.CreateAsyncScope();
         var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
@@ -129,7 +134,9 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
         Assert.Equal(1, await runner.DeliverPendingAsync());
         Assert.Equal(0, await runner.DeliverPendingAsync());
-        Assert.Equal(eventId, Assert.Single(sender.Keys));
+        Assert.Equal(eventId, Assert.Single(receiver.Keys));
+        Assert.Equal(eventId.ToString("D"), receiver.IdempotencyKey);
+        Assert.Equal("trace-delivery", receiver.TraceId);
 
         var status = await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPricingWebhook(eventId));
         Assert.True(status.IsSuccess);
@@ -137,14 +144,108 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         Assert.Equal(1, status.Value.AttemptCount);
     }
 
-    private sealed class RecordingWebhookSender : IPricingWebhookSender
+    [PostgresFact]
+    public async Task Invalid_ack_is_failed_and_does_not_retry()
+    {
+        var sender = new FixedWebhookSender(new PricingWebhookSendResult(false, false, 202, "invalid_ack"));
+        var (provider, eventId) = await CreatePendingAsync(sender);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var status = await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPricingWebhook(eventId));
+            Assert.Equal("Failed", status.Value.State);
+            Assert.Equal("invalid_ack", status.Value.LastError);
+        }
+    }
+
+    [PostgresFact]
+    public async Task Canceled_send_is_unknown_and_can_be_manually_retried()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var sender = new CancelingWebhookSender(cancellation);
+        var (provider, eventId) = await CreatePendingAsync(sender);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => runner.DeliverPendingAsync(cancellation.Token));
+            var senderApi = scope.ServiceProvider.GetRequiredService<ISender>();
+            var unknown = await senderApi.QueryAsync(new GetPricingWebhook(eventId));
+            Assert.Equal("Unknown", unknown.Value.State);
+            Assert.Equal("canceled", unknown.Value.LastError);
+            var retried = await senderApi.SendAsync(new RetryPricingWebhook(eventId, 1));
+            Assert.True(retried.IsSuccess);
+            Assert.Equal("Pending", retried.Value.State);
+        }
+    }
+
+    private async Task<(ServiceProvider Provider, Guid EventId)> CreatePendingAsync(IPricingWebhookSender sender)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddNexusStackApplication();
+        services.AddPricingPostgres(database.ConnectionString,
+            webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+        services.AddSingleton(sender);
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+        await using var scope = provider.CreateAsyncScope();
+        var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+        var eventId = Guid.NewGuid();
+        var message = new PricingRecalculationCompletedV1
+        {
+            EventId = eventId,
+            IdempotencyKey = eventId,
+            ItemId = Guid.NewGuid(),
+            Version = 1,
+            InputRevision = 1,
+            CalculatedRevision = 1,
+            TraceId = "trace-failure",
+            CorrelationId = "correlation-failure",
+            OccurredAt = DateTimeOffset.UtcNow,
+        };
+        var envelope = new EventEnvelope { MessageId = eventId, EventName = message.EventName, Payload = serializer.Serialize(message), OccurredAt = message.OccurredAt };
+        var processor = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(PricingRecalculationCompletedV1.Name);
+        Assert.True(await processor.HandleAsync(envelope));
+        return (provider, eventId);
+    }
+
+    private sealed class RecordingReceiver : HttpMessageHandler
     {
         public List<Guid> Keys { get; } = [];
+        public string? IdempotencyKey { get; private set; }
+        public string? TraceId { get; private set; }
 
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            IdempotencyKey = request.Headers.GetValues("Idempotency-Key").Single();
+            TraceId = request.Headers.GetValues("X-NexusStack-Trace").Single();
+            var payload = await request.Content!.ReadFromJsonAsync<PricingRecalculationCompletedV1>(cancellationToken);
+            Keys.Add(payload!.EventId);
+            return new HttpResponseMessage(HttpStatusCode.Accepted)
+            {
+                Content = JsonContent.Create(new PricingWebhookAcceptedV1
+                {
+                    EventId = payload.EventId,
+                    IdempotencyKey = payload.IdempotencyKey,
+                    Accepted = true,
+                }),
+            };
+        }
+    }
+
+    private sealed class FixedWebhookSender(PricingWebhookSendResult result) : IPricingWebhookSender
+    {
+        public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default) => Task.FromResult(result);
+    }
+
+    private sealed class CancelingWebhookSender(CancellationTokenSource cancellation) : IPricingWebhookSender
+    {
         public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default)
         {
-            Keys.Add(request.IdempotencyKey);
-            return Task.FromResult(new PricingWebhookSendResult(true, false, 202, null));
+            cancellation.Cancel();
+            return Task.FromException<PricingWebhookSendResult>(new OperationCanceledException(cancellation.Token));
         }
     }
 }

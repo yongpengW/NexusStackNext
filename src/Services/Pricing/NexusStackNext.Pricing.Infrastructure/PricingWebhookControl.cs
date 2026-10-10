@@ -21,7 +21,7 @@ internal sealed class PricingWebhookControl(PricingDbContext database) :
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var delivery = await database.WebhookDeliveries.SingleOrDefaultAsync(x => x.EventId == command.EventId, cancellationToken).ConfigureAwait(false);
         if (delivery is null) { return Result.Failure<PricingWebhookStatus>(NotFound); }
-        if (delivery.AttemptCount != command.ExpectedAttemptCount || delivery.State is not ("Failed" or "DeadLettered"))
+        if (delivery.AttemptCount != command.ExpectedAttemptCount || delivery.State is not ("Failed" or "DeadLettered" or "Unknown"))
         {
             return Result.Failure<PricingWebhookStatus>(Conflict);
         }
@@ -36,7 +36,7 @@ internal sealed class PricingWebhookControl(PricingDbContext database) :
 
     private static PricingWebhookStatus ToStatus(PricingWebhookDelivery delivery) => new(delivery.EventId, delivery.ItemId,
         delivery.State, delivery.AttemptCount, delivery.CreatedAt, delivery.NextAttemptAt, delivery.DeliveredAt,
-        delivery.LastStatusCode, delivery.LastError, delivery.TraceId, delivery.CorrelationId);
+        delivery.LastStatusCode, delivery.LastError, delivery.TraceId, delivery.CorrelationId, delivery.Execution);
 
     private static readonly Error Invalid = new("pricing.webhook.invalid", "通知标识或尝试次数无效。");
     private static readonly Error NotFound = new("pricing.webhook.not_found", "通知不存在。");

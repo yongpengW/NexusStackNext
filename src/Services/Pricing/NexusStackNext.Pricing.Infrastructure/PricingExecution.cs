@@ -54,18 +54,23 @@ internal sealed class PricingExecution(PricingDbContext database, PricingTaskOpt
             }, async input =>
             {
                 if (input is null) { return (Committed: false, Completion: TaskCompletion.Superseded); }
+                database.PendingExecutionOrigin = input.ExecutionOrigin;
                 // 耗时计算的缝在短事务之外；首轮只有一个确定的演示公式。
                 var price = PriceQuote.Calculate(input.Cost, input.FeeRate);
                 var completion = TaskCompletion.Superseded;
-                var committed = await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
+                try
                 {
-                    await database.Database.ExecuteSqlInterpolatedAsync(
-                        $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
-                    var quote = await database.Quotes.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
-                    completion = quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
-                    return completion;
-                }, cancellationToken).ConfigureAwait(false);
-                return (Committed: committed, Completion: completion);
+                    var committed = await _execution.CompleteAsync(command.TaskId, command.Epoch, async (task, token) =>
+                    {
+                        await database.Database.ExecuteSqlInterpolatedAsync(
+                            $"SELECT pg_advisory_xact_lock(hashtextextended({"pricing-item/" + task.ItemId.Value}, 0))", token).ConfigureAwait(false);
+                        var quote = await database.Quotes.SingleAsync(x => x.Id == task.ItemId, token).ConfigureAwait(false);
+                        completion = quote.ApplyCalculation(task.InputRevision, price).IsSuccess ? TaskCompletion.Succeeded : TaskCompletion.Superseded;
+                        return completion;
+                    }, cancellationToken).ConfigureAwait(false);
+                    return (Committed: committed, Completion: completion);
+                }
+                finally { database.PendingExecutionOrigin = null; }
             }, static result => !result.Committed ? BackgroundExecutionOutcome.LeaseLost
                 : result.Completion == TaskCompletion.Succeeded ? BackgroundExecutionOutcome.Completed : BackgroundExecutionOutcome.Superseded,
                 cancellationToken).ConfigureAwait(false);

@@ -16,7 +16,8 @@ internal sealed class PricingWebhookProcessor(PricingDbContext database, Pricing
         PricingRecalculationCompletedV1 message;
         try { message = new SystemTextJsonIntegrationEventSerializer().Deserialize<PricingRecalculationCompletedV1>(envelope.Payload); }
         catch (Exception error) when (error is System.Text.Json.JsonException or InvalidOperationException or ArgumentException) { return false; }
-        if (message.EventId != envelope.MessageId || message.ItemId == Guid.Empty || message.IdempotencyKey != message.EventId) { return false; }
+        if (message.EventId != envelope.MessageId || message.ItemId == Guid.Empty || message.IdempotencyKey != message.EventId
+            || message.Execution is { } origin && !origin.IsValid()) { return false; }
 
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         var now = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
@@ -35,6 +36,7 @@ internal sealed class PricingWebhookProcessor(PricingDbContext database, Pricing
                 Endpoint = options.Endpoint!,
                 TraceId = message.TraceId,
                 CorrelationId = message.CorrelationId,
+                Execution = message.Execution,
                 CreatedAt = now,
             });
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

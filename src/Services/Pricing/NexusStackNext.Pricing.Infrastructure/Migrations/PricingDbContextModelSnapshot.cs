@@ -605,6 +605,9 @@ namespace NexusStackNext.Pricing.Infrastructure.Migrations
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)");
 
+                    b.Property<string>("Execution")
+                        .HasColumnType("jsonb");
+
                     b.Property<Guid>("ItemId")
                         .HasColumnType("uuid");
 

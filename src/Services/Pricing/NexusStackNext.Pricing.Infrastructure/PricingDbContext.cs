@@ -19,6 +19,7 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
     public DbSet<PricingExport> Exports => Set<PricingExport>();
     public DbSet<PricingExportPublication> ExportPublications => Set<PricingExportPublication>();
     public DbSet<PricingWebhookDelivery> WebhookDeliveries => Set<PricingWebhookDelivery>();
+    internal NexusStackNext.BuildingBlocks.Application.Operations.ExecutionOrigin? PendingExecutionOrigin { get; set; }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
@@ -49,6 +50,9 @@ internal sealed class PricingDbContext(DbContextOptions<PricingDbContext> option
         webhook.Property(x => x.Endpoint).HasMaxLength(2048).IsRequired();
         webhook.Property(x => x.TraceId).HasMaxLength(128).IsRequired();
         webhook.Property(x => x.CorrelationId).HasMaxLength(128).IsRequired();
+        webhook.Property(x => x.Execution).HasColumnType("jsonb").HasConversion(
+            value => System.Text.Json.JsonSerializer.Serialize(value, (System.Text.Json.JsonSerializerOptions?)null),
+            value => System.Text.Json.JsonSerializer.Deserialize<NexusStackNext.BuildingBlocks.Application.Operations.ExecutionOrigin>(value, (System.Text.Json.JsonSerializerOptions?)null));
         webhook.Property(x => x.State).HasMaxLength(24).IsRequired();
         webhook.Property(x => x.LastError).HasMaxLength(64);
         webhook.HasIndex(x => new { x.State, x.NextAttemptAt, x.CreatedAt });

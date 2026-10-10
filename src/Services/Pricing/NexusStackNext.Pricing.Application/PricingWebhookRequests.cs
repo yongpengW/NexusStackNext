@@ -11,7 +11,8 @@ public sealed record RetryPricingWebhook(Guid EventId, int ExpectedAttemptCount)
 /// <summary>外部通知的持久状态。</summary>
 public sealed record PricingWebhookStatus(Guid EventId, Guid ItemId, string State, int AttemptCount,
     DateTimeOffset CreatedAt, DateTimeOffset? NextAttemptAt, DateTimeOffset? DeliveredAt,
-    int? LastStatusCode, string? LastError, string TraceId, string CorrelationId);
+    int? LastStatusCode, string? LastError, string TraceId, string CorrelationId,
+    NexusStackNext.BuildingBlocks.Application.Operations.ExecutionOrigin? Execution);
 
 /// <summary>受控外部接收端的最小发送端口。</summary>
 public interface IPricingWebhookSender

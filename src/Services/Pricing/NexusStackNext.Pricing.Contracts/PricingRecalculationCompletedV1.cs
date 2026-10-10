@@ -1,4 +1,5 @@
 using NexusStackNext.BuildingBlocks.Application.Events;
+using NexusStackNext.BuildingBlocks.Application.Operations;
 
 namespace NexusStackNext.Pricing.Contracts;
 
@@ -31,4 +32,20 @@ public sealed record PricingRecalculationCompletedV1 : IntegrationEvent
 
     /// <summary>安全关联标识。</summary>
     public required string CorrelationId { get; init; }
+
+    /// <summary>触发本次重算的可信操作来源；只用于调查关联。</summary>
+    public ExecutionOrigin? Execution { get; init; }
+}
+
+/// <summary>受控接收端确认 Pricing 重算通知的响应契约。</summary>
+public sealed record PricingWebhookAcceptedV1
+{
+    /// <summary>确认的事件标识。</summary>
+    public required Guid EventId { get; init; }
+
+    /// <summary>确认的幂等键。</summary>
+    public required Guid IdempotencyKey { get; init; }
+
+    /// <summary>接收端已接受并持久化该通知。</summary>
+    public required bool Accepted { get; init; }
 }

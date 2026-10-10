@@ -31,7 +31,7 @@ internal sealed class PricingCommittedFactInterceptor(IClock clock, IIntegration
                 : quote.CalculatedRevision != entry.Property(item => item.CalculatedRevision).OriginalValue
                     || quote.BreakEvenPrice != entry.Property(item => item.BreakEvenPrice).OriginalValue) { changes.Add((quote, "result-applied")); }
         }
-        var origin = execution?.Capture();
+        var origin = execution?.Capture() ?? context.PendingExecutionOrigin;
         var trace = origin?.TraceId ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
         var now = clock.UtcNow;
         var entries = changes.Select(change => OutboxEntry.From(new PriceQuoteCommittedV1
@@ -60,6 +60,7 @@ internal sealed class PricingCommittedFactInterceptor(IClock clock, IIntegration
                     OccurredAt = now,
                     TraceId = trace,
                     CorrelationId = origin?.CorrelationId ?? trace,
+                    Execution = origin,
                 };
                 notification = notification with { IdempotencyKey = notification.EventId };
                 entries.Add(OutboxEntry.From(notification, serializer));
