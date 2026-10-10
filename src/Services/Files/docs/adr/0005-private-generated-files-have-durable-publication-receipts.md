@@ -16,6 +16,13 @@ PostgreSQL 裁决在事务锁后重读聚合及数据库时间；候选与发布
 
 Owner 只能通过当前有效会话访问已发布成果，根管理员不隐式越权。Producer 的委托不依赖原用户令牌续命，也不赋予下载权；Owner 的登出不丢失已接受工作。服务与系统行审计/事实 ActorId 可以为 null，不能由 Owner 推断当前操作者；发布、到期、清理事实保持固定最小内容，通过 Files Outbox 进入 Auditing。
 
+审计导出另有已确认的撤权要求（#68/#163）：Files 按不可变 Producer `auditing`，
+通过 Identity 的现有授权端口，在每次字节下载时验证 Auditing.Contracts 代码声明的导出许可。
+这里变化的是生产者的访问要求，复用已认证身份即可，不增加可由请求指定的权限字段或配置。
+文件归属仍先裁决，根身份不能越过他人归属；查询审计许可不隐含导出许可。
+权威拒绝、故障和取消释放已打开的流，允许后把流交给 HTTP 响应。
+其他生产者、元数据及删除保持原契约；不增加迁移或新的恢复机制。
+
 代价是保留候选墓碑及两类历史身份、持久到期状态和一个计算索引，需要运维为内部 HTTPS 提供 PKI、证书轮换和可验证的吊销状态。真实 Production revoked 路径仍须用其 PKI 的可控 CRL/OCSP 验收；临时 NoCheck 旅程与 unknown-revocation 拒绝不能替代它。框架认证的请求链预算和 TLS 握手预算不同，见[研究](../../../../../docs/research/2026-10-09-private-export-service-auth.md)。
 
 本地行为资格经真实 HTTPS、PostgreSQL、实际字节、COMMIT/进程故障和 Memory HTTP 适配器观察。Pricing 的快照、执行租约、唯一发布意图与用户下载中心属于 #150，完整组合交付属于 #151；Files 此协议不自行跨界实现那些工作。
