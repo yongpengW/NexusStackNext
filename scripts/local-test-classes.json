@@ -133,6 +133,8 @@
   "NexusStackNext.HostIntegration.Tests.OperationLoggingPipelineTests",
   "NexusStackNext.HostIntegration.Tests.OperationNewHostStartupTests",
   "NexusStackNext.HostIntegration.Tests.OperationObservationPersistenceTests",
+  "NexusStackNext.HostIntegration.Tests.OperationObservationRetentionHostTests",
+  "NexusStackNext.HostIntegration.Tests.OperationObservationRetentionPersistenceTests",
   "NexusStackNext.HostIntegration.Tests.PlatformFactCapacityTests",
   "NexusStackNext.HostIntegration.Tests.PlatformJourneyIsolationTests",
   "NexusStackNext.HostIntegration.Tests.PlatformPersistenceJourneyTests",

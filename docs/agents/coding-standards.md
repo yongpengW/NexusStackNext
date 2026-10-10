@@ -12,7 +12,7 @@
 
 | 源 | 管什么 | 权威形式 |
 |---|---|---|
-| `AGENTS.md` | **架构不变量**（八条——条数由 `InvariantCoverage` 那张表守着）、部署不变量、**写检查与做验证的纪律**、设计用语 | 散文 + 由 `tests/Architecture.Tests` 断言 |
+| `AGENTS.md` | **架构不变量**（八条——条数由 `InvariantCoverage` 那张表守着）、部署不变量、**写检查与做验证的纪律**、设计用语、简单优先原则 | 散文 + 由 `tests/Architecture.Tests` 断言 |
 | `Directory.Build.props` | 构建基线：`TreatWarningsAsErrors`、`Nullable`、`GenerateDocumentationFile`、分析器级别；测试工程的豁免清单 | 构建即失败 |
 | `.editorconfig` | 格式与命名：UTF-8 / LF / 4 空格、file-scoped namespace、`IDE0005 = error`、迁移文件视为生成代码 | 构建即失败（`EnforceCodeStyleInBuild`） |
 

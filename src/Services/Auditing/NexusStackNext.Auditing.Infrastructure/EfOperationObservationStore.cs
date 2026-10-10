@@ -13,6 +13,57 @@ namespace NexusStackNext.Auditing.Infrastructure;
 
 internal sealed class EfOperationObservationStore(AuditingDbContext context, IClock clock, PostgresAuditCapacity capacity) : IOperationObservationStore
 {
+    public Task<int> DeleteExpiredAsync(DateTimeOffset recordedBefore, int maxOperations, CancellationToken cancellationToken = default)
+    {
+        if (recordedBefore == default || recordedBefore.Offset != TimeSpan.Zero) { throw new ArgumentException("截止时刻必须为 UTC。", nameof(recordedBefore)); }
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxOperations, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxOperations, 1000);
+        return capacity.RunAsync(budgetToken => context.Database.CreateExecutionStrategy().ExecuteAsync(async token =>
+        {
+            await using var transaction = await context.Database.BeginTransactionAsync(token).ConfigureAwait(false);
+            await capacity.ConfigureTransactionAsync(token).ConfigureAwait(false);
+            // 先限制候选，再尝试已有接纳锁；正在接收新阶段的操作留到下一轮。
+            var operations = await context.Database.SqlQuery<ExpiredOperation>($"""
+                WITH candidates AS MATERIALIZED (
+                    SELECT o."Source", o."OperationId"
+                    FROM auditing.operation_observations o
+                    WHERE o."RecordedAt" < {recordedBefore}
+                        AND NOT EXISTS (SELECT 1 FROM auditing.operation_observations newer
+                            WHERE newer."Source" = o."Source" AND newer."OperationId" = o."OperationId"
+                                AND newer."RecordedAt" >= {recordedBefore})
+                    GROUP BY o."Source", o."OperationId"
+                    ORDER BY max(o."RecordedAt"), o."Source", o."OperationId"
+                    LIMIT {maxOperations}
+                )
+                SELECT "Source", "OperationId" FROM candidates
+                WHERE pg_try_advisory_xact_lock(hashtextextended('auditing.operation/' || "Source" || '/' || "OperationId"::text, 0))
+                """).ToArrayAsync(token).ConfigureAwait(false);
+            var keys = JsonSerializer.Serialize(operations);
+            // Read Committed 的下一条语句重新确认期限，看到接纳锁取得前刚提交的新阶段。
+            var counts = await context.Database.SqlQuery<int>($"""
+                WITH removed AS (
+                    DELETE FROM auditing.operation_observations o
+                    USING jsonb_to_recordset({keys}::jsonb) AS selected("Source" text, "OperationId" uuid)
+                    WHERE o."Source" = selected."Source" AND o."OperationId" = selected."OperationId"
+                        AND NOT EXISTS (SELECT 1 FROM auditing.operation_observations newer
+                            WHERE newer."Source" = o."Source" AND newer."OperationId" = o."OperationId"
+                                AND newer."RecordedAt" >= {recordedBefore})
+                    RETURNING o."Id"
+                ), receipts AS (
+                    DELETE FROM auditing.inbox i USING removed
+                    WHERE i."ConsumerName" = {OperationObservationIngestion.ConsumerName}
+                        AND i."EventName" = {OperationObservedV1.Name} AND i."MessageId" = removed."Id"
+                    RETURNING i."MessageId"
+                )
+                SELECT count(*)::integer AS "Value" FROM removed
+                """).ToArrayAsync(token).ConfigureAwait(false);
+            await transaction.CommitAsync(token).ConfigureAwait(false);
+            return counts.Single();
+        }, budgetToken), cancellationToken);
+    }
+
+    private sealed record ExpiredOperation(string Source, Guid OperationId);
+
     public Task<Result<IngestionOutcome>> AcceptAsync(OperationObservation observation, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(observation);
