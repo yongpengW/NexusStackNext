@@ -315,7 +315,8 @@ proxyEndpoints.Add(endpoint =>
 {
     // 只排除专用的调查 GET 路由；新增管理写入和通配路由仍默认采集。
     var route = endpoint.Metadata.OfType<RouteModel>().LastOrDefault()?.Config;
-    if (route?.Match.Methods is ["GET"] && route.Match.Path is "/api/auditing/entries" or "/api/auditing/operations")
+    if (route?.Match.Methods is ["GET"]
+        && route.Match.Path is "/api/auditing/entries" or "/api/auditing/operations" or "/api/auditing/capacity")
     {
         endpoint.Metadata.Add(new OperationLogSuppression("调查查询不产生新的操作观察，避免查询放大日志。"));
     }

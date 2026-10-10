@@ -8,7 +8,7 @@
 `CentralAuditCapacityTests` 覆盖 Memory 额度与取消；`CentralAuditCapacityPersistenceTests` 覆盖 PG
 竞争、回滚、短等待、迁移回填与缺失账本拒绝；`CentralAuditCapacityHttpTests` 覆盖独立授权、
 非法配置、诊断故障与业务 ready 隔离；`CentralAuditCapacityBrokerTests` 覆盖真实 broker 保管和容量恢复。
-`AuditAccessTests` 使用三份发布路由验证容量诊断的真实 HTTP 转发与认证，路由覆盖检查同时拒绝遗漏。
+`AuditAccessTests` 使用三份发布路由验证容量诊断的真实 HTTP 转发、认证及网关日志零新增，路由覆盖检查同时拒绝遗漏。
 交付资格以原生票据为准。它不完成中央保留/归档或新增入口遗漏防线；下方历史业务矩阵不因此自动扩展。
 
 ## 覆盖矩阵
