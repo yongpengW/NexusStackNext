@@ -30,10 +30,16 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
     private const string PolicyChanges = nameof(FactCapacityPolicyAuditIngestionTests) + "；所属容量治理事实含前后额度，不混入普通对象事实。";
     private const string RecoveryLifecycle = "技术控制例外：所属投递恢复凭据保存原裁决和恢复版本，不表示业务再次提交；原事实继续交付。";
     private const string TaskLifecycle = "任务生命周期例外：任务/批次/发生保留状态与尝试，执行操作被观察；实际应用成本或报价才产生对象变化事实。";
+    private const string HealthProbe = "诊断例外：健康探测不提交领域变化，操作观察按框架路由显式排除；不限HTTP方法也须登记。";
+    private const string GatewayRouteLifecycle = nameof(GatewayRouteAdminTests) + "；技术配置例外：网关保存并应用自身路由配置，记录操作观察，不伪造下游业务事实。";
     private static readonly Dictionary<string, Dictionary<string, string>> WriteDecisions = new(StringComparer.Ordinal)
     {
         ["platform"] = new(StringComparer.Ordinal)
         {
+            ["* /health"] = HealthProbe,
+            ["* /health/live"] = HealthProbe,
+            ["* /health/logging"] = HealthProbe,
+            ["* /health/ready"] = HealthProbe,
             ["PUT /api/platform/settings/{key}"] = nameof(AuditBusinessJourneyTests) + "；设置创建及变化同事务登记SettingCommittedV1。",
             ["DELETE /api/platform/settings/{key}"] = nameof(AuditBusinessJourneyTests) + "；清空值是设置变化，未变值无新事实。",
             ["POST /api/identity/users"] = IdentityChanges,
@@ -74,6 +80,11 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         },
         ["costing"] = new(StringComparer.Ordinal)
         {
+            ["* /health"] = HealthProbe,
+            ["* /health/delivery"] = HealthProbe,
+            ["* /health/live"] = HealthProbe,
+            ["* /health/logging"] = HealthProbe,
+            ["* /health/ready"] = HealthProbe,
             ["POST /api/costing/cost"] = nameof(CostingCommittedAuditTests) + "；输入与CostSheetCommittedV1同事务，异步计算另有结果事实。",
             ["POST /api/costing/batches"] = TaskLifecycle,
             ["POST /api/costing/batches/{batchId:guid}/cancel"] = TaskLifecycle,
@@ -86,6 +97,10 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         },
         ["pricing"] = new(StringComparer.Ordinal)
         {
+            ["* /health"] = HealthProbe,
+            ["* /health/live"] = HealthProbe,
+            ["* /health/logging"] = HealthProbe,
+            ["* /health/ready"] = HealthProbe,
             ["POST /api/pricing/cost"] = "PricingAuditTests；输入与PriceQuoteCommittedV1同事务，空操作不产生新事实。",
             ["POST /api/pricing/fee"] = "PricingAuditTests；费率输入与PriceQuoteCommittedV1同事务，异步结果另行登记。",
             ["POST /api/pricing/exports/"] = nameof(PricingExportJourneyTests) + "；技术生命周期例外：持久委托/冻结快照/发布裁决，不冒充报价变化。",
@@ -95,6 +110,18 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["POST /api/pricing/tasks/{taskId:guid}/retry"] = TaskLifecycle,
             ["POST /api/pricing/audit-deliveries/{messageId:guid}/retry"] = RecoveryLifecycle,
             ["PUT /api/pricing/audit-capacity"] = PolicyChanges,
+        },
+        ["gateway"] = new(StringComparer.Ordinal)
+        {
+            ["* /health"] = HealthProbe,
+            ["* /health/live"] = HealthProbe,
+            ["* /health/logging"] = HealthProbe,
+            ["* /health/ready"] = HealthProbe,
+            ["* /hubs/gateway"] = "实时协议例外：连接不表示业务提交；本轮HTTP观察不代替实时消息规格验收。",
+            ["* /hubs/gateway/negotiate"] = "实时协议例外：协商不表示业务提交；本轮HTTP观察不代替实时消息规格验收。",
+            ["POST /gateway/routes/"] = GatewayRouteLifecycle,
+            ["PUT /gateway/routes/{routeId}"] = GatewayRouteLifecycle,
+            ["DELETE /gateway/routes/{routeId}"] = GatewayRouteLifecycle,
         },
     };
     private readonly List<string> _writeInventoryViolations = [];
@@ -176,22 +203,20 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         using var client = host.CreateClient();
         var endpoints = host.Services.GetRequiredService<EndpointDataSource>().Endpoints.OfType<RouteEndpoint>().ToArray();
         Assert.NotEmpty(endpoints);
-        if (source != "gateway") // 网关只代理，不拥有业务提交事实。
-        {
-            _inspectedWriteSources.Add(source);
-            var writes = endpoints
-                .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["GET"])
+        _inspectedWriteSources.Add(source);
+        var writes = endpoints
+                .Where(endpoint => endpoint.Metadata.GetMetadata<OperationDescription>()?.IsProxy != true) // 转发由下游拥有提交事实；网关自身管理入口仍须登记。
+                .SelectMany(endpoint => AcceptedMethods(endpoint)
                     .Where(method => method is not ("GET" or "HEAD" or "OPTIONS"))
                     .Select(method => method + " " + endpoint.RoutePattern.RawText)).Order(StringComparer.Ordinal).ToArray();
-            Assert.NotEmpty(writes);
-            Assert.True(WriteDecisions.TryGetValue(source, out var decisions), source + " 未登记宿主写入口审计义务。");
-            Assert.All(decisions.Values, decision => Assert.False(string.IsNullOrWhiteSpace(decision)));
-            var missing = writes.Except(decisions.Keys, StringComparer.Ordinal).ToArray();
-            var stale = decisions.Keys.Except(writes, StringComparer.Ordinal).ToArray();
-            if (missing.Length != 0 || stale.Length != 0)
-            {
-                _writeInventoryViolations.Add(source + ": 未登记 [" + string.Join(", ", missing) + "]; 已删除 [" + string.Join(", ", stale) + "]");
-            }
+        Assert.NotEmpty(writes);
+        Assert.True(WriteDecisions.TryGetValue(source, out var decisions), source + " 未登记宿主写入口审计义务。");
+        Assert.All(decisions.Values, decision => Assert.False(string.IsNullOrWhiteSpace(decision)));
+        var missing = writes.Except(decisions.Keys, StringComparer.Ordinal).ToArray();
+        var stale = decisions.Keys.Except(writes, StringComparer.Ordinal).ToArray();
+        if (missing.Length != 0 || stale.Length != 0)
+        {
+            _writeInventoryViolations.Add(source + ": 未登记 [" + string.Join(", ", missing) + "]; 已删除 [" + string.Join(", ", stale) + "]");
         }
         await using var scope = host.Services.CreateAsyncScope();
         var journal = scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
@@ -205,7 +230,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
                 || route.StartsWith("/gateway/openapi", StringComparison.Ordinal);
             var suppression = endpoint.Metadata.GetMetadata<OperationLogSuppression>();
             if (route is "/api/auditing/entries" or "/api/auditing/operations" or "/api/auditing/capacity") { Assert.NotNull(suppression); }
-            foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["GET"])
+            foreach (var method in AcceptedMethods(endpoint).SelectMany(method => method == "*" ? new[] { "GET", "POST" } : [method]))
             {
                 var correlation = "inventory-" + Guid.NewGuid().ToString("N");
                 using var request = new HttpRequestMessage(new HttpMethod(method), Expand(endpoint.RoutePattern));
@@ -237,6 +262,9 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         output.WriteLine($"{source}: {endpoints.Length} real route endpoints; {observed.Count} business HTTP operations verified.");
         return [.. observed];
     }
+
+    private static IReadOnlyList<string> AcceptedMethods(RouteEndpoint endpoint) =>
+        endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods is { Count: > 0 } methods ? methods : ["*"];
 
     internal static async Task<OperationObservedV1[]> ReadAsync(IOutboxStore journal) =>
         (await journal.ReadPendingAsync(1000, DateTimeOffset.UtcNow)).Select(entry =>
