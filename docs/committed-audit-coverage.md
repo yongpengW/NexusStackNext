@@ -4,6 +4,27 @@
 实施票据 [业务事实审计覆盖与调查和容量治理](https://github.com/yongpengW/NexusStackNext/issues/64)。
 这里列的是业务提交义务；HTTP / 命令 / 任务的执行观察不能代替其中任何一项。
 
+## 当前保留政策与遗漏检查
+
+用户于2026-10-10确认中央事实及其Inbox/指纹长期保留，暂缓归档删除，先完善遗漏检查。
+操作观察继续按最后接收阶段保留30天；普通导出与来源副本清理不授予事实删除资格。
+决定见[Auditing ADR-0009](../src/Services/Auditing/docs/adr/0009-facts-remain-online-with-deduplication.md)。
+
+`EntityAuditCoverageTests` 从实际领域程序集枚举聚合，将每个公开入口登记为状态变化或查询/技术生命周期。
+新增聚合、方法、同名重载或公共构造入口未登记，以及已删除对象仍有登记，都会使检查失败。
+属性与继承的基类方法不属于该入口清单；它不分析方法体，也不能推断新增分支是否应产生事实。
+
+`OperationEndpointInventoryTests` 启动正常平台、Costing、Pricing与网关装配，开启Files生产者及Pricing导出，
+从实际路由读取HTTP写入口。每项明确事实验证或具体例外，入口新增/删除须同步审计决定；
+同时对全部端点发送HTTP验证操作观察或显式排除。这里的匿名请求多在授权处拒绝，不能证明受权写入产生事实，
+内部文件TLS协议仍由 `GeneratedFilesHttpsTests` 验证，业务提交仍由下方行为矩阵验证。
+网关只观察代理，不拥有下游提交事实；授权/计划预览的查询型POST没有提交事实，
+任务、发生、恢复凭据与导出委托使用自身持久生命周期，不冒充成本/报价对象变化。
+
+上述清单是测试侧维护义务，不增加产品元数据或运行期反射。新增业务入口若复用现有领域方法，
+仍须补相应行为例子；清单登记、测试名字存在或HTTP返回成功都不能证明同事务事实已经生成。
+本轮资格见[审计义务清单与新增入口遗漏检查](https://github.com/yongpengW/NexusStackNext/issues/160)。下方历史阶段记录保留。
+
 中央新增切片[有限接纳与容量诊断](https://github.com/yongpengW/NexusStackNext/issues/156) 的验证定位：
 `CentralAuditCapacityTests` 覆盖 Memory 额度与取消；`CentralAuditCapacityPersistenceTests` 覆盖 PG
 竞争、回滚、短等待、迁移回填与缺失账本拒绝；`CentralAuditCapacityHttpTests` 覆盖独立授权、
@@ -29,6 +50,10 @@
 菜单节点及授权关联归其聚合根，事实客体版本是根的已提交版本。Auditing 的不可变记录、
 Inbox/Outbox、任务租约/尝试和消息接收凭据使用各自的生命周期证据，不对审计写入再递归生成审计。
 新增聚合必须登记事实义务或明确的例外；仅有实体行审计字段不代表完整历史已覆盖。
+
+PricingExport 是明确的技术生命周期例外：导出委托保留自身状态/版本、冻结快照与发布裁决，
+由 `PricingExportAcceptanceTests` / `PricingExportRecoveryTests` / `PricingExportJourneyTests` 验证。
+导出操作被观察，Files另存成果生命周期事实，不伪造报价变化事实。
 
 ## PostgreSQL 容量锁等待验收
 

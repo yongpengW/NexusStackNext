@@ -9,6 +9,8 @@ namespace NexusStackNext.HostIntegration.Tests;
 // The endpoint inventories use the real composition, without issuing authenticated business requests.
 internal sealed class BusinessHostApp<T>(string context, string connection) : WebApplicationFactory<T> where T : class
 {
+    public IReadOnlyDictionary<string, string?> ExtraSettings { get; init; } = new Dictionary<string, string?>();
+
     protected override IHost CreateHost(IHostBuilder builder)
     {
         builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -23,7 +25,7 @@ internal sealed class BusinessHostApp<T>(string context, string connection) : We
             ["Jwt:Issuer"] = "nexusstack",
             ["Jwt:Audience"] = "nexusstack",
             ["IdentitySession:BaseAddress"] = "http://127.0.0.1:1/",
-        }));
+        }).AddInMemoryCollection(ExtraSettings));
         return base.CreateHost(builder);
     }
 

@@ -155,7 +155,7 @@ AuditInvestigationIndexTests与OperationObservationPersistenceTests的实际迁�
 | PlatformFactCapacityTests | 3 | 前两项Platform-only新库实际迁移受单许可；第三项平台复制库。故障、配额、清理与触发器只改本例库。 |
 | SchedulingFactAtomicityTests | 2 | 自有Memory存储或平台复制库、serializer/provider/clock与故障触发器；计划决定与发生原子性断言不变。 |
 | GatewayHubTests | 1 | 类所属TestServer、Memory journal、受控健康HTTP适配器、Hub客户端和channel；路由文件只读，变化推送/不变静默的原观察时间保留。 |
-| OperationEndpointInventoryTests | 1 | Costing/Pricing-only新库，两个实际迁移在同一重操作许可内；Memory平台factory持有文件根，所属业务factory、动态网关backend与路由文件；真实端点逐个HTTP采集保留。 |
+| OperationEndpointInventoryTests | 1 | Costing/Pricing-only新库，两个实际迁移在同一重操作许可内；Memory平台factory持有文件根，所属业务factory、动态网关backend与路由文件；真实端点逐个HTTP采集保留。#160启用Files生产者/Pricing导出以枚举可选路由，本例独占临时证书与信任根，导出worker关闭、文件客户端仅校验配置，不建立外部连接；HTTP匿名请求保持，测试结束先关闭宿主再清理所属证书。 |
 
 七类继续独占，仅复用普通准备：AuditPersistenceJourneyTests、SchedulingPersistenceJourneyTests、
 FactDeliveryRecoveryRestartTests、FactCapacityPolicyProcessRecoveryTests、FactDeliveryRecoveryEvidenceTests、
