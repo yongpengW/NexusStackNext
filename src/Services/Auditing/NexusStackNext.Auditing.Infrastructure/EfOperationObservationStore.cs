@@ -11,7 +11,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
-internal sealed class EfOperationObservationStore(AuditingDbContext context, IClock clock) : IOperationObservationStore
+internal sealed class EfOperationObservationStore(AuditingDbContext context, IClock clock, PostgresAuditCapacity capacity) : IOperationObservationStore
 {
     public Task<Result<IngestionOutcome>> AcceptAsync(OperationObservation observation, CancellationToken cancellationToken = default)
     {
@@ -62,19 +62,20 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context, ICl
                 ScheduleDecisionId = metadata.ScheduleDecisionId,
             },
         })));
-        return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        return capacity.RunAsync(budgetToken => context.Database.CreateExecutionStrategy().ExecuteAsync(async token =>
         {
             context.ChangeTracker.Clear();
-            await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await context.Database.BeginTransactionAsync(token).ConfigureAwait(false);
+            await capacity.ConfigureTransactionAsync(token).ConfigureAwait(false);
             // 不同消息也不能同时登记同一阶段；锁只覆盖 Auditing 自己的数据与事务。
             var operationKey = "auditing.operation/" + observation.Data.Source + "/" + observation.Data.OperationId.Value;
             await context.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT pg_advisory_xact_lock(hashtextextended({operationKey}, 0))", cancellationToken).ConfigureAwait(false);
+                $"SELECT pg_advisory_xact_lock(hashtextextended({operationKey}, 0))", token).ConfigureAwait(false);
             var first = await new EfInboxStore<AuditingDbContext>(context).TryBeginProcessingAsync(
                 OperationObservationIngestion.ConsumerName, OperationObservedV1.Name, observation.Id.Value,
-                observation.RecordedAt, cancellationToken).ConfigureAwait(false);
+                observation.RecordedAt, token).ConfigureAwait(false);
             var receipt = await context.Inbox.SingleAsync(item => item.ConsumerName == OperationObservationIngestion.ConsumerName
-                && item.EventName == OperationObservedV1.Name && item.MessageId == observation.Id.Value, cancellationToken).ConfigureAwait(false);
+                && item.EventName == OperationObservedV1.Name && item.MessageId == observation.Id.Value, token).ConfigureAwait(false);
             var fingerprint = context.Entry(receipt).Property<string?>(AuditingDbContext.PayloadHashProperty);
             if (!first)
             {
@@ -82,16 +83,16 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context, ICl
                     : Result.Failure<IngestionOutcome>(OperationObservationIngestion.MessageConflict);
             }
             if (await context.OperationObservations.AnyAsync(item => item.Data.Source == observation.Data.Source
-                && item.Data.OperationId == observation.Data.OperationId && item.Data.Phase == observation.Data.Phase, cancellationToken).ConfigureAwait(false))
+                && item.Data.OperationId == observation.Data.OperationId && item.Data.Phase == observation.Data.Phase, token).ConfigureAwait(false))
             {
                 return Result.Failure<IngestionOutcome>(OperationObservationIngestion.PhaseConflict);
             }
             fingerprint.CurrentValue = hash;
             context.OperationObservations.Add(observation);
-            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await context.SaveChangesAsync(token).ConfigureAwait(false);
+            await transaction.CommitAsync(token).ConfigureAwait(false);
             return Result.Success(IngestionOutcome.Accepted);
-        });
+        }, budgetToken), cancellationToken);
     }
 
     public async Task<OperationPage> QueryAsync(OperationQuery query, CancellationToken cancellationToken = default)

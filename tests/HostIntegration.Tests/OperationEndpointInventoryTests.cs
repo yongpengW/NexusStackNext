@@ -93,7 +93,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             var frameworkExcluded = route.StartsWith("/health", StringComparison.Ordinal) || route.StartsWith("/openapi", StringComparison.Ordinal)
                 || route.StartsWith("/gateway/openapi", StringComparison.Ordinal);
             var suppression = endpoint.Metadata.GetMetadata<OperationLogSuppression>();
-            if (route is "/api/auditing/entries" or "/api/auditing/operations") { Assert.NotNull(suppression); }
+            if (route is "/api/auditing/entries" or "/api/auditing/operations" or "/api/auditing/capacity") { Assert.NotNull(suppression); }
             foreach (var method in endpoint.Metadata.GetMetadata<HttpMethodMetadata>()?.HttpMethods ?? ["GET"])
             {
                 var correlation = "inventory-" + Guid.NewGuid().ToString("N");

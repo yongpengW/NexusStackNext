@@ -11,7 +11,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 
 namespace NexusStackNext.Auditing.Infrastructure;
 
-internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock) : IAuditEntryStore
+internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock, PostgresAuditCapacity capacity) : IAuditEntryStore
 {
     public Task<Result<IngestionOutcome>> AcceptAsync(AuditEntry entry, CancellationToken cancellationToken = default)
     {
@@ -36,15 +36,16 @@ internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock)
         if (fact.RelatedSubject is not null) { content = new { Fact = legacyFields, fact.Execution, fact.RelatedSubject }; }
         if (fact.CapacityPolicyChange is not null) { content = new { Fact = content, fact.CapacityPolicyChange }; }
         var hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(content)));
-        return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        return capacity.RunAsync(budgetToken => context.Database.CreateExecutionStrategy().ExecuteAsync(async token =>
         {
             context.ChangeTracker.Clear();
-            await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            await using var transaction = await context.Database.BeginTransactionAsync(token).ConfigureAwait(false);
+            await capacity.ConfigureTransactionAsync(token).ConfigureAwait(false);
             var inbox = new EfInboxStore<AuditingDbContext>(context);
             var first = await inbox.TryBeginProcessingAsync(AuditIngestion.ConsumerName, entry.Fact.EventName,
-                entry.Fact.MessageId, entry.RecordedAt, cancellationToken).ConfigureAwait(false);
+                entry.Fact.MessageId, entry.RecordedAt, token).ConfigureAwait(false);
             var receipt = await context.Inbox.SingleAsync(item => item.ConsumerName == AuditIngestion.ConsumerName
-                && item.EventName == entry.Fact.EventName && item.MessageId == entry.Fact.MessageId, cancellationToken).ConfigureAwait(false);
+                && item.EventName == entry.Fact.EventName && item.MessageId == entry.Fact.MessageId, token).ConfigureAwait(false);
             var fingerprint = context.Entry(receipt).Property<string?>(AuditingDbContext.PayloadHashProperty);
             if (!first)
             {
@@ -53,10 +54,10 @@ internal sealed class EfAuditEntryStore(AuditingDbContext context, IClock clock)
             }
             fingerprint.CurrentValue = hash;
             context.Entries.Add(entry);
-            await context.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            await context.SaveChangesAsync(token).ConfigureAwait(false);
+            await transaction.CommitAsync(token).ConfigureAwait(false);
             return Result.Success(IngestionOutcome.Accepted);
-        });
+        }, budgetToken), cancellationToken);
     }
 
     public Task<AuditPage> QueryAsync(int page, int limit, CancellationToken cancellationToken = default) =>
@@ -81,11 +82,16 @@ public static class AuditingPersistenceServiceCollectionExtensions
     /// <summary>注册拥有自身事务的持久审计存储。</summary>
     /// <param name="services">服务集合。</param>
     /// <param name="connectionString">审计数据库配置。</param>
+    /// <param name="capacity">本实例有限接纳配置。</param>
     /// <returns>服务集合。</returns>
-    public static IServiceCollection AddAuditingPostgresStorage(this IServiceCollection services, string connectionString)
+    public static IServiceCollection AddAuditingPostgresStorage(this IServiceCollection services, string connectionString,
+        AuditStorageCapacityOptions? capacity = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        services.AddSingleton((capacity ?? new()).Validate());
+        services.AddScoped<PostgresAuditCapacity>();
+        services.AddScoped<IAuditStorageCapacityReader>(provider => provider.GetRequiredService<PostgresAuditCapacity>());
         services.AddDbContext<AuditingDbContext>(options => options.UseNexusStackPostgres(connectionString, AuditingDbContext.SchemaName));
         services.AddScoped<IAuditEntryStore, EfAuditEntryStore>();
         services.AddScoped<IOperationObservationStore, EfOperationObservationStore>();

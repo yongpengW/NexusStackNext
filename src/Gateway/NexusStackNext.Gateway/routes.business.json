@@ -27,6 +27,15 @@
       "requireAuthentication": true
     },
     {
+      "routeId": "auditing-capacity",
+      "clusterId": "platform-host",
+      "path": "/api/auditing/capacity",
+      "methods": [ "GET" ],
+      "timeout": "00:00:05",
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
       "routeId": "platform-read",
       "clusterId": "platform-host",
       "path": "/api/platform/{**catch-all}",
