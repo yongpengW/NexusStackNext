@@ -50,7 +50,7 @@ These are not style preferences — each one exists because the previous codebas
 `InvariantCoverage_IsCompleteAndPointsAtRealTests` 失败。
 
 不变量 **4（一个聚合 = 一个事务）没有结构测试**——编译器与程序集引用都管不了它，
-行为由事务管线与十个聚合的版本号测试守着。
+行为由事务管线与各上下文的聚合版本号测试守着。
 
 不变量 **6（ID 不由环境态生成）原本也没有**，而表里当时给的理由是
 "结构性保证来自不变量 3 的测试（碰不到基础设施就调不到静态生成器）"——
@@ -69,7 +69,7 @@ These are not style preferences — each one exists because the previous codebas
 
 空操作若自增，乐观并发会在**没有冲突的情况下**误报冲突，
 而误报的代价是调用方开始重试或干脆忽略冲突——那时这个机制就废了，且废得很安静。
-**编译器管不了这条**，所以十个聚合每个都有一条"改状态 +1 / 空操作不变"的测试。
+**编译器管不了这条**，所以可变聚合各有"改状态 +1 / 空操作不变"的测试。
 
 **依赖方向：端口在里，实现在外。**
 
@@ -216,6 +216,7 @@ PlatformHost 与 PricingHost 的日志依赖归 `/health/logging`，避免日志
 Identity 默认 PostgreSQL；配置、迁移或重启验证时先读 `docs/identity-persistence.md`。
 Platform 也默认 PostgreSQL；配置、迁移、并发写入或重启验证时先读 `docs/platform-settings.md`。
 文件迁移与访问读 `docs/private-files.md`；审计迁移与消息摄入读 `docs/committed-auditing.md`；计划迁移、后台触发或交付恢复读 `docs/durable-scheduling.md`。
+调查导出的冻结、生成、原成果恢复与本人下载读 `docs/audit-private-exports.md`。
 普通宿主启动不迁移，未迁移或数据库不可用会退出；无库演示须显式选择开发/测试 Memory 模式。
 Identity HTTP 持久化测试会创建独立临时数据库，测试账号需具备建库/删库权限，并行范围按上方受控模式声明。
 

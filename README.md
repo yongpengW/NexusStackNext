@@ -54,6 +54,9 @@ Pricing 可显式启用[私有报价 CSV 导出](docs/pricing-private-exports.md
 默认关闭；实现与完整故障验收分别由 #150 / #151 承载，阶段完成以原生票据为准。
 这是最终一致查询缓存；配置、TTL、容量与恢复边界见 [定价查询缓存](docs/pricing-query-cache.md)。
 
+Auditing 可显式启用[审计调查私有 XLSX 导出](docs/audit-private-exports.md)：事实与操作观察分别冻结，
+有界后台生成，通过本人中心领取原成果；当前导出权限撤销后，原链接不能继续下载。默认关闭，交付资格以 #68 原生记录为准。
+
 HTTP 的全部 Int64 以字符串返回，保留 NS / PoS 的浏览器精度保护。客户端迁移、OpenAPI 与 Node.js 24 测试要求见 [HTTP Int64 契约](docs/http-int64-contract.md)。
 
 每个上下文自带 `CONTEXT.md`（词表，含 `_Avoid_` 反义词）与 `docs/adr/`（上下文级决策）。

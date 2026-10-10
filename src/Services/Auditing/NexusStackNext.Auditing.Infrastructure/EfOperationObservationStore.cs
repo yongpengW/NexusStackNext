@@ -152,22 +152,9 @@ internal sealed class EfOperationObservationStore(AuditingDbContext context, ICl
         query = query.Normalize(clock.UtcNow);
         if (query.Validate().IsFailure) { throw new ArgumentException("操作查询条件无效。", nameof(query)); }
         // 每个操作选择完成记录；没有完成时才选择开始记录，不依赖投递顺序。
-        var operations = context.OperationObservations.AsNoTracking().Where(item => item.Data.Phase == "finished"
-            || !context.OperationObservations.Any(other => other.Data.Source == item.Data.Source
-                && other.Data.OperationId == item.Data.OperationId && other.Data.Phase == "finished"));
-        operations = operations.Where(query.Predicate());
+        var operations = OperationEvidenceQuery.Select(context, query);
         var total = await operations.LongCountAsync(cancellationToken).ConfigureAwait(false);
-        var page = await operations.OrderByDescending(item => item.Data.OccurredAt)
-            .ThenBy(item => item.Data.Source).ThenBy(item => item.Data.OperationId)
-            .Skip((query.Page - 1) * query.Limit).Take(query.Limit)
-            .Select(item => new OperationSummary(item.Data.OperationId.Value, item.Data.Source, item.Data.Kind, item.Data.TraceId,
-                item.Data.ActorId, item.Data.HttpMethod, item.Data.RouteTemplate,
-                item.Data.Phase == "started" ? item.Data.OccurredAt : context.OperationObservations
-                    .Where(started => started.Data.Source == item.Data.Source && started.Data.OperationId == item.Data.OperationId
-                        && started.Data.Phase == "started").Select(started => (DateTimeOffset?)started.Data.OccurredAt).SingleOrDefault(),
-                item.Data.Phase == "finished" ? item.Data.OccurredAt : null,
-                item.Data.Outcome ?? "unconfirmed", item.Data.StatusCode, item.Data.DurationMs)
-            { Metadata = item.Data.Metadata })
+        var page = await operations.Skip((query.Page - 1) * query.Limit).Take(query.Limit)
             .ToArrayAsync(cancellationToken).ConfigureAwait(false);
         return new OperationPage(page, total);
     }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.Routing;
@@ -41,6 +42,9 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["* /health/logging"] = HealthProbe,
             ["* /health/ready"] = HealthProbe,
             ["PUT /api/platform/settings/{key}"] = nameof(AuditBusinessJourneyTests) + "；设置创建及变化同事务登记SettingCommittedV1。",
+            ["POST /api/auditing/exports/"] = nameof(AuditExportJourneyTests) + "；调查导出技术生命周期：本人请求与冻结快照保存在同一聚合，不递归生成审计事实。",
+            ["POST /api/auditing/exports/{exportId:guid}/cancel"] = nameof(AuditExportJourneyTests) + "；调查导出技术生命周期：取消原本人委托，保留原快照身份。",
+            ["POST /api/auditing/exports/{exportId:guid}/retry"] = nameof(AuditExportJourneyTests) + "；调查导出技术生命周期：恢复原快照及发布身份。",
             ["DELETE /api/platform/settings/{key}"] = nameof(AuditBusinessJourneyTests) + "；清空值是设置变化，未变值无新事实。",
             ["POST /api/identity/users"] = IdentityChanges,
             ["POST /api/identity/roles"] = IdentityChanges,
@@ -132,12 +136,13 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
     {
         using var certificates = new GeneratedFileCertificates();
         await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateAsync();
         await using (var operation = await JourneyDatabaseOperation.EnterAsync(preparation: true))
         {
             await CostingDatabase.MigrateAsync(database.ConnectionString);
             await PricingDatabase.MigrateAsync(database.ConnectionString);
         }
-        await using var platform = new ProducerInventoryApp(certificates) { SchedulingWorkerEnabled = false };
+        await using var platform = new ProducerInventoryApp(certificates, database.ConnectionString);
         await InspectAsync(platform, "platform");
         await using var costing = new BusinessHostApp<CostingHostMarker>("Costing", database.ConnectionString);
         var costingRecords = await InspectAsync(costing, "costing");
@@ -281,10 +286,27 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         }
     }
 
-    private sealed class ProducerInventoryApp(GeneratedFileCertificates certificates) : PlatformApp
+    private sealed class ProducerInventoryApp(GeneratedFileCertificates certificates, string connectionString) : PersistentIdentityApp(connectionString, schedulingWorkerEnabled: false)
     {
+        protected override void ConfigureWebHost(IWebHostBuilder builder)
+        {
+            base.ConfigureWebHost(builder);
+            builder.UseEnvironment("Testing");
+        }
+
         protected override IHost CreateHost(IHostBuilder builder)
         {
+            var files = certificates.PricingClientOptions(new Uri("https://127.0.0.1:1"));
+            builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Auditing:Exports:Enabled"] = "true",
+                ["Auditing:Exports:Worker:Enabled"] = "false",
+                ["Auditing:Exports:Files:BaseAddress"] = files.BaseAddress,
+                ["Auditing:Exports:Files:ClientCertificatePath"] = files.ClientCertificatePath,
+                ["Auditing:Exports:Files:ClientKeyPath"] = files.ClientKeyPath,
+                ["Auditing:Exports:Files:RootCertificatePaths:0"] = files.RootCertificatePaths[0],
+                ["Auditing:Exports:Files:RevocationMode"] = "NoCheck",
+            }));
             builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(certificates.Settings
                 .Where(pair => pair.Key.StartsWith("Files__Producer__", StringComparison.Ordinal))
                 .Select(pair => new KeyValuePair<string, string?>(pair.Key.Replace("__", ":", StringComparison.Ordinal), pair.Value))));

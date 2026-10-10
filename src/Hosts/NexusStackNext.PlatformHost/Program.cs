@@ -118,6 +118,12 @@ builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddPlatformModule(builder.Configuration, builder.Environment);
 builder.Services.AddSchedulingModule(builder.Configuration, builder.Environment);
 builder.Services.AddAuditingModule(builder.Configuration, builder.Environment);
+if (builder.Configuration.GetValue("Auditing:Exports:Enabled", false))
+{
+    if (string.Equals(builder.Configuration["Auditing:Storage:Provider"], "Memory", StringComparison.OrdinalIgnoreCase)) { throw new InvalidOperationException("调查导出需要 PostgreSQL 持久化。"); }
+    builder.Services.AddAuditExportPersistence(builder.Configuration.GetSection("Auditing:Exports:Execution").Get<AuditExportOptions>());
+    builder.Services.AddAuditExportDelivery(builder.Configuration, builder.Environment);
+}
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
 builder.AddFilesProducerAccess();
 builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "platform");
@@ -222,6 +228,7 @@ app.MapIdentityEndpoints();
 app.MapPlatformEndpoints();
 app.MapSchedulingEndpoints();
 app.MapAuditingEndpoints();
+if (builder.Configuration.GetValue("Auditing:Exports:Enabled", false)) { app.MapAuditExportEndpoints(); }
 app.MapFilesEndpoints();
 if (builder.Configuration.GetValue<bool>("Files:Producer:Enabled")) { app.MapGeneratedFilesEndpoints(); }
 

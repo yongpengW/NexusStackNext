@@ -6,10 +6,7 @@
     <ProjectReference Include="../NexusStackNext.Pricing.Contracts/NexusStackNext.Pricing.Contracts.csproj" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="StackExchange.Redis" />
-    <PackageReference Include="DocumentFormat.OpenXml" />
+
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="../../../../THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
