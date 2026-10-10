@@ -1,5 +1,13 @@
 # 本机并行类的资源审查
 
+## 票据64：最终行为验收核对
+
+FileRecoveryOperationTests 新增一例 PostgreSQL 后台取消旅程，继续按已有整类并行声明执行。
+每例独占临时数据库和字节目录，创建/迁移/删除走原有重操作单许可；容量行锁只在本例数据库持有，
+先观察本例写入确实阻塞再取消调用，finally 等待调用结束并释放锁，不终止服务器会话。
+观察宿主关闭业务调度，使用自身 Memory journal；断言从公开文件、Outbox 和观察端口读取。
+取消后使用同一仓储作用域重试，目录在旅程结束清理；所有权、4/2路调度及 CI 隔离不变。
+
 ## 票据158：中央操作观察保留
 
 OperationObservationRetentionHostTests 与 OperationObservationRetentionPersistenceTests 可按整类并行。
@@ -281,7 +289,7 @@ CostingFactCapacityPolicyTests／PricingFactCapacityPolicyTests的真实重启�
 | [FactRecoveryPendingWorkTests](../tests/HostIntegration.Tests/FactRecoveryPendingWorkTests.cs) | 8 | C |
 | [FactRecoveryPersistenceFailureTests](../tests/HostIntegration.Tests/FactRecoveryPersistenceFailureTests.cs) | 6 | C |
 | [FactRecoveryProtocolTests](../tests/HostIntegration.Tests/FactRecoveryProtocolTests.cs) | 10 | C |
-| [FileRecoveryOperationTests](../tests/HostIntegration.Tests/FileRecoveryOperationTests.cs) | 2 | P |
+| [FileRecoveryOperationTests](../tests/HostIntegration.Tests/FileRecoveryOperationTests.cs) | 3 | P |
 | [FilesFactCapacityPolicyTests](../tests/HostIntegration.Tests/FilesFactCapacityPolicyTests.cs) | 7 | C |
 | [FilesFactCapacityTests](../tests/HostIntegration.Tests/FilesFactCapacityTests.cs) | 3 | C |
 | [FilesFactDeliveryRecoveryTests](../tests/HostIntegration.Tests/FilesFactDeliveryRecoveryTests.cs) | 4 | B |

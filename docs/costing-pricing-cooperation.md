@@ -83,7 +83,7 @@ PUT 仅接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloa
 中央 typed 数值调查已通过真实 MQ 验证：中央离线时提交，生产者退出后接收，中央进程重启后保留数值证据。
 工作区已接入 `Costing:AuditDelivery:PolicyMaintenance` / `Pricing:AuditDelivery:PolicyMaintenance`，
 各自在独立数据库清理自己的控制证据；诊断为 `costing-policy-cleanup` / `pricing-policy-cleanup`，参数见[共同维护说明](committed-auditing.md)。该容量策略票已通过完整本机检查、双轴评审和 Linux CI，经 PR #102 合并；当时1747项各一次通过。
-中央保留、归档和专门事实恢复仍分别由父票及 #103 验收。完整进展见[本地开发状态](handoff-2026-10-03.md)。
+专门事实恢复已由 #103 交付，中央观察保留与事实长期保留见[覆盖矩阵](committed-audit-coverage.md)；归档删除按用户决定暂缓。
 
 ## 故障恢复
 
@@ -160,11 +160,14 @@ Pricing 的最终发布资格以 #78 的完整检查、Linux CI 与独立评审�
 迁移使用实际模块注册和公开 EF 元数据/`IMigrator`，不为测试暴露内部业务 DbContext。
 这是 #101 的迁移专项资格；该票的整票授权、故障、完整检查和 Linux CI 已随 PR #102 验收。
 
-## 来源审计事实的条件恢复（#103 实施中）
+## 来源审计事实的条件恢复
+
+[六来源恢复](https://github.com/yongpengW/NexusStackNext/issues/103)已由[PR107](https://github.com/yongpengW/NexusStackNext/pull/107)合入dev。
+下方保留协议和当时阶段证据，最终完整资格以票据完成评论为准。
 
 Costing 与 Pricing 各自的 `/api/<context>/audit-deliveries` 提供有界列表、单条状态、
 `/{messageId}/retry`、`/recoveries/{requestId}` 与 `/recovery-capacity`。沿用各业务样板的根操作者限制；
-当前并未实现普通业务用户委派，也不套用平台会话机制。返回最小投递状态，不回显正文与异常原文；Int64 用十进制字符串。
+恢复接口仍只授予根操作者，所有用户均须通过[跨宿主会话校验](current-session-authorization.md)。返回最小投递状态，不回显正文与异常原文；Int64 用十进制字符串。
 
 请求只包含稳定 `requestId`、`expectedDeadLetteredAt`、`expectedRetryRevision` 与固定
 `reason=manual-retry/dependency-restored`，目标来自路径，操作者及来源来自可信宿主。
@@ -189,18 +192,18 @@ Costing 只管理 `CostSheetCommittedV1` / `CostingFactCapacityPolicyChangedV1`�
 `PricingCacheTests.FactRecovery_PreservesCompletedQuote_TaskHistoryAndHotRedisValue_WithoutRenewingItsLifetime`
 另通过真实Redis热缓存验证内容与TTL保持、没有失效待办；测试只使用独立命名空间。
 本阶段实际9项（HostIntegration 8、Pricing.Integration 1）各一次通过、无跳过。
-这仍不是整张#103的验收：更多额度／竞争／取消／持久故障及调用者工作隔离、
-真实RabbitMQ／中央Inbox恢复旅程和最终全量门禁仍需完成；工作继续在本机，无换机或发布。
+这组阶段用例不单独代表整张#103；后续额度、竞争、取消、持久故障、调用者工作隔离、
+真实RabbitMQ／中央Inbox及完整门禁资格均保留在该票完成记录中；工作继续在本机，无换机或发布。
 六来源恢复OpenAPI另由FactDeliveryRecoveryOpenApiTests十项检查：四平台Memory/PostgreSQL，
 Costing/Pricing实际独立OS宿主。实际文档仅暴露四个恢复输入；恢复版本标记必填，Int64输入兼容
 十进制字符串与整数、输出精确字符串；十一字段回执、六字段投递状态和独立容量诊断均有明确结构。
 Costing/Pricing补齐所属依赖／容量拒绝的503响应，Files补齐输入与授权失败的400/401/403。
-文档资格不能代替真实运行时验证；六来源权限、网关和安全观察另由下述实际边界专项覆盖，整票故障与交付范围继续按#103验收。
+文档资格不能代替真实运行时验证；六来源权限、网关和安全观察另由下述实际边界专项覆盖，整票最终交付见 #103 完成记录。
 恢复授权另由FactDeliveryRecoveryGatewayAccessTests二十四项验证四平台Memory/PG经三套实际网关：
 匿名拒绝、独立四种读取／恢复权限、只读拒绝恢复、只写拒绝读取、撤权拒绝旧凭据重放、用户注销及根账号注销后均拒绝。
 撤权夹具使用Identity所属公开仓储／提交端口并显式失效权限缓存；不是新增HTTP撤权命令或跨宿主撤权协议。
 BusinessFactDeliveryRecoveryGatewayTests三项使用两个实际业务OS宿主及其可用网关配置，沿用可信JWT根操作者夹具，
-不宣称普通业务用户委派、Identity登录／注销或远程授权已接入。
+该组使用可信JWT夹具，不单独证明 Identity 登录／注销或远程授权；当前会话与普通业务授权另由[会话校验](current-session-authorization.md)和[业务操作授权](business-operation-authorization.md)验收。
 FactDeliveryRecoveryOperationTests十项另验证六来源普通恢复、重放与拒绝各有独立安全开始／结束观察，
 原恢复凭据保留首次操作关联；查询、请求正文、私有头、伪造Actor和执行信息不会进入观察。
 测试关闭网关限流以专门验证路径与授权，不证明生产网络拓扑或容量。

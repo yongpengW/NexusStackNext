@@ -85,7 +85,7 @@ Platform 默认使用 PostgreSQL，配置 `ConnectionStrings__Platform`（配置
 
 [来源策略治理 #101](https://github.com/yongpengW/NexusStackNext/issues/101) 已完成六来源验收，
 经 [PR #102](https://github.com/yongpengW/NexusStackNext/pull/102) 合入 dev。
-本节描述 Platform 已接入的接口和维护边界；父票中的恢复和中央治理范围仍未全部完成。
+本节描述 Platform 的接口和维护边界；恢复和中央治理分别按[覆盖矩阵](committed-audit-coverage.md)验收。
 
 GET `/api/platform/audit-capacity` 保留业务容量字段，增加 `policyRevision` 和独立的 `controlCapacity`。
 PUT 同一路径接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloadBytes`、
@@ -114,16 +114,15 @@ Memory 使用所属共用写锁，PostgreSQL 使用所属独立连接和短预�
 报告维护运行、失败、降级与 `releasedRequests`；空操作凭据的释放也计一次。
 失败诊断不输出异常原文，下一轮重新尝试；失败不能发布一半清理结果。
 
-## 来源事实条件恢复（开发中）
+## 来源事实条件恢复
 
-[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放。
-以下接口是 `codex/fact-delivery-recovery-103` 的未提交实现，尚未合入 dev。
-六来源已经阶段接入；专项资格与整票剩余验收见[当前本机状态](handoff-2026-10-03.md)，不代表完整治理交付。
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103)已由[PR107](https://github.com/yongpengW/NexusStackNext/pull/107)合入dev。
+以下是当前接口；后续保留与遗漏治理分别见[整体覆盖矩阵](committed-audit-coverage.md)，不由单条恢复旅程代替。
 
 POST `/api/platform/audit-deliveries/{messageId}/retry` 接受稳定 `requestId`、读到的
 `expectedDeadLetteredAt`、`expectedRetryRevision` 和固定 `reason=manual-retry/dependency-restored`。
 恢复只针对所属业务事实和容量策略事实，保留原消息身份、正文及发生时刻；停止时刻和恢复代次
-必须同时匹配。旧的仅凭停止时刻恢复契约正在迁移，应用存储端口已删除弱条件重试方法。
+必须同时匹配。旧的仅凭停止时刻恢复契约已替换，应用存储端口不再提供弱条件重试方法。
 有界状态列表同时包含普通设置事实与容量策略事实，裁剪后只提供投递证据，不暴露正文或底层异常。
 GET `/api/platform/audit-deliveries/{messageId}` 使用独立单条读取权限，按稳定消息身份调查，
 不受列表批次位置限制；只返回最小状态，不存在或不属于可管理事实的消息返回404。
@@ -172,7 +171,7 @@ Memory 可用 `Platform:AuditDelivery:MemoryRecoveryControl` 缩小开发恢复�
 其他维护故障记录后在下一轮尝试，不发布半次清理。
 真实 PostgreSQL 宿主已验证清理失败后的完整回滚、独立降级诊断与下一轮恢复：失败时原凭据、
 容量计数和原事实保持，诊断不携带原始异常，数据库就绪不因维护降级而误报不可用；
-解除受控存储故障后自动清理到期凭据并恢复健康。宿主停止与其他取消边界仍须继续验证。
+解除受控存储故障后自动清理到期凭据并恢复健康。后续宿主停止与取消边界的最终资格见 #103 完成记录。
 
 Identity 成为第二个已验证消费者后，两个来源共同使用 BuildingBlocks 的条件请求、原裁决凭据、
 可信输入校验、重放比较和固定期限／UTF-8 准备规则；HTTP 字段保持不变。

@@ -85,11 +85,11 @@ Memory 可用 `Files:AuditDelivery:MemoryPolicyControl` 在启动时缩小控制
 Files 所属控制清理与 `Files:AuditDelivery:PolicyMaintenance` 后台调度均已在工作区接入，
 诊断为 `files-policy-cleanup`，参数及期限约束见[共同维护说明](committed-auditing.md)。
 来源容量策略的六来源 typed MQ、故障及最终资格以已关闭 #101 的原生完成记录为准；
-事实投递专用恢复仍由 #103 实施，中央保留／归档、导出及遗漏防线仍由父 #64 / #60 承载。
+事实投递专用恢复已由 #103 交付；中央保留与遗漏检查见[覆盖矩阵](committed-audit-coverage.md)。事实归档删除暂缓，调查导出另按票据实施。
 
-### 来源事实条件恢复（开发中）
+### 来源事实条件恢复
 
-[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放，Files 已接入
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103)已由[PR107](https://github.com/yongpengW/NexusStackNext/pull/107)合入dev，Files 已接入
 所属 Memory / PostgreSQL 的调查、双条件恢复、原裁决读取及独立恢复容量接口：
 
 | 操作 | HTTP |
@@ -110,7 +110,7 @@ Files 所属控制清理与 `Files:AuditDelivery:PolicyMaintenance` 后台调度
 两条件必须共同匹配；相同请求、操作者和同内容在保留期间重放原裁决，不再次开放预算。
 成功只表示原事实消息的投递预算重新开放，不表示中央已保存，也不改变文件元数据、版本或字节生命周期。
 Memory / PostgreSQL 的真实 HTTP 阶段旅程已验证裁决重放、同停投时刻的旧代次拒绝、
-原消息身份／内容／发生时刻保持，以及原文件元数据和下载字节保持；权限／边缘另有新增实际专项，完整故障资格仍待续验。
+原消息身份／内容／发生时刻保持，以及原文件元数据和下载字节保持；权限／边缘另有实际专项，最终资格见 #103 完成记录。
 
 恢复凭据使用独立有限池，默认1000请求、16MiB UTF-8总量、16KiB单请求，最早保留七天。
 `Files:AuditDelivery:MemoryRecoveryControl` 允许缩小开发内存上限，不覆盖 PostgreSQL 持久额度。
@@ -119,18 +119,18 @@ Memory 不保证跨进程恢复；PG 使用独立所属连接与短预算事务�
 已有恢复历史时拒绝破坏性 Down；旧冻结迁移保持。真实 PostgreSQL 阶段验证已经覆盖非空投递状态的
 升级保留、重复迁移、模型一致、四个凭据列的改写拒绝、空操作 UPDATE、到期计量释放及清理后的安全 Down / Up。
 独立进程重启已通过实际宿主进程退出／重建验证：原恢复裁决可读取并重放，消息状态、元数据和私有下载字节保持。
-完整六来源迁移与真实 MQ 资格仍待续验。
+完整六来源迁移与真实 MQ 资格见 #103 完成记录。
 
 当前 Files 七项专项测试通过：普通事实与容量策略事实分别在 Memory / PostgreSQL 经实际 HTTP 恢复，
 原文件元数据和下载字节保持；Memory 有限恢复池满额拒绝且后台到期清理只释放恢复额度；
-PostgreSQL 不可变凭据、迁移边界和独立进程重启通过。它们是本地阶段证据，本轮尚未提交或合并；阶段评审不替代整票最终评审及全量门禁。
+PostgreSQL 不可变凭据、迁移边界和独立进程重启通过。它们是当时的本地阶段证据；后续整票评审与完整门禁已随 PR107 交付。
 
 `Files:AuditDelivery:RecoveryMaintenance` 显式选择 `IFileAuditDelivery` 的有限清理端口：
 默认 Enabled=true、BatchSize=100（一至一千）、Interval=一分钟（一秒至一小时）、
 Timeout=三秒（50毫秒至30秒），关闭时仍验证配置。`files-recovery-cleanup` 属于
 `auditing-diagnostics`，故障安全降级且下一轮继续，不改变数据库就绪结论。
 这组设置只清理到期恢复凭据；文件删除／孤儿字节恢复使用下文的 `Files:Cleanup`，两者互不替代。
-本轮仍未提交或合并；六来源已阶段接入，权限与边缘已有新增专项，完整故障／真实MQ及整票最终门禁保留，见[当前本机状态](handoff-2026-10-03.md)。继续本机，不换机，SignalR 与多机 HA 暂缓。
+六来源最终故障、真实MQ与完整门禁见 #103 完成记录；整体审计验收见[覆盖矩阵](committed-audit-coverage.md)。继续本机，不换机，SignalR 与多机 HA 暂缓。
 
 删除先持久停止提供文件，再尝试清除字节。完成时返回 204；存储暂不可用时返回 202，`Location` 指向删除状态接口，响应中的 `completed=false` 表示还有持久待办。只有归属者可以查询；后台在存储恢复或进程重启后继续处理，完成状态也会保存。重复删除已完成的文件返回 204。404 仅表示不可访问，不能作为物理字节已清除的证明。
 

@@ -106,12 +106,12 @@ Memory 在原有业务写锁内准备与发布，策略管理不提交用户/角
 公开维护端口支持稳定顺序的一至一千条批次。工作区已接入 `Identity:AuditDelivery:PolicyMaintenance` 调度与
 `identity-policy-cleanup` 诊断，参数及期限约束见[共同维护说明](committed-auditing.md)；清理故障不影响业务就绪检查。
 中央 typed 摄入、配额/故障边界及六来源协议在 #101 的完整交付范围内，资格见原生完成记录；
-后续来源恢复、中央保留归档、导出及遗漏防线继续由 #103 和父 #64 / #60 承载。
+来源恢复已由 #103 交付，中央保留和遗漏检查见[覆盖矩阵](committed-audit-coverage.md)；事实归档删除暂缓，调查导出另按票据实施。
 
-## 来源事实条件恢复（开发中）
+## 来源事实条件恢复
 
-[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放，以下是
-`codex/fact-delivery-recovery-103` 的未提交实现，尚未合入 dev，不代表全部六来源验收。
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103)已由[PR107](https://github.com/yongpengW/NexusStackNext/pull/107)合入dev。
+以下为当前协议与当时的分阶段验证记录，最终六来源资格见票据完成评论。
 Identity 已成为 Platform 之后的第二个实际消费者，目前提供有界调查、单条状态、条件恢复、凭据读取和容量诊断：
 GET `/api/identity/audit-deliveries` 默认查询 Pending、50条；只接受 Pending / Delivered / DeadLettered，
 `limit` 为1至100，按发生时刻及消息身份稳定排序。GET `/api/identity/audit-deliveries/{messageId}`
@@ -145,7 +145,7 @@ Identity 使用正常增量 `ConditionalFactRecovery` 迁移，包含保留历�
 接受时计算的字节数和固定七天期限均不可改写。同值 UPDATE 不改变记录，到期删除仍由有限清理执行。
 真实数据库已验证四类改写被所属约束拒绝，原裁决可继续读回和重放，计量及原消息保持。
 已有停投事实的升级／重复迁移、接受后的回退拒绝及清理后的安全回退／再升级均通过；
-两来源凭据保护与既有 Platform 迁移共三项阶段测试通过，六来源完整迁移资格仍待续验。
+两来源凭据保护与既有 Platform 迁移共三项阶段测试通过，后续六来源完整迁移资格见 #103 完成记录。
 本轮迁移尚未合并，既有冻结迁移未修改。
 两个来源的共同请求／凭据已集中到 BuildingBlocks.Application，固定输入校验、原裁决比较、
 七天期限准备及 UTF-8 计量由四个适配器共同使用；所属事件白名单、错误与 HTTP 映射仍在各上下文。
@@ -169,7 +169,7 @@ Memory 可用 `Identity:AuditDelivery:MemoryRecoveryControl` 缩小开发恢复�
 `identity-recovery-cleanup` 属于 `auditing-diagnostics`，故障记录安全降级并继续下一轮，
 不输出原始异常，不让维护故障改变数据库就绪结论。Memory 真实模块已验证到期后每轮单条释放；
 PostgreSQL 真实模块已验证容量释放写失败时凭据与计量完整回滚，解除受控故障后下一轮自动恢复。
-该两项与既有配额、恢复及 Platform 维护共十三项测试通过；宿主停止、关闭和更多配置边界仍待续验。
+该两项与既有配额、恢复及 Platform 维护共十三项阶段测试通过；后续宿主停止、关闭与配置边界资格见 #103 完成记录。
 阶段 Standards 评审指出两个来源重复维护协议后，共同清理端口放在应用层，
 调度、预算与安全诊断放在共享基础设施。Identity 模块显式选择自己的 `IIdentityAuditDelivery`，
 Platform 模块选择自己的 `ISettingAuditDelivery`；两者的配置前缀和诊断名称保持独立。
@@ -180,5 +180,5 @@ Platform 模块选择自己的 `ISettingAuditDelivery`；两者的配置前缀�
 上述历史专项不能混称为普通用户经网关的撤权；六来源新增边缘／授权／安全观察资格见[当前本机状态](handoff-2026-10-03.md)。
 调查及授权共十七项阶段用例已通过，不是全票或整仓资格。
 
-更多事务/取消边界、容量/故障/授权及六来源完整迁移资格仍在本票续验或实现，
-六来源已阶段接入；最新专项资格及整票剩余项见[当前本机状态](handoff-2026-10-03.md)。继续本机开发，不换机；SignalR 与多机 HA 仍暂缓。
+事务/取消、容量/故障/授权及六来源迁移的最终资格见 #103 完成记录；
+整体治理与规格验收见[覆盖矩阵](committed-audit-coverage.md)。继续本机开发，不换机；SignalR 与多机 HA 仍暂缓。
