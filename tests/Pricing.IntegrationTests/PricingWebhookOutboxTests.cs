@@ -9,14 +9,23 @@ using NexusStackNext.BuildingBlocks.Application;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Application.Messaging;
 using NexusStackNext.BuildingBlocks.Application.Operations;
+using NexusStackNext.BuildingBlocks.Application.Time;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.IntegrationSupport;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Pricing.Infrastructure;
+using NexusStackNext.TestSupport;
 
 namespace NexusStackNext.Pricing.IntegrationTests;
 
+[CollectionDefinition(PricingWebhookParallelization.Name, DisableParallelization = true)]
+public sealed class PricingWebhookParallelization
+{
+    public const string Name = "Pricing webhook database";
+}
+
+[Collection(PricingWebhookParallelization.Name)]
 public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) : IClassFixture<PricingDatabaseFixture>, IAsyncLifetime
 {
     public Task InitializeAsync() => database.ResetAsync();
@@ -50,8 +59,8 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         Assert.Equal(request.ItemId, message.ItemId);
         Assert.Equal(1, message.InputRevision);
         Assert.Equal(1, message.CalculatedRevision);
-        Assert.DoesNotContain("80", webhook.Payload);
-        Assert.DoesNotContain("0.2", webhook.Payload);
+        Assert.DoesNotContain("\"cost\"", webhook.Payload, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"feeRate\"", webhook.Payload, StringComparison.OrdinalIgnoreCase);
     }
 
     [PostgresFact]
@@ -216,6 +225,43 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
     }
 
     [PostgresFact]
+    public async Task Retryable_delivery_uses_bounded_backoff_and_dead_letters_at_max_attempts()
+    {
+        var clock = new MutableClock(DateTimeOffset.UtcNow);
+        var sender = new FixedWebhookSender(new PricingWebhookSendResult(false, true, 429, "http_429"));
+        var options = new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing", MaxAttempts = 3 };
+        var (provider, eventId) = await CreatePendingAsync(sender, options, clock);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            var api = scope.ServiceProvider.GetRequiredService<ISender>();
+
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var first = (await api.QueryAsync(new GetPricingWebhook(eventId))).Value!;
+            Assert.Equal(1, first.AttemptCount);
+            Assert.InRange((first.NextAttemptAt!.Value - clock.UtcNow).TotalSeconds, 1.99, 2.01);
+
+            clock.Advance(TimeSpan.FromSeconds(2));
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var second = (await api.QueryAsync(new GetPricingWebhook(eventId))).Value!;
+            Assert.Equal(2, second.AttemptCount);
+            Assert.InRange((second.NextAttemptAt!.Value - clock.UtcNow).TotalSeconds, 3.99, 4.01);
+
+            clock.Advance(TimeSpan.FromSeconds(4));
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var exhausted = (await api.QueryAsync(new GetPricingWebhook(eventId))).Value!;
+            Assert.Equal("DeadLettered", exhausted.State);
+            Assert.Equal(3, exhausted.AttemptCount);
+            Assert.Null(exhausted.NextAttemptAt);
+
+            Assert.Equal(3, sender.Calls);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(3, sender.Calls);
+        }
+    }
+
+    [PostgresFact]
     public async Task Canceled_send_is_unknown_and_can_be_manually_retried()
     {
         using var cancellation = new CancellationTokenSource();
@@ -236,13 +282,15 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         }
     }
 
-    private async Task<(ServiceProvider Provider, Guid EventId)> CreatePendingAsync(IPricingWebhookSender sender)
+    private async Task<(ServiceProvider Provider, Guid EventId)> CreatePendingAsync(IPricingWebhookSender sender,
+        PricingWebhookOptions? options = null, IClock? clock = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddNexusStackApplication();
+        if (clock is not null) { services.AddSingleton<IClock>(clock); }
         services.AddPricingPostgres(database.ConnectionString,
-            webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+            webhookOptions: options ?? new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
         services.AddSingleton(sender);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var scope = provider.CreateAsyncScope();
@@ -292,7 +340,12 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
 
     private sealed class FixedWebhookSender(PricingWebhookSendResult result) : IPricingWebhookSender
     {
-        public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default) => Task.FromResult(result);
+        public int Calls { get; private set; }
+        public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(result);
+        }
     }
 
     private sealed class CancelingWebhookSender(CancellationTokenSource cancellation) : IPricingWebhookSender

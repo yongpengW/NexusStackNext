@@ -18,6 +18,7 @@ using NexusStackNext.Pricing.Infrastructure;
 
 namespace NexusStackNext.Pricing.IntegrationTests;
 
+[Collection(PricingWebhookParallelization.Name)]
 public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) : IClassFixture<PricingDatabaseFixture>
 {
     [PricingWebhookBrokerFact]
@@ -88,6 +89,62 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
         }
     }
 
+    [PricingWebhookBrokerFact]
+    public async Task Real_http_response_loss_after_persisted_effect_is_replayed_without_duplicate_effect()
+    {
+        var isolatedDatabase = new PricingDatabaseFixture();
+        await isolatedDatabase.InitializeAsync();
+        var statePath = Path.Combine(Path.GetTempPath(), $"nsn-pricing-webhook-{Guid.NewGuid():N}.json");
+        var receiver = await WebhookReceiver.StartAsync(statePath, failFirst: false, dropFirstResponse: true);
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddNexusStackApplication();
+            services.AddPricingPostgres(isolatedDatabase.ConnectionString,
+                webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing", MaxAttempts = 1 });
+            services.AddSingleton<HttpClient>(new HttpClient(new RewriteHandler(() => receiver.BaseAddress)));
+            await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+            await using var scope = provider.CreateAsyncScope();
+            var serializer = scope.ServiceProvider.GetRequiredService<IIntegrationEventSerializer>();
+            var eventId = Guid.NewGuid();
+            var message = new PricingRecalculationCompletedV1
+            {
+                EventId = eventId,
+                IdempotencyKey = eventId,
+                ItemId = Guid.NewGuid(),
+                Version = 1,
+                InputRevision = 1,
+                CalculatedRevision = 1,
+                TraceId = "trace-response-loss",
+                CorrelationId = "correlation-response-loss",
+                OccurredAt = DateTimeOffset.UtcNow,
+            };
+            var envelope = new EventEnvelope { MessageId = eventId, EventName = message.EventName, Payload = serializer.Serialize(message), OccurredAt = message.OccurredAt };
+            var processor = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(PricingRecalculationCompletedV1.Name);
+            Assert.True(await processor.HandleAsync(envelope));
+
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var api = scope.ServiceProvider.GetRequiredService<ISender>();
+            Assert.Equal("DeadLettered", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
+
+            await receiver.DisposeAsync();
+            receiver = await WebhookReceiver.StartAsync(statePath, failFirst: false, dropFirstResponse: false);
+            Assert.True((await api.SendAsync(new RetryPricingWebhook(eventId, 1))).IsSuccess);
+            Assert.True(await WaitForSuccessfulDeliveryAsync(runner));
+            Assert.Equal("Succeeded", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
+            Assert.Equal(2, receiver.RequestCount(eventId));
+            Assert.Equal(1, receiver.EffectCount(eventId));
+        }
+        finally
+        {
+            await receiver.DisposeAsync();
+            try { File.Delete(statePath); } catch (IOException) { }
+            await isolatedDatabase.DisposeAsync();
+        }
+    }
+
     private static async Task WaitForWebhookAsync(ISender sender, IPricingWebhookDeliveryRunner runner, WebhookReceiver receiver)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -144,19 +201,20 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
         protected override void Dispose(bool disposing) { if (disposing) { _client.Dispose(); } base.Dispose(disposing); }
     }
 
-    private sealed class WebhookReceiver(WebApplication app, PersistentWebhookStore store, bool failFirst) : IAsyncDisposable
+    private sealed class WebhookReceiver(WebApplication app, PersistentWebhookStore store, bool failFirst, bool dropFirstResponse) : IAsyncDisposable
     {
         private readonly TaskCompletionSource<Guid> _firstFailure = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _failures = failFirst ? 1 : 0;
+        private int _dropResponses = dropFirstResponse ? 1 : 0;
         public Uri BaseAddress { get; private set; } = null!;
         public Guid? FirstEventId { get; private set; }
         public Guid EventId => _firstFailure.Task.GetAwaiter().GetResult();
-        public static async Task<WebhookReceiver> StartAsync(string statePath, bool failFirst)
+        public static async Task<WebhookReceiver> StartAsync(string statePath, bool failFirst, bool dropFirstResponse = false)
         {
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             var app = builder.Build();
-            var receiver = new WebhookReceiver(app, await PersistentWebhookStore.LoadAsync(statePath), failFirst);
+            var receiver = new WebhookReceiver(app, await PersistentWebhookStore.LoadAsync(statePath), failFirst, dropFirstResponse);
             app.MapPost("/webhooks/pricing", receiver.AcceptAsync);
             await app.StartAsync();
             receiver.BaseAddress = new Uri(app.Urls.Single());
@@ -169,6 +227,11 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             var id = message!.EventId;
             FirstEventId = id;
             await store.RecordAsync(id);
+            if (Interlocked.Exchange(ref _dropResponses, 0) == 1)
+            {
+                request.HttpContext.Abort();
+                return;
+            }
             if (Interlocked.Decrement(ref _failures) >= 0)
             {
                 _firstFailure.TrySetResult(id);
