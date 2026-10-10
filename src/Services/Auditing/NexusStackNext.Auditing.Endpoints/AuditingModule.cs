@@ -70,6 +70,9 @@ public static class AuditingModule
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("审计消息 broker 不可用。"), tags: [AuditingDiagnostics.HealthTag]);
         }
         var capacity = configuration.GetSection("Auditing:Capacity").Get<AuditStorageCapacityOptions>() ?? new();
+        var retention = configuration.GetSection("Auditing:Retention").Get<OperationObservationRetentionOptions>() ?? new();
+        retention.Validate();
+        services.AddSingleton(retention);
         services.AddHealthChecks().AddCheck<AuditingCapacityHealthCheck>("auditing-capacity", tags: [AuditingDiagnostics.HealthTag]);
         var provider = configuration["Auditing:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
@@ -79,18 +82,23 @@ public static class AuditingModule
             {
                 throw new InvalidOperationException("Auditing:Storage:Provider=Memory 仅允许开发测试使用。");
             }
-            return services.AddAuditingInMemoryStorage(capacity);
+            services.AddAuditingInMemoryStorage(capacity);
         }
-        if (!string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
+        else
         {
-            throw new InvalidOperationException("Auditing:Storage:Provider 仅支持 Postgres / Memory。");
+            if (!string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Auditing:Storage:Provider 仅支持 Postgres / Memory。");
+            }
+            var connection = configuration.GetConnectionString("Auditing");
+            if (string.IsNullOrWhiteSpace(connection))
+            {
+                throw new InvalidOperationException("必须配置 ConnectionStrings:Auditing；开发测试可显式选择 Auditing:Storage:Provider=Memory。");
+            }
+            services.AddAuditingPostgresStorage(connection, capacity);
         }
-        var connection = configuration.GetConnectionString("Auditing");
-        if (string.IsNullOrWhiteSpace(connection))
-        {
-            throw new InvalidOperationException("必须配置 ConnectionStrings:Auditing；开发测试可显式选择 Auditing:Storage:Provider=Memory。");
-        }
-        return services.AddAuditingPostgresStorage(connection, capacity);
+        if (retention.Enabled) { services.AddHostedService<OperationObservationRetentionWorker>(); }
+        return services;
     }
 
     private static void AddPolicyIngestion<TEvent>(IServiceCollection services, string source, string eventName) where TEvent : FactCapacityPolicyChanged =>

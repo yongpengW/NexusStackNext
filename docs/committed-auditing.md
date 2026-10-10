@@ -118,6 +118,9 @@ HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类
 
 ### 中央存储与消息摄入
 
+中央已提交业务事实及其Inbox继续保留，尚未提供事实归档或按年龄删除。
+[操作观察保留](central-audit-retention.md)只清理独立的观察和对应去重凭据，不改变事实及来源副本生命周期。
+
 Auditing 默认 PostgreSQL，独占 `auditing` schema 与迁移历史。配置 `ConnectionStrings:Auditing`（环境变量 `ConnectionStrings__Auditing`），可以与平台其他模块暂用同一个数据库，也可以指向独立数据库。每个上下文只读写自己的数据。
 
 连接配置只存于被忽略的 `env/platform.dev` 或部署环境。先执行独立迁移，再启动宿主：

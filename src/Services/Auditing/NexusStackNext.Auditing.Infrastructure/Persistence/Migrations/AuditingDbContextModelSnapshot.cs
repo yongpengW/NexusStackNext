@@ -55,6 +55,9 @@ namespace NexusStackNext.Auditing.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("RecordedAt", "Id")
+                        .HasDatabaseName("ix_operation_observations_recorded");
+
                     b.ToTable("operation_observations", "auditing");
                 });
 

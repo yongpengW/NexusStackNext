@@ -21,6 +21,13 @@ public interface IOperationObservationStore
     /// <param name="cancellationToken">取消。</param>
     /// <returns>执行汇总页。</returns>
     Task<OperationPage> QueryAsync(OperationQuery query, CancellationToken cancellationToken = default);
+
+    /// <summary>分批删除所有阶段接收时间均早于截止时刻的操作，同时结束其消息去重对照。</summary>
+    /// <param name="recordedBefore">UTC 接收时间的严格截止；不是来源发生时间。</param>
+    /// <param name="maxOperations">本批最多处理的操作数，1 至 1000。</param>
+    /// <param name="cancellationToken">取消。</param>
+    /// <returns>本次提交删除的观察记录数；已提交事实不受影响。</returns>
+    Task<int> DeleteExpiredAsync(DateTimeOffset recordedBefore, int maxOperations, CancellationToken cancellationToken = default);
 }
 
 /// <summary>校验操作观察契约并通过事务性存储接纳。</summary>

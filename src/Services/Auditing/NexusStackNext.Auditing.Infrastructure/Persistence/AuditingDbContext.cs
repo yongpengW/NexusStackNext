@@ -115,6 +115,7 @@ public sealed class AuditingDbContext(DbContextOptions<AuditingDbContext> option
         observation.Property(item => item.Id).HasConversion(id => id.Value, value => new OperationObservationId(value))
             .HasColumnType("uuid").ValueGeneratedNever();
         observation.Property(item => item.RecordedAt).IsRequired();
+        observation.HasIndex(item => new { item.RecordedAt, item.Id }).HasDatabaseName("ix_operation_observations_recorded");
         observation.OwnsOne(item => item.Data, data =>
         {
             data.Property(item => item.OperationId).HasConversion(id => id.Value, value => new OperationId(value))

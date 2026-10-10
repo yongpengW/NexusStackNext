@@ -46,6 +46,26 @@ public sealed class InMemoryOperationObservationStore(IClock clock, AuditStorage
     }
 
     /// <inheritdoc />
+    public Task<int> DeleteExpiredAsync(DateTimeOffset recordedBefore, int maxOperations, CancellationToken cancellationToken = default)
+    {
+        if (recordedBefore == default || recordedBefore.Offset != TimeSpan.Zero) { throw new ArgumentException("截止时刻必须为 UTC。", nameof(recordedBefore)); }
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxOperations, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxOperations, 1000);
+        using var scope = AuditMemoryWriteLock.Enter(_writes, _capacity.WaitTimeoutMilliseconds, cancellationToken);
+        var expired = _messages.Values.GroupBy(item => (item.Data.Source, item.Data.OperationId))
+            .Where(group => group.All(item => item.RecordedAt < recordedBefore))
+            .OrderBy(group => group.Max(item => item.RecordedAt)).ThenBy(group => group.Key.Source, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.OperationId.Value).Take(maxOperations).SelectMany(group => group).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var observation in expired)
+        {
+            _messages.Remove(observation.Id);
+            _phases.Remove((observation.Data.Source, observation.Data.OperationId, observation.Data.Phase));
+        }
+        return Task.FromResult(expired.Length);
+    }
+
+    /// <inheritdoc />
     public Task<OperationPage> QueryAsync(OperationQuery query, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(query);

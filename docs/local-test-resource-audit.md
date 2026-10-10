@@ -1,5 +1,13 @@
 # 本机并行类的资源审查
 
+## 票据158：中央操作观察保留
+
+OperationObservationRetentionHostTests 与 OperationObservationRetentionPersistenceTests 可按整类并行。
+每例拥有独立数据库，创建/迁移/回滚/删除走既有 JourneyDatabaseOperation 单许可；故障触发器、
+额度行锁和操作锁仅作用于本例。宿主文件根由工厂独占，重建宿主先关闭前实例，不启用真实MQ。
+取消只中断本例200毫秒预算，所有连接与事务随例释放；不调整服务器参数或结束其他会话。
+使用已有所有权与4/2路调度，不改变CI隔离、重操作许可和统一门禁。
+
 ## 票据57：私有 XLSX
 
 继续本机与共用测试服务，整体目标仍暂停，并发清单、所有权、重操作许可与 CI 四隔离组不变。
