@@ -7,8 +7,10 @@ namespace NexusStackNext.Auditing.Infrastructure;
 
 /// <summary>显式开发演示存储；同一把锁维护消息与阶段身份。</summary>
 /// <param name="clock">默认调查窗口的时钟。</param>
-public sealed class InMemoryOperationObservationStore(IClock clock) : IOperationObservationStore
+/// <param name="capacity">本实例有限接纳配置。</param>
+public sealed class InMemoryOperationObservationStore(IClock clock, AuditStorageCapacityOptions? capacity = null) : IOperationObservationStore
 {
+    private readonly AuditStorageCapacityOptions _capacity = (capacity ?? new()).Validate();
     private readonly Dictionary<OperationObservationId, OperationObservation> _messages = new();
     private readonly Dictionary<(string Source, OperationId OperationId, string Phase), OperationObservationId> _phases = new();
     private readonly Lock _writes = new();
@@ -18,7 +20,7 @@ public sealed class InMemoryOperationObservationStore(IClock clock) : IOperation
     {
         ArgumentNullException.ThrowIfNull(observation);
         cancellationToken.ThrowIfCancellationRequested();
-        lock (_writes)
+        using (AuditMemoryWriteLock.Enter(_writes, _capacity.WaitTimeoutMilliseconds, cancellationToken))
         {
             if (_messages.TryGetValue(observation.Id, out var existing))
             {
@@ -26,13 +28,21 @@ public sealed class InMemoryOperationObservationStore(IClock clock) : IOperation
                     : Result.Failure<IngestionOutcome>(OperationObservationIngestion.MessageConflict));
             }
             var key = (observation.Data.Source, observation.Data.OperationId, observation.Data.Phase);
-            if (!_phases.TryAdd(key, observation.Id))
+            if (_phases.ContainsKey(key))
             {
                 return Task.FromResult(Result.Failure<IngestionOutcome>(OperationObservationIngestion.PhaseConflict));
             }
+            if (_messages.Count >= _capacity.MaxObservations) { throw new AuditStorageUnavailableException(true); }
+            _phases.Add(key, observation.Id);
             _messages.Add(observation.Id, observation);
             return Task.FromResult(Result.Success(IngestionOutcome.Accepted));
         }
+    }
+
+    internal AuditStoragePoolCapacity ReadCapacity(CancellationToken cancellationToken)
+    {
+        using var scope = AuditMemoryWriteLock.Enter(_writes, _capacity.WaitTimeoutMilliseconds, cancellationToken);
+        return new(_messages.Count, _capacity.MaxObservations);
     }
 
     /// <inheritdoc />

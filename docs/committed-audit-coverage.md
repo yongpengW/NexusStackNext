@@ -4,6 +4,12 @@
 实施票据 [业务事实审计覆盖与调查和容量治理](https://github.com/yongpengW/NexusStackNext/issues/64)。
 这里列的是业务提交义务；HTTP / 命令 / 任务的执行观察不能代替其中任何一项。
 
+中央新增切片[有限接纳与容量诊断](https://github.com/yongpengW/NexusStackNext/issues/156) 的验证定位：
+`CentralAuditCapacityTests` 覆盖 Memory 额度与取消；`CentralAuditCapacityPersistenceTests` 覆盖 PG
+竞争、回滚、短等待、迁移回填与缺失账本拒绝；`CentralAuditCapacityHttpTests` 覆盖独立授权、
+非法配置、诊断故障与业务 ready 隔离；`CentralAuditCapacityBrokerTests` 覆盖真实 broker 保管和容量恢复。
+交付资格以原生票据为准。它不完成中央保留/归档或新增入口遗漏防线；下方历史业务矩阵不因此自动扩展。
+
 ## 覆盖矩阵
 
 | 所有者 / 聚合 | 必须保留的持久变化 | 当前验收状态 |

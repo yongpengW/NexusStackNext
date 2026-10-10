@@ -69,6 +69,8 @@ public static class AuditingModule
                 await RabbitMqReadiness.IsReadyAsync(broker, token).ConfigureAwait(false)
                     ? HealthCheckResult.Healthy() : HealthCheckResult.Unhealthy("审计消息 broker 不可用。"), tags: [AuditingDiagnostics.HealthTag]);
         }
+        var capacity = configuration.GetSection("Auditing:Capacity").Get<AuditStorageCapacityOptions>() ?? new();
+        services.AddHealthChecks().AddCheck<AuditingCapacityHealthCheck>("auditing-capacity", tags: [AuditingDiagnostics.HealthTag]);
         var provider = configuration["Auditing:Storage:Provider"];
         if (string.IsNullOrWhiteSpace(provider)) { provider = "Postgres"; }
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
@@ -77,7 +79,7 @@ public static class AuditingModule
             {
                 throw new InvalidOperationException("Auditing:Storage:Provider=Memory 仅允许开发测试使用。");
             }
-            return services.AddAuditingInMemoryStorage();
+            return services.AddAuditingInMemoryStorage(capacity);
         }
         if (!string.Equals(provider, "Postgres", StringComparison.OrdinalIgnoreCase))
         {
@@ -88,7 +90,7 @@ public static class AuditingModule
         {
             throw new InvalidOperationException("必须配置 ConnectionStrings:Auditing；开发测试可显式选择 Auditing:Storage:Provider=Memory。");
         }
-        return services.AddAuditingPostgresStorage(connection);
+        return services.AddAuditingPostgresStorage(connection, capacity);
     }
 
     private static void AddPolicyIngestion<TEvent>(IServiceCollection services, string source, string eventName) where TEvent : FactCapacityPolicyChanged =>
@@ -104,6 +106,16 @@ public static class AuditingModule
         var group = endpoints.MapGroup("/api/auditing").RequireAuthorization()
             .ProducesApiErrors(400, 401, 403, 500);
         group.AddEndpointFilter<NexusStackAuthorizationFilter>();
+        group.MapGet("/capacity", async (IAuditStorageCapacityReader capacity, ApiResponses responses, CancellationToken token) =>
+        {
+            try { return (IResult)responses.Ok(await capacity.ReadAsync(token).ConfigureAwait(false)); }
+            catch (AuditStorageUnavailableException)
+            {
+                return Results.Problem(title: "中央审计容量诊断暂不可用。", statusCode: StatusCodes.Status503ServiceUnavailable,
+                    extensions: new Dictionary<string, object?> { ["errorCode"] = "auditing.storage_unavailable" });
+            }
+        }).RequirePermission("/api/auditing/capacity", "GET").Produces<ApiResponse<AuditStorageCapacitySnapshot>>().ProducesApiErrors(503)
+            .WithMetadata(new OperationLogSuppression("中央容量调查不产生新的操作观察，避免诊断放大日志。"));
         group.MapGet("/entries", async (IAuditEntryStore entries, ApiResponses responses, IClock clock,
             [AsParameters] ApiPageRequest paging, string? source, string? action, string? subjectType, string? subjectId,
             string? relatedContext, string? relatedSubjectType, string? relatedSubjectId,

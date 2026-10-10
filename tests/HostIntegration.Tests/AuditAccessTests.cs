@@ -85,6 +85,8 @@ public sealed class AuditAccessTests
         using var retry = await user.PostAsJsonAsync(new Uri($"/api/platform/audit-deliveries/{Guid.NewGuid()}/retry", UriKind.Relative),
             new { requestId = Guid.NewGuid(), expectedDeadLetteredAt = DateTimeOffset.UtcNow, expectedRetryRevision = "0", reason = "manual-retry" });
         Assert.Equal(HttpStatusCode.Forbidden, retry.StatusCode);
+        using var capacity = await user.GetAsync(new Uri("/api/auditing/capacity", UriKind.Relative));
+        Assert.Equal(HttpStatusCode.Forbidden, capacity.StatusCode);
         using var identityList = await user.GetAsync(new Uri("/api/identity/audit-deliveries", UriKind.Relative));
         var identityData = await identityList.Content.ReadApiDataAsync();
         Assert.NotEmpty(identityData.EnumerateArray());
