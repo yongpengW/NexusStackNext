@@ -165,13 +165,13 @@ Memory中让控制清理误删无关死信副本的可编译变异，会在原�
 `FactCapacityPolicyAccessTests` 验证三套路由的独立写权限、撤权、注销、可信操作者和大整数契约；
 `FactCapacityPolicyMigrationTests` 验证旧额度/占用保留、模型一致、重复迁移及历史回退拒绝。
 这组专项旅程不能单独替代全量验收；#101 最终完整 Linux CI 的 23 个测试工程、1747 项各一次通过，
-独立 Standards / Spec 无未解决发现。父 #64 / #60 的中央保留／归档、导出和覆盖遗漏防线仍开放。
+独立 Standards / Spec 无未解决发现。中央保留与遗漏检查另见[覆盖矩阵](committed-audit-coverage.md)；事实归档删除暂缓，调查导出另按票据实施。
 
 自动交付预算耗尽后，读取 `deadLetteredAt`，向 `POST /api/scheduling/occurrences/{occurrenceId}/retry` 提交 `{"expectedDeadLetteredAt":"所读到的 UTC 时刻"}`。状态匹配才返回 202 并恢复交付，重复或过时请求返回 409；发生标识、序号及消息内容保持不变。
 
-## 来源事实条件恢复（开发中）
+## 来源事实条件恢复
 
-[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103) 仍开放。Scheduling 已接入所属
+[六来源恢复 #103](https://github.com/yongpengW/NexusStackNext/issues/103)已由[PR107](https://github.com/yongpengW/NexusStackNext/pull/107)合入dev。Scheduling 已接入所属
 Memory / PostgreSQL 的五个事实管理接口；它们与上面的 OccurrenceDelivery 重试是不同的业务契约：
 
 | 操作 | HTTP |
@@ -209,8 +209,8 @@ Memory 不承诺跨进程保存。新 `20261005053138_ConditionalFactRecovery` �
 Memory 满额原子拒绝与后台释放恢复额度也已通过。策略事实恢复及到期清理在双存储中保持计划、
 非空决定／发生和两个事实池；真实 PostgreSQL 验证凭据四列改写拒绝、空操作 UPDATE、非空升级、
 模型一致、重复迁移、保留历史的安全回退拒绝和到期清理后的 Down / Up。实际宿主进程退出／重建后，
-原裁决可读取并重放，计划及非空决定／发生状态保持。当前七项专项测试通过，完整故障资格继续按 #103 验证；
-本轮尚未提交或合并；六来源已阶段接入，权限／边缘与安全观察已有新增实际专项；完整故障矩阵、真实MQ／中央Inbox恢复及最终门禁仍待验收。最新资格与剩余项见[当前本机状态](handoff-2026-10-03.md)。
+原裁决可读取并重放，计划及非空决定／发生状态保持。当时七项阶段专项测试通过；
+后续六来源故障、真实MQ／中央Inbox、权限及完整门禁资格见 #103 完成记录，整体状态见[覆盖矩阵](committed-audit-coverage.md)。
 继续在本机开发；SignalR 独立消息中心和多机高可用保持暂缓。
 
 ## 故障语义与范围
@@ -227,4 +227,4 @@ Costing 消费有效发生消息时建立独立 `message` 操作，固定动作 
 后台 Actor 为空，原发起人只作关联。独立 journal 在提交前崩溃时保留 Started，中央显示 unconfirmed；
 重投成功产生新操作，不改写旧证据。设计见 [Costing ADR-0004](../src/Services/Costing/docs/adr/0004-observe-schedule-message-acceptance.md)。
 
-日历规则和故障验收由 [#45](https://github.com/yongpengW/NexusStackNext/issues/45) 跟踪；本文随实现更新，不代替票据中的测试与评审结论。长任务续租和多机部署由后续票据处理。验收入口为 `CalendarScheduling*Tests`、`Scheduling*Tests`、`ScheduledCostingTests` 和 `ScheduledCostBusinessJourneyTests`，仍按仓库脚本串行运行。
+日历规则和故障验收由 [#45](https://github.com/yongpengW/NexusStackNext/issues/45) 跟踪；本文随实现更新，不代替票据中的测试与评审结论。长任务续租和多机部署由后续票据处理。验收入口为 `CalendarScheduling*Tests`、`Scheduling*Tests`、`ScheduledCostingTests` 和 `ScheduledCostBusinessJourneyTests`；按仓库脚本及[受控并发规则](local-test-concurrency.md)运行。

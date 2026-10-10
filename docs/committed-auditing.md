@@ -31,8 +31,9 @@ HealthCheckService 的 `<context>-fact-cleanup` 注册项提供 `enabled`、`cle
 
 六个上下文的 `CommittedFactCleanup` 迁移增加清理部分索引，先执行各自已有的独立迁移入口。
 调整来源保留配置会作用于已有已确认副本，不能把它理解为中央事实的固定保留承诺。
-六个 PostgreSQL 事实来源已有数量/字节容量准入，四个平台 Memory 的对等实现由 #80 验收；专门恢复及中央归档仍待完成。
-本项不表示整个治理已交付。
+六个 PostgreSQL 事实来源已有数量/字节容量准入，四个平台 Memory 的对等实现由 #80 验收。
+策略管理与专门恢复分别由 #101 / #103 交付；中央观察按期限清理，事实及去重凭据按用户决定长期保留。
+整体行为与资格定位见[覆盖矩阵](committed-audit-coverage.md)，归档删除暂缓。
 设计与证据见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
 
 ### Platform、Identity 与 Files 事实容量
@@ -41,7 +42,7 @@ HealthCheckService 的 `<context>-fact-cleanup` 注册项提供 `enabled`、`cle
 正文总量 256 MiB、单条正文 16 KiB，按 UTF-8 字节计算。待投递、死信和未过保留期的已确认记录都占用额度。
 额度不足时设置写入返回 HTTP 503 / `platform.audit_capacity.exhausted`，业务与事实一起回滚；
 同值空操作仍可成功，安全清理已确认副本后释放额度。其他业务消息不计入这个事实额度。
-策略当前存于数据库，不受多宿主启动顺序影响；可审计调整在本分支按 #101 实施，见下方实施章节；受权只读诊断见下节，
+策略当前存于数据库，不受多宿主启动顺序影响；可审计调整见下方容量调整章节；受权只读诊断见下节，
 不要直接修改占用计数。该逻辑上限不等于数据库磁盘文件上限。
 详见 [Platform ADR-0002](../src/Services/Platform/docs/adr/0002-setting-fact-capacity-shares-the-business-transaction.md)。
 
@@ -62,7 +63,7 @@ Files 的 `FileFactCapacity` 迁移按既有事实回填独立额度账本。一
 Platform、Identity、Files、Scheduling 分别从 `<Context>:AuditDelivery:MemoryCapacity` 装配自己的策略。
 `MaxRecords` 默认 100000，`MaxPayloadBytes` 默认 268435456，`MaxRecordPayloadBytes` 默认 16384，
 对应保留条数、正文 UTF-8 总字节和单条字节。三个值必须为正，单条不得超过总量；非法配置拒绝宿主装配。
-这些是内存来源的初始策略配置，不覆盖 PostgreSQL 中的持久策略；本分支的受权调整接口见下方 #101 实施章节。
+这些是内存来源的初始策略配置，不覆盖 PostgreSQL 中的持久策略；受权调整接口见下方容量调整章节。
 
 四个实际消费者共用 `InMemoryCommittedFactCapacity` 计量实现，各存储独占实例，并与其业务发布使用同一写锁。
 批次全部构造完成后一次准入；业务发布成功才增加占用，过期确认副本实际删除才减少占用。
@@ -95,7 +96,7 @@ HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类
 `<Context>:AuditDelivery:CapacityRead:Timeout` 默认 `00:00:03`，允许 50ms 至 30s，非法值拒绝宿主装配。
 这是容量读取适配器连接与查询的独立预算；身份与权限校验仍使用现有安全边界，不能把该数值当成整条 HTTP 链路的截止时间。
 读取不可用、账本缺失或超时返回 HTTP 503 / `audit_capacity.unavailable`，不会伪造零占用快照。
-此读取接口不修改持久容量策略，也不改变业务写入的锁等待预算；本分支的受权调整由 #101 实施，恢复和中央保留治理由 #64 / #60 继续跟踪。
+此读取接口不修改持久容量策略，也不改变业务写入的锁等待预算；受权调整、恢复和中央保留分别按对应接口执行，见[覆盖矩阵](committed-audit-coverage.md)。
 本轮验收与评审进度见 [#91](https://github.com/yongpengW/NexusStackNext/issues/91)。
 
 ### PostgreSQL 来源容量锁等待
@@ -106,7 +107,7 @@ HTTP 操作观察仍由现有中间件记录，它与业务提交事实是两类
 
 预算只在事实准入和过期已确认副本清理访问容量账本时生效；不改变普通业务消息、业务表的锁等待或原会话设置，调用者更短的正数锁等待及取消继续有效。它不是整个 HTTP / 事务的时限。原始锁超时在数据库内转为不可自动重试的精确容量错误，避免 EF 自动重试放大争用。清理遇到争用则整批回滚并沿用已有维护重试。
 
-实现依据和边界见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)，PostgreSQL 验收见 [#93](https://github.com/yongpengW/NexusStackNext/issues/93)。策略调整审计、专用恢复与保留治理仍在 #64 / #60 跟踪。
+实现依据和边界见 [ADR-0025](adr/0025-context-owned-fact-capacity.md)，PostgreSQL 验收见 [#93](https://github.com/yongpengW/NexusStackNext/issues/93)。策略调整审计、专用恢复与保留治理各自证据见[覆盖矩阵](committed-audit-coverage.md)。
 
 ### Memory 来源共用写锁等待
 
@@ -138,7 +139,7 @@ pwsh -File scripts/migrate-auditing.ps1
 
 宿主配置 `RabbitMQ` 后同时启动 Platform 的 Outbox 投递与 Auditing 消费。消费名称默认 `auditing.entries`，可通过 `Auditing:Messaging:ConsumerName` 设置；多副本必须使用同一个名称共享队列。`Auditing:Messaging:Enabled=false` 只用于显式停用消费者。未配置 broker 时，已提交事实保留在 Platform Outbox，待接入 broker 后投递，不能把这时的空查询解释为“从未发生业务变更”。
 
-### 容量调整事实（#101 实施中）
+### 容量调整事实
 
 中央明确注册六个来源 Contracts 的 `fact-capacity-policy-changed.v1` 处理器与 RabbitMQ 订阅，
 共用摄入实现在 Platform 和 Identity 两个真实来源分别转绿后收拢。每个闭合类型和来源均由 Auditing 模块声明，
@@ -157,7 +158,7 @@ pwsh -File scripts/migrate-auditing.ps1
 `CapacityPolicyAuditEvidence` 正常增量迁移增加自身明确数值列，旧事实与 Inbox 保留；已有治理数值时
 回退以 `auditing_fact_policy_history_exists` 拒绝，避免字段删除后调查只剩动作标题。
 
-本分支已完成直接摄入、基线旧指纹升级重放与安全回退的阶段验证，并补六个 PostgreSQL 来源的真实
+直接摄入、基线旧指纹升级重放与安全回退已验证，同时具备六个 PostgreSQL 来源的真实
 HTTP → Outbox → RabbitMQ → 中央 typed 查询资格。中央未运行时 broker 保留事件，来源进程退出后
 仍能接收，中央 OS 进程重启后六来源证据保留。四个平台 Memory 也验证已发布消息在来源进程退出后可查；
 这不承诺未发布的 Memory 消息跨进程恢复，也不是 broker 进程重启资格。
@@ -187,7 +188,7 @@ HTTP → Outbox → RabbitMQ → 中央 typed 查询资格。中央未运行时 
 query 或敏感请求头。平台模块的执行来源仍为 platform，动作标明所属上下文；首次提交事实关联原操作，
 重放和拒绝各有独立观察，不据 completed 推断新的策略变更。四平台 Memory / PostgreSQL 与两业务
 真实 OS 进程 / PostgreSQL journal 的十项矩阵已通过，具体边界见[操作日志](operation-logging.md#声明固定说明与安全客体)。
-整票全量及最终资格仍在 #101 待办，最新阶段证据见[本地开发状态](handoff-2026-10-03.md)。
+该切片已由 [PR102](https://github.com/yongpengW/NexusStackNext/pull/102) 合入 dev，完整资格见[策略治理票据](https://github.com/yongpengW/NexusStackNext/issues/101)。
 
 ## 信任与内容边界
 
@@ -215,7 +216,7 @@ ApiResource 登记可携带所属 Menu；没有菜单时关联为空。相同登
 中央消费者名称使用 `Auditing:Messaging:ConsumerName` 加 `-identity` 后缀。Memory 以 scoped 工作副本形成提交边界，
 版本与唯一性验证、行审计、业务变化和最小事实整批提交，错误密码的拒绝按命令判据保留安全变化。
 `MemoryIdentityTransactionTests` 验证隔离、失败与取消、重复保存、集合净变化和竞争，真实 HTTP / MQ 中央交付由
-`MemoryIdentityAuditJourneyTests` 验证。Memory 不保证未交付消息跨重启恢复；完整故障矩阵、投递恢复管理与容量治理仍未完成。
+`MemoryIdentityAuditJourneyTests` 验证。Memory 不保证未交付消息跨重启恢复；容量、等待预算与投递恢复分别使用[覆盖矩阵](committed-audit-coverage.md)中的独立证据。
 真实重启旅程还验证了权限、菜单与令牌的 12 条事实，以及重放的 rejected 观察和 sessions-revoked 事实同时可查；
 这些证据不代表完整 Identity 审计已验收，详见[覆盖矩阵](committed-audit-coverage.md)。
 
@@ -230,7 +231,7 @@ Files 两种存储的投递选项都是 `Files:Delivery`，中央消费者名称
 Memory 适配器在同一临界区提交元数据、行审计、首次删除来源与整批事实，构造失败或取消不留下半成品。
 `MemoryFilesCommittedAuditTests` 验证跨作用域快照、版本冲突、系统恢复身份及真实 MQ 交付。
 Memory 的待投递事实会随进程丢失；来源结束后仍可接收已交给 broker 的事实，不代表来源具备重启恢复能力。
-持续故障的容量治理与完整恢复矩阵尚未完成，不能把来源 Outbox 已存在当作全面验收。
+容量拒绝、取消、后台故障和专用投递恢复见[覆盖矩阵](committed-audit-coverage.md)，不能只凭来源 Outbox 存在推断行为正确。
 
 Scheduling 的 `scheduling.plan-committed.v1` 覆盖计划创建、启停、规则变化、重新排期、失败退避和故障清除；
 已登记的触发、合并与跳过分别为 triggered / coalesced / skipped，关联类型为 `schedule-decision`，标识为决定的 GUID。
@@ -238,7 +239,7 @@ Scheduling 的 `scheduling.plan-committed.v1` 覆盖计划创建、启停、规�
 Memory 与 PostgreSQL 都在来源原子提交，中央消费者名称为 `Auditing:Messaging:ConsumerName` 加 `-scheduling`，
 交付沿用 `Scheduling:Delivery`。后台 Actor 为空，当前操作与原始发起关系独立保留；失败退避的事实关联本次 failed 观察。
 来源事实失败会回滚计划、决定、发生及业务 Outbox；重复决定、旧版本和空操作不会追加事实。
-审计消息不能通过 Occurrence 重试端口恢复；来源容量及专门的审计恢复治理仍属于 #64 的未完成项。
+审计消息不能通过 Occurrence 重试端口恢复；使用本上下文专门的 `audit-deliveries` 接口，来源容量和恢复证据见[覆盖矩阵](committed-audit-coverage.md)。
 
 Costing 的 `costing.cost-sheet-committed.v1` 记录成本对象的 created / inputs-changed / result-applied，
 客体为 `cost-sheet` 及对象 GUID，保留提交版本，不传成本组成或计算金额。输入、任务受理及创建/变更事实同事务；
@@ -248,7 +249,7 @@ Costing 的 `costing.cost-sheet-committed.v1` 记录成本对象的 created / in
 
 Costing 宿主使用已有的 `Costing:Messaging:Enabled` 与 `Costing:Delivery` 控制两类消息交付，未启用交付时事实留在本地。
 中央消费者名称为 `Auditing:Messaging:ConsumerName` 加 `-costing`。CostDelivery 管理接口只允许查询/重试成本业务结果，
-不能用它管理审计消息。生产者重启与真实 RabbitMQ 已验证操作关联，容量及审计恢复治理尚未完成。
+不能用它管理审计消息。生产者重启与真实 RabbitMQ 已验证操作关联；容量及审计专用恢复由 `CostingFactCapacityTests` / `CostingFactDeliveryRecoveryTests` 等验证。
 设计见 [Costing ADR-0003](../src/Services/Costing/docs/adr/0003-cost-sheet-facts-share-the-state-commit.md)。
 
 Pricing 的 `pricing.price-quote-committed.v1` 记录 created / inputs-changed / costing-applied / result-applied，
@@ -256,7 +257,7 @@ Pricing 的 `pricing.price-quote-committed.v1` 记录 created / inputs-changed /
 较新的上游版本即使金额相同仍产生该事实；重复消息、旧版本、拒绝与无变化结果不生成对象变化事实。
 报价、任务、Inbox 及新事实同事务，事实写入失败时一起回滚。消息消费和后台计算的 Actor 均为系统。
 `Pricing:Messaging:Enabled` 启用成本消费及事实发布，`Pricing:Delivery` 配置来源 Outbox；中央消费者后缀为 `-pricing`。
-设计与验收见 [Pricing ADR-0003](../src/Services/Pricing/docs/adr/0003-price-facts-and-message-acceptance.md)，容量与恢复治理仍未完成。
+设计与验收见 [Pricing ADR-0003](../src/Services/Pricing/docs/adr/0003-price-facts-and-message-acceptance.md)，容量与恢复治理证据见[覆盖矩阵](committed-audit-coverage.md)。
 
 可选 `execution` 保留提交所在操作的来源/标识、根操作与原发起人，与事实一起进入所属业务 Outbox。
 该来源指执行宿主，`fact.source` 则指拥有业务数据的上下文。通过 `/api/auditing/operations` 读取对应观察；
@@ -300,7 +301,7 @@ Platform 的投递策略由 `Platform:Delivery` 配置，默认最多 8 次失�
 
 ## 验证范围
 
-`AuditBusinessJourneyTests` 使用真实 HTTP、RabbitMQ、临时 PostgreSQL 与真实宿主进程，覆盖提交后生产者重启、回滚 / 空操作 / 冲突、独立审计库断连、重复投递、Inbox 与记录之间崩溃、投递耗尽后的受权恢复。`AuditPersistenceJourneyTests` 覆盖独立迁移、失败事务、并发重复和跨宿主去重；`AuditAccessTests` 验证授权与三份实际网关路由；启动测试覆盖缺失配置和禁止生产 Memory。运行全量使用 `scripts/run-tests.ps1` 串行执行。
+`AuditBusinessJourneyTests` 使用真实 HTTP、RabbitMQ、临时 PostgreSQL 与真实宿主进程，覆盖提交后生产者重启、回滚 / 空操作 / 冲突、独立审计库断连、重复投递、Inbox 与记录之间崩溃、投递耗尽后的受权恢复。`AuditPersistenceJourneyTests` 覆盖独立迁移、失败事务、并发重复和跨宿主去重；`AuditAccessTests` 验证授权与三份实际网关路由；启动测试覆盖缺失配置和禁止生产 Memory。日常按[分阶段测试策略](testing-strategy.md)选择范围，真实负载使用 `scripts/run-tests.ps1`；已审核宿主类可按[受控并发](local-test-concurrency.md)运行，完整 Linux CI 保留统一门禁。
 
 操作关联由真实生产者重启旅程验证；`AuditInvestigationTests` 在内存及 PostgreSQL 上检验精确查询、默认窗口与非法参数。
 `CommittedFactCompatibilityTests` 使用旧版本源码独立编译出的冻结消息/指纹，检验迁移和重投不能改写事实。
@@ -309,18 +310,18 @@ Platform 的投递策略由 `Platform:Delivery` 配置，默认最多 8 次失�
 检查保留优化器正常的顺序扫描选项；它验证这些选择性查询的计划，实际容量和吞吐仍需按部署数据验收。
 其他上下文的事实覆盖与容量治理仍按[覆盖矩阵](committed-audit-coverage.md)推进，不能将 Platform 样板当作全模块完成。
 
-实施中的容量策略协议另由 `PostgresFactCapacityPolicyFailureTests` 验证六个实际来源的十八项故障路径：
+容量策略协议另由 `PostgresFactCapacityPolicyFailureTests` 验证六个实际来源的十八项故障路径：
 凭据持久写失败、实际容量行锁等待中的调用者取消，以及 Outbox 和额度更新已经在事务内执行后的凭据提交前取消。
 锁与触发器只在私有临时库安排故障，结果通过所属策略、凭据重放和 Outbox 端口检查；失败不保留部分状态，
 解除故障后原请求可提交，重放不重复产生事实。取消必须终止实际写任务，不能只取消调用方等待而丢弃写任务。
 可编译的提前提交和忽略取消变异已被这些接口断言拒绝，源码还原后十八项重新通过；
-本轮是已有行为的回归资格，不等于六来源全部故障、迁移或权限义务已完成。完整状态仍见 #101。
+这组测试验证已有行为，不单独证明全部迁移或权限义务；完整交付资格见 #101 最终记录。
 
 阶段十四的 `FactCapacityPolicyMigrationTests` / `FactCapacityPolicyBusinessMigrationTests` 共六项，
 在真实所属迁移边界验证三个旧额度、实际占用及原业务事实保留，重复迁移后的凭据重放，
 以及有治理历史时明确拒绝破坏性 Down。Costing/Pricing 使用升级前后的真实业务宿主进程，
 其余四项主要使用同一测试进程内的宿主重建。移除 Down 保护、Up 覆盖旧额度的可编译变异均被拒绝，
-源码精确还原后六项和330项相关回归通过；这仍不是整仓全量或 #101 最终发布资格。
+源码精确还原后六项和330项相关回归通过；该阶段证据与 #101 后续最终发布资格分别保留。
 
 阶段十五新增 `PostgresFactCapacityPolicyAccessTests` 的四平台×三份实际网关配置十二项：
 普通用户登录、策略读取/调整及注销都经过真实HTTP，验证独立写权限、可信操作者/来源、
@@ -354,7 +355,7 @@ Files 验证元数据和事实，不将它称为文件物理字节验证；Prici
 
 ## 容量策略验收定位
 
-下表指向 #101 的实际测试面；完整发布资格仍需本机整仓检查、独立双轴评审及当前提交的 Linux CI。
+下表指向 #101 的实际测试面；本机、独立双轴及完整 Linux CI 发布资格见[最终交付记录](https://github.com/yongpengW/NexusStackNext/issues/101#issuecomment-5985938831)及票据完成评论。
 
 | 义务 | 实际验证入口 |
 |---|---|
@@ -368,5 +369,5 @@ Files 验证元数据和事实，不将它称为文件物理字节验证；Prici
 
 四平台使用当前会话和资源写权限；两个业务样板按本票决定保持根操作者限制。
 Memory 不承诺未发布事实的进程恢复；“响应丢失后重放”目前验证层为公开存储端口，未模拟真实 TCP 断流。
-业务死信专用恢复以其后续原生票据交付记录为准；中央保留/归档和遗漏防线仍不能由本表推断完成。
+业务事实死信专用恢复已由[条件恢复](https://github.com/yongpengW/NexusStackNext/issues/103)交付；中央观察保留、事实长期保留和遗漏防线分别见[覆盖矩阵](committed-audit-coverage.md)，不能由本表推断。
 中央有限接纳与容量调查见[中央审计接纳容量](central-audit-capacity.md)；它不授予事实删除资格。

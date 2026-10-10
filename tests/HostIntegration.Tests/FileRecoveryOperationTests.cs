@@ -16,6 +16,92 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class FileRecoveryOperationTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task CanceledRecoveryCommit_PreservesPendingDeletionAndOrigin_AndANewAttemptCommitsOnce()
+    {
+        await using var database = await databases.CreateAsync();
+        await using var provider = FilesCommittedAuditTests.BuildStorage(database.ConnectionString);
+        await using var persistence = provider.CreateAsyncScope();
+        await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
+        await using var observationScope = app.Services.CreateAsyncScope();
+        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "nsn-file-canceled-recovery-" + Guid.NewGuid().ToString("N")));
+        Assert.Equal(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath())), Path.GetDirectoryName(root));
+        try
+        {
+            using var store = new LocalDiskFileStore(root);
+            store.EnsureCreated();
+            var files = persistence.ServiceProvider.GetRequiredService<IStoredFileRepository>();
+            var clock = new FixedClock(DateTimeOffset.UtcNow);
+            var file = StoredFile.Register(new StoredFileId(76600), FileName.Create("canceled-recovery.bin").Value,
+                "application/octet-stream", "private-owner", clock.UtcNow).Value;
+            using var content = new MemoryStream([1, 2, 3]);
+            await using (var write = await store.WriteAsync(content, file.ContentType))
+            {
+                file.MarkStored(write.StorageKey, 3);
+                await files.SaveAsync(file);
+            }
+            file.Delete();
+            var operationId = Guid.NewGuid();
+            var origin = new ExecutionOrigin(operationId, "platform", operationId, "platform", "deletion-requester", "canceled-recovery");
+            await files.SaveAsync(file, 2, origin);
+            var outbox = persistence.ServiceProvider.GetRequiredKeyedService<IOutboxStore>("files");
+            var before = await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue);
+            Assert.Equal(3, before.Count);
+            Assert.Single(await files.PendingDeletionsAsync(clock.UtcNow, 10));
+            var recovery = new FileRecovery(store, files, clock, new FileRecoveryOptions(), store,
+                observationScope.ServiceProvider.GetRequiredService<IBackgroundExecutionObservation>());
+            await using (var capacityLock = await PostgresFactCapacityLock.AcquireAsync(database.ConnectionString, "files"))
+            {
+                using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                var pending = recovery.RunOnceAsync(cancellation.Token);
+                try
+                {
+                    using var blocked = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                    var writer = capacityLock.WaitForWriterAsync(blocked.Token);
+                    Assert.Same(writer, await Task.WhenAny(writer, pending));
+                    await writer;
+                    await cancellation.CancelAsync();
+                    await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+                }
+                finally
+                {
+                    await cancellation.CancelAsync();
+                    await capacityLock.ReleaseAsync();
+                    try { await pending; }
+                    catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+                }
+            }
+            var retained = Assert.Single(await files.PendingDeletionsAsync(clock.UtcNow, 10));
+            Assert.Equal(3, retained.Version);
+            Assert.Null(retained.BytesRemovedAt);
+            Assert.Equal(origin, await files.ReadDeletionOriginAsync(file.Id));
+            Assert.Equal(before, await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue));
+            await Assert.ThrowsAnyAsync<IOException>(() => store.OpenReadAsync(file.StorageKey!));
+            var journal = observationScope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(OperationJournalServiceCollectionExtensions.OutboxKey);
+            var phases = (await OperationEndpointInventoryTests.ReadAsync(journal)).Where(item => item.Kind == "recovery").ToArray();
+            Assert.Equal(2, phases.Length);
+            var canceled = Assert.Single(phases, item => item.Phase == "finished");
+            Assert.Equal("canceled", canceled.Outcome);
+            await recovery.RunOnceAsync();
+            await recovery.RunOnceAsync();
+            Assert.Empty(await files.PendingDeletionsAsync(clock.UtcNow, 10));
+            Assert.Equal(4, (await files.FindDeletedAsync(file.Id))!.Version);
+            Assert.Equal(origin, await files.ReadDeletionOriginAsync(file.Id));
+            Assert.Equal(4, (await outbox.ReadPendingAsync(100, DateTimeOffset.MaxValue)).Count);
+            phases = (await OperationEndpointInventoryTests.ReadAsync(journal)).Where(item => item.Kind == "recovery").ToArray();
+            Assert.Equal(4, phases.Length);
+            var completed = Assert.Single(phases, item => item.Outcome == "completed");
+            Assert.NotEqual(canceled.OperationId, completed.OperationId);
+            Assert.All(phases, item =>
+            {
+                Assert.Null(item.ActorId);
+                Assert.Equal(origin.OperationId, item.Metadata!.ParentOperationId);
+                Assert.Equal(origin.InitiatorId, item.Metadata.InitiatorId);
+            });
+        }
+        finally { if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); } }
+    }
+
+    [PostgresFact]
     public async Task RecoveryCommitFailure_RecordsFailedAttempt_WithoutInventingACompletedFact()
     {
         await using var database = await databases.CreateAsync();

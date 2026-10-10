@@ -28,7 +28,7 @@ internal sealed class PostgresFactCapacityLock(NpgsqlConnection connection, Npgs
     {
         while (true)
         {
-            await using var command = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))", connection, transaction);
+            await using var command = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE NOT granted AND pg_backend_pid() = ANY(pg_blocking_pids(pid)))", connection, transaction);
             if ((bool)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!) { return; }
             await Task.Delay(20, cancellationToken).ConfigureAwait(false);
         }
