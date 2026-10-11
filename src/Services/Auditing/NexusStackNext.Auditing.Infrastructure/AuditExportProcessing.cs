@@ -14,41 +14,32 @@ namespace NexusStackNext.Auditing.Infrastructure;
 internal sealed class AuditExportProcessing(AuditingDbContext database, AuditExportOptions options, IExportFiles files,
     IBackgroundExecutionObservation observations) : ICommandHandler<ClaimAuditExport, AuditExportLease?>, ICommandHandler<ProcessAuditExport, AuditExportStatus>
 {
-    public async Task<Result<AuditExportLease?>> HandleAsync(ClaimAuditExport command, CancellationToken cancellationToken = default)
+    public Task<Result<AuditExportLease?>> HandleAsync(ClaimAuditExport command, CancellationToken cancellationToken = default) =>
+        ExecuteDatabaseAsync(ClaimAsync, () => Failure<AuditExportLease?>("unavailable"), cancellationToken);
+
+    private async Task<Result<AuditExportLease?>> ClaimAsync(CancellationToken cancellationToken)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        try
-        {
-            return await database.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-            {
-                database.ChangeTracker.Clear();
-                await using var transaction = await database.Database.BeginTransactionAsync(budget.Token).ConfigureAwait(false);
-                await ConfigureAsync(budget.Token).ConfigureAwait(false);
-                if (!await database.Database.SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock(680068) AS \"Value\"").SingleAsync(budget.Token).ConfigureAwait(false))
-                { return Result.Success<AuditExportLease?>(null); }
-                var now = await NowAsync(budget.Token).ConfigureAwait(false);
-                if (await database.Exports.AnyAsync(x => (x.State == "Generating" || x.State == "Publishing") && x.LeaseUntil > now, budget.Token).ConfigureAwait(false))
-                { return Result.Success<AuditExportLease?>(null); }
-                var export = await database.Exports.FromSqlInterpolated($"""
+        database.ChangeTracker.Clear();
+        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        await ConfigureAsync(cancellationToken).ConfigureAwait(false);
+        if (!await database.Database.SqlQuery<bool>($"SELECT pg_try_advisory_xact_lock(680068) AS \"Value\"").SingleAsync(cancellationToken).ConfigureAwait(false))
+        { return Result.Success<AuditExportLease?>(null); }
+        var now = await NowAsync(cancellationToken).ConfigureAwait(false);
+        if (await database.Exports.AnyAsync(x => (x.State == "Generating" || x.State == "Publishing") && x.LeaseUntil > now, cancellationToken).ConfigureAwait(false))
+        { return Result.Success<AuditExportLease?>(null); }
+        var export = await database.Exports.FromSqlInterpolated($"""
                     SELECT * FROM auditing.exports
                     WHERE ("State" IN ('Queued', 'Generating', 'Publishing') AND "ReadyAt" <= {now}
                         AND ("LeaseUntil" IS NULL OR "LeaseUntil" <= {now}))
                         OR (jsonb_array_length("Rows") > 0 AND "AcceptedAt" + interval '7 days' <= {now})
                     ORDER BY "AcceptedAt", "Id" LIMIT 1 FOR UPDATE SKIP LOCKED
-                    """).SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
-                if (export is null) { return Result.Success<AuditExportLease?>(null); }
-                bool claimed;
-                _ = export.ExpireSnapshot(now);
-                claimed = export.TryClaim(now, options.LeaseDuration, options.MaxAttempts).Value;
-                await database.SaveChangesAsync(budget.Token).ConfigureAwait(false);
-                await transaction.CommitAsync(budget.Token).ConfigureAwait(false);
-                return Result.Success<AuditExportLease?>(claimed ? new(export.Id.Value, export.Epoch, export.LeaseUntil!.Value) : null);
-            }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Failure<AuditExportLease?>("unavailable"); }
-        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return Failure<AuditExportLease?>("unavailable"); }
-        finally { database.ChangeTracker.Clear(); }
+                    """).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (export is null) { return Result.Success<AuditExportLease?>(null); }
+        _ = export.ExpireSnapshot(now);
+        var claimed = export.TryClaim(now, options.LeaseDuration, options.MaxAttempts).Value;
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return Result.Success<AuditExportLease?>(claimed ? new(export.Id.Value, export.Epoch, export.LeaseUntil!.Value) : null);
     }
 
     public async Task<Result<AuditExportStatus>> HandleAsync(ProcessAuditExport command, CancellationToken cancellationToken = default)
@@ -132,28 +123,31 @@ internal sealed class AuditExportProcessing(AuditingDbContext database, AuditExp
 
     private async Task<Result<AuditExportStatus>> MutateAsync(Guid id, Func<AuditExport, DateTimeOffset, Result> change, CancellationToken token)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        try
+        return await ExecuteDatabaseAsync(async budgetToken =>
         {
-            return await database.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
-            {
-                database.ChangeTracker.Clear();
-                await using var transaction = await database.Database.BeginTransactionAsync(budget.Token).ConfigureAwait(false);
-                await ConfigureAsync(budget.Token).ConfigureAwait(false);
-                var export = await database.Exports.FromSqlInterpolated($"SELECT * FROM auditing.exports WHERE \"Id\" = {id} FOR UPDATE")
-                    .SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
-                if (export is null) { return Failure<AuditExportStatus>("lease_lost"); }
-                var changed = change(export, await NowAsync(budget.Token).ConfigureAwait(false));
-                if (changed.IsFailure) { return Result.Failure<AuditExportStatus>(changed.Error); }
-                await database.SaveChangesAsync(budget.Token).ConfigureAwait(false);
-                await database.Entry(export).ReloadAsync(budget.Token).ConfigureAwait(false);
-                await transaction.CommitAsync(budget.Token).ConfigureAwait(false);
-                return Result.Success(AuditExportCommands.Status(export));
-            }).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!token.IsCancellationRequested) { return Failure<AuditExportStatus>("unavailable"); }
-        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return Failure<AuditExportStatus>("unavailable"); }
+            database.ChangeTracker.Clear();
+            await using var transaction = await database.Database.BeginTransactionAsync(budgetToken).ConfigureAwait(false);
+            await ConfigureAsync(budgetToken).ConfigureAwait(false);
+            var export = await database.Exports.FromSqlInterpolated($"SELECT * FROM auditing.exports WHERE \"Id\" = {id} FOR UPDATE")
+                .SingleOrDefaultAsync(budgetToken).ConfigureAwait(false);
+            if (export is null) { return Failure<AuditExportStatus>("lease_lost"); }
+            var changed = change(export, await NowAsync(budgetToken).ConfigureAwait(false));
+            if (changed.IsFailure) { return Result.Failure<AuditExportStatus>(changed.Error); }
+            await database.SaveChangesAsync(budgetToken).ConfigureAwait(false);
+            await database.Entry(export).ReloadAsync(budgetToken).ConfigureAwait(false);
+            await transaction.CommitAsync(budgetToken).ConfigureAwait(false);
+            return Result.Success(AuditExportCommands.Status(export));
+        }, () => Failure<AuditExportStatus>("unavailable"), token).ConfigureAwait(false);
+    }
+
+    private async Task<Result<T>> ExecuteDatabaseAsync<T>(Func<CancellationToken, Task<Result<T>>> operation,
+        Func<Result<T>> unavailable, CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        try { return await database.Database.CreateExecutionStrategy().ExecuteAsync(() => operation(budget.Token)).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return unavailable(); }
+        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return unavailable(); }
         finally { database.ChangeTracker.Clear(); }
     }
 
