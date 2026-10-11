@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) { Write-Error '模板生成失败'; exit 1 }
 # 前两道闸（.gitignore 与模板排除）靠约定，这一道会失败。
 # 现在没有"样板文件"了（骨架由 run-host.ps1 -Init 生成），
 # 所以生成物里出现**任何** *.dev 都是泄漏。
-$leaked = @(Get-ChildItem -Recurse -File $out -Filter '*.dev' -ErrorAction SilentlyContinue)
+$leaked = @(Get-ChildItem -Recurse -File $out -Force -Filter '*.dev' -ErrorAction SilentlyContinue)
 
 if ($leaked.Count -gt 0) {
     Write-Host ''
@@ -74,7 +74,7 @@ $patterns = [ordered]@{
     '已知口令样本'   = 'WangYP' + '666'
 }
 
-$files = Get-ChildItem -Recurse -File $out |
+$files = Get-ChildItem -Recurse -File $out -Force |
     Where-Object {
         $_.FullName -notmatch '[\\/](bin|obj)[\\/]' -and
         # 不扫自己：本脚本里写着样本口令与正则本身，扫自己必然命中。
@@ -86,6 +86,12 @@ $files = Get-ChildItem -Recurse -File $out |
 # 被读成了"没有问题"（见 review/06）。
 if ($files.Count -eq 0) {
     Write-Host '没有扫描到任何文件——检查等于没跑，不能当作通过。' -ForegroundColor Red
+    exit 1
+}
+
+$emptyFiles = @($files | Where-Object Length -eq 0)
+if ($emptyFiles.Count -gt 0) {
+    Write-Host ("模板生成物含 {0} 个空文件。" -f $emptyFiles.Count) -ForegroundColor Red
     exit 1
 }
 
