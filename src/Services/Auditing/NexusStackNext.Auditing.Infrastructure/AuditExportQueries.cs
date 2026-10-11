@@ -28,35 +28,27 @@ internal sealed class AuditExportQueries(AuditingDbContext database, ICurrentUse
         ErrorCode = x.ErrorCode,
     };
 
-    public async Task<Result<AuditExportStatus>> HandleAsync(GetAuditExport query, CancellationToken cancellationToken = default)
+    public Task<Result<AuditExportStatus>> HandleAsync(GetAuditExport query, CancellationToken cancellationToken = default) =>
+        ExecuteReadAsync(token => GetAsync(query, token), () => Failure<AuditExportStatus>("unavailable"), cancellationToken);
+
+    private async Task<Result<AuditExportStatus>> GetAsync(GetAuditExport query, CancellationToken cancellationToken)
     {
         if (query.ExportId == Guid.Empty) { return Failure<AuditExportStatus>("invalid"); }
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        try
-        {
-            var id = new AuditExportId(query.ExportId);
-            var found = await database.Exports.AsNoTracking().Where(x => x.Id == id && x.OwnerId == user.UserId).Select(Projection)
-                .SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
-            return found is null ? Failure<AuditExportStatus>("not_found") : Result.Success(found);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Failure<AuditExportStatus>("unavailable"); }
-        catch (NpgsqlException) { return Failure<AuditExportStatus>("unavailable"); }
+        var id = new AuditExportId(query.ExportId);
+        var found = await database.Exports.AsNoTracking().Where(x => x.Id == id && x.OwnerId == user.UserId).Select(Projection)
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        return found is null ? Failure<AuditExportStatus>("not_found") : Result.Success(found);
     }
 
-    public async Task<Result<IReadOnlyList<AuditExportStatus>>> HandleAsync(ListAuditExports query, CancellationToken cancellationToken = default)
+    public Task<Result<IReadOnlyList<AuditExportStatus>>> HandleAsync(ListAuditExports query, CancellationToken cancellationToken = default) =>
+        ExecuteReadAsync(token => ListAsync(query, token), () => Failure<IReadOnlyList<AuditExportStatus>>("unavailable"), cancellationToken);
+
+    private async Task<Result<IReadOnlyList<AuditExportStatus>>> ListAsync(ListAuditExports query, CancellationToken cancellationToken)
     {
         if (query.Page is < 1 or > 1000 || query.Limit is < 1 or > 200) { return Failure<IReadOnlyList<AuditExportStatus>>("invalid"); }
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        try
-        {
-            var found = await database.Exports.AsNoTracking().Where(x => x.OwnerId == user.UserId).OrderByDescending(x => x.AcceptedAt)
-                .ThenByDescending(x => x.Id).Skip((query.Page - 1) * query.Limit).Take(query.Limit).Select(Projection).ToArrayAsync(budget.Token).ConfigureAwait(false);
-            return Result.Success<IReadOnlyList<AuditExportStatus>>(found);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Failure<IReadOnlyList<AuditExportStatus>>("unavailable"); }
-        catch (NpgsqlException) { return Failure<IReadOnlyList<AuditExportStatus>>("unavailable"); }
+        var found = await database.Exports.AsNoTracking().Where(x => x.OwnerId == user.UserId).OrderByDescending(x => x.AcceptedAt)
+            .ThenByDescending(x => x.Id).Skip((query.Page - 1) * query.Limit).Take(query.Limit).Select(Projection).ToArrayAsync(cancellationToken).ConfigureAwait(false);
+        return Result.Success<IReadOnlyList<AuditExportStatus>>(found);
     }
 
     public Task<Result<AuditExportStatus>> HandleAsync(CancelAuditExport command, CancellationToken cancellationToken = default) =>
@@ -94,4 +86,14 @@ internal sealed class AuditExportQueries(AuditingDbContext database, ICurrentUse
     }
 
     private static Result<T> Failure<T>(string code) => Result.Failure<T>(new Error("auditing.export." + code, "导出不存在、参数无效或暂不可用。"));
+
+    private static async Task<Result<T>> ExecuteReadAsync<T>(Func<CancellationToken, Task<Result<T>>> operation,
+        Func<Result<T>> unavailable, CancellationToken cancellationToken)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        budget.CancelAfter(TimeSpan.FromSeconds(5));
+        try { return await operation(budget.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return unavailable(); }
+        catch (NpgsqlException) { return unavailable(); }
+    }
 }
