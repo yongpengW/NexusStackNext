@@ -1,0 +1,21 @@
+# Only product sources and build inputs enter the build context.
+**
+!src/
+!src/**
+!aspire/
+!aspire/NexusStackNext.ServiceDefaults/
+!aspire/NexusStackNext.ServiceDefaults/**
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!.editorconfig
+**/bin/**
+**/obj/**
+**/agile/**
+**/*.cache
+**/*.serviceid
+**/*.pfx
+**/*.key
+**/appsettings.*.local.json
+**/appsettings.Local.json
+**/secrets.json

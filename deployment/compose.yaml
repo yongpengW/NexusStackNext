@@ -1,0 +1,54 @@
+services:
+  platform:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: platform
+    env_file: ../env/platform.container.dev
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      Files__StorageRoot: /data/files
+      AgileConfig__Cache__Directory: /app/agile
+    volumes:
+      - files:/data/files
+
+  costing:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: costing
+    env_file: ../env/costing.container.dev
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      IdentitySession__BaseAddress: http://platform:8080/
+      AgileConfig__Cache__Directory: /app/agile
+
+  pricing:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: pricing
+    env_file: ../env/pricing.container.dev
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      IdentitySession__BaseAddress: http://platform:8080/
+      AgileConfig__Cache__Directory: /app/agile
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      target: gateway
+    env_file: ../env/gateway.container.dev
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      Gateway__RouteTablePath: /config/routes.json
+      IdentitySession__BaseAddress: http://platform:8080/
+      AgileConfig__Cache__Directory: /app/agile
+    volumes:
+      - ../env/container.routes.dev:/config/routes.json:ro
+    ports:
+      - "127.0.0.1:${NSN_GATEWAY_PORT:-5190}:8080"
+
+volumes:
+  files:
