@@ -60,6 +60,8 @@ pwsh -File scripts/assert-no-credentials.ps1
 测试范围与对应脚本检查按[分阶段测试策略](../testing-strategy.md)选择；PR仍需完整CI。
 `check-format.ps1` 第一次跑就抓到 448 处违规（24 个文件）而构建全绿——所以它不是一个形式步骤。
 
+异常处理的职责与本轮治理范围见[异常处理职责](../exception-handling.md)：预期拒绝用 `Result`，未知 HTTP 异常由宿主统一处理；需要资源清理、故障分类或恢复的捕获保留在所属模块。
+
 ## 不在标准里的东西
 
 - **不规定**测试文件的位置与命名（`tdd` 技能也不规定）；本仓的现状是 `<上下文>.<层>.Tests`。
