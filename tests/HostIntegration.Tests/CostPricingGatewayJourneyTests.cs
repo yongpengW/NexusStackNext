@@ -108,6 +108,7 @@ public sealed class CostPricingGatewayJourneyTests
         BusinessProcess? worker = null;
         BusinessProcess? restoredGateway = null;
         JourneyPricingApp? restartedPricing = null;
+        BusinessProcess? pricingProcess = null;
         BusinessProcess? finalGateway = null;
         try
         {
@@ -243,6 +244,21 @@ public sealed class CostPricingGatewayJourneyTests
             Assert.Contains(operationsObserved.EnumerateArray(), operation => operation.GetProperty("source").GetString() == "costing");
             Assert.Equal(operatorId.ToString(System.Globalization.CultureInfo.InvariantCulture), gatewayOperation.GetProperty("actorId").GetString());
 
+            // The HTTPS fixture above replaces only private CA trust. Continue recovery with the actual Pricing executable.
+            await finalGateway.DisposeAsync();
+            finalGateway = null;
+            await restartedPricing.DisposeAsync();
+            restartedPricing = null;
+            var processSettings = new Dictionary<string, string>(priceSettings, StringComparer.Ordinal)
+            {
+                ["Pricing__Webhook__Enabled"] = "false",
+            };
+            pricingProcess = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", prices.ConnectionString,
+                worker: true, settings: processSettings);
+            await WriteRoutesAsync(routes, platform.Client.BaseAddress!, worker.Client.BaseAddress!, pricingProcess.Client.BaseAddress!);
+            finalGateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, gatewaySettings);
+            await PlatformSettingsAccessTests.LoginAsync(finalGateway.Client, "journey-root", "chain-root-password");
+
             // Both caches contain 100. A committed change while Redis is offline must invalidate that old value after recovery.
             cacheProxy.SetOffline(true);
             await rabbitProxy.WaitForConnectionAsync(TimeSpan.FromSeconds(15));
@@ -259,6 +275,22 @@ public sealed class CostPricingGatewayJourneyTests
             await WaitDataAsync(operatorClient, $"/api/costing/items/{itemId}/display", data => data.GetProperty("unitCost").ValueKind == JsonValueKind.Number && data.GetProperty("unitCost").GetDecimal() == 125m);
             var duringDisconnect = await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", _ => true);
             Assert.Equal(100m, duringDisconnect.GetProperty("breakEvenPrice").GetDecimal());
+            await pricingProcess.CrashAsync();
+            await pricingProcess.DisposeAsync();
+            pricingProcess = null;
+            await finalGateway.DisposeAsync();
+            finalGateway = null;
+            pricingProcess = await BusinessProcess.StartAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", prices.ConnectionString,
+                worker: true, settings: processSettings);
+            await WriteRoutesAsync(routes, platform.Client.BaseAddress!, worker.Client.BaseAddress!, pricingProcess.Client.BaseAddress!);
+            finalGateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, gatewaySettings);
+            await PlatformSettingsAccessTests.LoginAsync(finalGateway.Client, "journey-root", "chain-root-password");
+            var retainedQuote = await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", _ => true);
+            Assert.Equal(duringDisconnect.GetProperty("version").GetString(), retainedQuote.GetProperty("version").GetString());
+            Assert.Equal(100m, retainedQuote.GetProperty("breakEvenPrice").GetDecimal());
+            var retainedWebhook = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", _ => true);
+            Assert.Equal("Succeeded", retainedWebhook.GetProperty("state").GetString());
+            Assert.Equal(1, retainedWebhook.GetProperty("attemptCount").GetInt32());
             rabbitProxy.SetOffline(false);
             cacheProxy.SetOffline(false);
             await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", data => data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 125m);
@@ -268,6 +300,7 @@ public sealed class CostPricingGatewayJourneyTests
         finally
         {
             if (finalGateway is not null) { await finalGateway.DisposeAsync(); }
+            if (pricingProcess is not null) { await pricingProcess.DisposeAsync(); }
             if (restartedPricing is not null) { await restartedPricing.DisposeAsync(); }
             if (restoredGateway is not null) { await restoredGateway.DisposeAsync(); }
             if (worker is not null) { await worker.DisposeAsync(); }
