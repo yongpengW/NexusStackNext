@@ -1,6 +1,6 @@
 # Pricing 私有 XLSX 导出
 
-票据 [#57](https://github.com/yongpengW/NexusStackNext/issues/57) 在[私有 CSV 导出](pricing-private-exports.md)的同一入口增加 XLSX。继续本机开发，整体 NS/PoS 目标仍暂停；本轮不包含文件导入、任意报告或对象存储。
+票据 [#57](https://github.com/yongpengW/NexusStackNext/issues/57) 在[私有 CSV 导出](pricing-private-exports.md)的同一入口增加 XLSX。本能力不包含文件导入、任意报告或对象存储。
 
 ## 请求与成果
 

@@ -45,8 +45,8 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 
 ## HTTP 使用
 
-先经网关登录 Identity 根账号。样板目前只允许有效 JWT 带 `nexusstack:root=true` 的根操作者访问，
-普通账号返回 403、未认证返回 401。使用登录返回的 Bearer token，避免把令牌写进共享脚本。
+先经网关登录 Identity；根账号可引导配置，普通账号按角色获授各端点的独立操作许可，见[普通业务操作授权](business-operation-authorization.md)。
+无许可返回 403、未认证返回 401；根账号也须通过当前会话校验。使用登录返回的 Bearer token，避免把令牌写进共享脚本。
 业务路径均从 `http://127.0.0.1:5190/api/pricing` 进入，返回现有统一响应封装。
 
 `POST /cost` 提交如下 JSON：
@@ -73,7 +73,7 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 当 `calculatedRevision < inputRevision` 时，价格尚未对应最新输入；结合任务状态区分待计算、失败和已取消。
 有界任务列表、延迟、条件取消及执行者续租见[业务任务管理](business-task-management.md)。
 
-失败终态允许根操作者 `POST /tasks/{taskId}/retry`，请求体为 `{ "expectedEpoch": "3" }`
+失败终态允许具有该重试操作许可的用户 `POST /tasks/{taskId}/retry`，请求体为 `{ "expectedEpoch": "3" }`
 （值取自查询结果）。成功返回 202；只有仍为 Failed 且代次匹配才接受，否则 409。
 重试重置当前轮尝试次数，历史与单调递增的执行代次保留。
 接口文档为宿主 `/openapi/v1.json`，网关聚合文档会包含 Pricing。

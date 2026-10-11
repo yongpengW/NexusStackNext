@@ -1,6 +1,6 @@
 # 私有生成成果
 
-这是 [#56](https://github.com/yongpengW/NexusStackNext/issues/56) 的 Files 协议子票 [#149](https://github.com/yongpengW/NexusStackNext/issues/149)。实现按相关回归、双轴评审、完整 Linux CI 与合并后 dev CI 验收，实际交付资格见原生票据。本协议不代表 Pricing CSV 导出整票交付；Pricing 接受和生成由 #150、完整跨宿主验收由 #151 承载。继续本机开发，NS/PoS 整体目标仍暂停。
+这是 [#56](https://github.com/yongpengW/NexusStackNext/issues/56) 的 Files 协议子票 [#149](https://github.com/yongpengW/NexusStackNext/issues/149)。实现按相关回归、双轴评审、完整 Linux CI 与合并后 dev CI 验收，实际交付资格见原生票据。Pricing CSV 导出的接受和生成由 #150、完整跨宿主验收由 #151 交付；本协议只描述 Files 的职责。
 
 ## 身份与部署
 

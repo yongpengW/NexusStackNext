@@ -18,7 +18,7 @@ OperationObservationRetentionHostTests 与 OperationObservationRetentionPersiste
 
 ## 票据57：私有 XLSX
 
-继续本机与共用测试服务，整体目标仍暂停，并发清单、所有权、重操作许可与 CI 四隔离组不变。
+继续本机与共用测试服务，并发清单、所有权、重操作许可与 CI 四隔离组不变。
 沿既有 GeneratedFilesHttpsTests / PricingExportJourneyTests 的每例私有数据库、文件根、TLS 和回环端口；
 新增 XLSX 的暂存后进程退出只终止本例进程树，临时目录以唯一身份创建并由本例清理。
 PricingExportResourceRecoveryTests 继续未声明类独占回退，Pending 候选故障只作用于本例 UploadId。
@@ -28,7 +28,7 @@ PricingExportResourceRecoveryTests 继续未声明类独占回退，Pending 候�
 
 ## 票据151：私有 CSV 故障旅程
 
-继续本机开发与共用测试库，整体目标仍暂停。本轮没有修改并发清单、调度、负载所有权或 CI 隔离。
+继续本机开发与共用测试库。本轮没有修改并发清单、调度、负载所有权或 CI 隔离。
 新 `PricingExportCommitRecoveryTests`、`PricingExportGenerationRecoveryTests`、`PricingExportResourceRecoveryTests`
 保留未来未声明类的独占回退；每例最多两个独立数据库，复制/迁移/删除继续走同一重操作许可。
 COMMIT 屏障只关闭本例回环代理连接，不终止远程其他会话、不修改服务器参数；HTTPS 屏障只持有本例证书与端口。

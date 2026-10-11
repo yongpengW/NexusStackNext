@@ -49,7 +49,8 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 
 ## HTTP 使用
 
-所有接口均需有效根操作者令牌，使用统一返回格式。
+所有接口均需有效会话和所属端点的独立操作许可，使用统一返回格式。根账号可引导配置；
+普通用户授权与撤回见[普通业务操作授权](business-operation-authorization.md)。
 
 三个手工入口支持可选 `delaySeconds`；两个上下文提供有界列表、条件取消和内部续租接口，
 准确的状态、升级与竞争语义见[业务任务管理](business-task-management.md)。
@@ -67,7 +68,7 @@ Aspire 本地编排可同时设置 `NEXUSSTACK_PRICING_DB`、`NEXUSSTACK_COSTING
 ## 来源事实容量治理（#101 已交付）
 
 Costing 与 Pricing 各自提供 `GET /api/<context>/audit-capacity` 和同路径的 `PUT`，
-沿用业务样板的根操作者限制。GET 返回业务额度、`policyRevision` 和独立 `controlCapacity`；
+分别要求对应路径的 GET / PUT 操作许可。GET 返回业务额度、`policyRevision` 和独立 `controlCapacity`；
 PUT 仅接受 `requestId`、`expectedPolicyRevision`、`maxRecords`、`maxPayloadBytes`、
 `maxRecordPayloadBytes` 和固定 `reason=operator-adjustment`。Int64 继续用十进制字符串。
 操作者、所属 schema 与事件名由服务端确定，请求不能改写这些归属。
@@ -176,8 +177,8 @@ Pricing 的最终发布资格以 #78 的完整检查、Linux CI 与独立评审�
 下方保留协议和当时阶段证据，最终完整资格以票据完成评论为准。
 
 Costing 与 Pricing 各自的 `/api/<context>/audit-deliveries` 提供有界列表、单条状态、
-`/{messageId}/retry`、`/recoveries/{requestId}` 与 `/recovery-capacity`。沿用各业务样板的根操作者限制；
-恢复接口仍只授予根操作者，所有用户均须通过[跨宿主会话校验](current-session-authorization.md)。返回最小投递状态，不回显正文与异常原文；Int64 用十进制字符串。
+`/{messageId}/retry`、`/recoveries/{requestId}` 与 `/recovery-capacity`。各入口要求独立操作许可，
+列表读取不授予恢复权限；所有用户均须通过[跨宿主会话校验](current-session-authorization.md)。返回最小投递状态，不回显正文与异常原文；Int64 用十进制字符串。
 
 请求只包含稳定 `requestId`、`expectedDeadLetteredAt`、`expectedRetryRevision` 与固定
 `reason=manual-retry/dependency-restored`，目标来自路径，操作者及来源来自可信宿主。

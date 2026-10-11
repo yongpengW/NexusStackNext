@@ -81,7 +81,7 @@ Identity 失败时不失效权限缓存，错误密码计数也只有准入后�
 六个来源模块显式提供 `GET /api/<context>/audit-capacity`，其中 `<context>` 为
 `identity`、`platform`、`files`、`scheduling`、`costing` 或 `pricing`。返回沿用统一 `ApiResponse`。
 四个平台必须具备对应路径的 GET 权限；根主体仍须通过当前会话校验。
-Costing / Pricing 沿用当前根操作者策略，普通业务主体不能读取；这不代表 #54 的普通业务授权已完成。
+Costing / Pricing 同样要求对应路径的 GET 操作许可，普通业务用户可按角色获授；根主体也须通过当前会话校验。
 
 `context` 说明所属上下文，`isPersistent=false` 表示仅当前进程存活期间保留的 Memory 账本。
 `maxRecords`、`maxPayloadBytes`、`maxRecordPayloadBytes` 分别为条数、正文 UTF-8 总字节和单条字节上限；
@@ -367,7 +367,7 @@ Files 验证元数据和事实，不将它称为文件物理字节验证；Prici
 | 业务隔离与失败原子性 | 新业务隔离三十项、六 PG 持久失败/实际等待取消/提交前取消十八项；Identity 权限缓存、Pricing 实际 Redis 热缓存及 Scheduling 非空历史由各自测试验证 |
 | 正常迁移及安全 Down | `FactCapacityPolicyMigrationTests` 与 `FactCapacityPolicyBusinessMigrationTests` 覆盖六来源；`FactCapacityPolicyAuditMigrationTests` 覆盖中央 typed 列升级和 Inbox 指纹保留 |
 
-四平台使用当前会话和资源写权限；两个业务样板按本票决定保持根操作者限制。
+当前六来源均使用当前会话和对应操作许可；两个业务样板的普通角色授权见[业务操作授权](business-operation-authorization.md)。
 Memory 不承诺未发布事实的进程恢复；“响应丢失后重放”目前验证层为公开存储端口，未模拟真实 TCP 断流。
 业务事实死信专用恢复已由[条件恢复](https://github.com/yongpengW/NexusStackNext/issues/103)交付；中央观察保留、事实长期保留和遗漏防线分别见[覆盖矩阵](committed-audit-coverage.md)，不能由本表推断。
 中央有限接纳与容量调查见[中央审计接纳容量](central-audit-capacity.md)；它不授予事实删除资格。

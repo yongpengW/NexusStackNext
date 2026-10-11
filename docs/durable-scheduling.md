@@ -97,7 +97,7 @@ Scheduling 启动和 `scheduling-calendar` readiness 检查固定探测 Etc/UTC�
 
 1. **交付**：`GET /api/scheduling/tasks/{id}/occurrences?page=1&limit=50`，最大页码 1000、每页最多 100。返回原计划时刻、实际触发时刻、发生序号以及 Pending / Delivered / DeadLettered。一次 Occurrence、计划推进和 Outbox 同事务保存；同一计划与序号唯一。
 2. **接受**：`GET /api/costing/schedule-receipts/{occurrenceId}`，返回 Accepted 或 Rejected、原委托人、目标及本地任务标识。404 表示尚无本地结论。目标不存在形成稳定拒绝；相同发生标识重投不重新解释，新的意图使用新的发生。
-3. **执行与结果交付**：Accepted 后使用返回的 taskId 查询 `/api/costing/tasks/{taskId}`、`/delivery`，以及业务结果 `/api/costing/items/{itemId}`、`/api/pricing/items/{itemId}`。这些业务样板接口沿用各自的根操作者策略。
+3. **执行与结果交付**：Accepted 后使用返回的 taskId 查询 `/api/costing/tasks/{taskId}`、`/delivery`，以及业务结果 `/api/costing/items/{itemId}`、`/api/pricing/items/{itemId}`。这些接口要求当前会话及各自的[业务操作许可](business-operation-authorization.md)，计划管理许可不自动授予结果查询权。
 
 Delivered 表示 broker 接管，Accepted 表示 Costing 的本地任务已登记；两者都不表示计算成功。相同输入重算可以成功完成而不改变 Costing / Pricing 版本。
 
