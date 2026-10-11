@@ -11,95 +11,96 @@ namespace NexusStackNext.Pricing.Infrastructure;
 internal sealed class PricingExportPublicationExecution(PricingDbContext database, PricingExportOptions options) : ICommandHandler<ClaimPricingExportPublication, PricingExportPublicationLease?>,
     ICommandHandler<CompletePricingExportPublication, PricingExportStatus>
 {
-    public async Task<Result<PricingExportPublicationLease?>> HandleAsync(ClaimPricingExportPublication command, CancellationToken cancellationToken = default)
+    public Task<Result<PricingExportPublicationLease?>> HandleAsync(ClaimPricingExportPublication command, CancellationToken cancellationToken = default) =>
+        ExecuteWithAvailabilityAsync(ClaimAsync, cancellationToken);
+
+    private async Task<Result<PricingExportPublicationLease?>> ClaimAsync(CancellationToken cancellationToken)
     {
-        using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        budget.CancelAfter(TimeSpan.FromSeconds(5));
-        try
+        for (var scan = 0; scan < 8; scan++)
         {
-            for (var scan = 0; scan < 8; scan++)
+            database.ChangeTracker.Clear();
+            await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+            await SetLimitsAsync(cancellationToken).ConfigureAwait(false);
+            var export = await database.Exports.FromSqlRaw("""
+                SELECT e.* FROM pricing.exports e WHERE e."State" = 'Publishing' AND EXISTS
+                (SELECT 1 FROM pricing.export_publications p WHERE p."ExportId" = e."Id"
+                 AND ((p."State" = 'Pending' AND p."AvailableAt" <= clock_timestamp())
+                   OR (p."State" = 'Delivering' AND p."LeaseUntil" <= clock_timestamp())))
+                ORDER BY e."AcceptedAt", e."Id" LIMIT 1 FOR UPDATE OF e SKIP LOCKED
+                """).SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (export is null) { return Result.Success<PricingExportPublicationLease?>(null); }
+            // 所有发布修改先锁所属 Export；子 Outbox 与它是同一个聚合事务。
+            var intent = await database.ExportPublications.SingleAsync(x => x.ExportId == export.Id, cancellationToken).ConfigureAwait(false);
+            var now = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
+            if (intent.Attempts >= options.MaxAttempts)
             {
-                database.ChangeTracker.Clear();
-                await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, budget.Token).ConfigureAwait(false);
-                await SetLimitsAsync(budget.Token).ConfigureAwait(false);
-                var export = await database.Exports.FromSqlRaw("""
-                    SELECT e.* FROM pricing.exports e WHERE e."State" = 'Publishing' AND EXISTS
-                    (SELECT 1 FROM pricing.export_publications p WHERE p."ExportId" = e."Id"
-                     AND ((p."State" = 'Pending' AND p."AvailableAt" <= clock_timestamp())
-                       OR (p."State" = 'Delivering' AND p."LeaseUntil" <= clock_timestamp())))
-                    ORDER BY e."AcceptedAt", e."Id" LIMIT 1 FOR UPDATE OF e SKIP LOCKED
-                    """).SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
-                if (export is null) { return Result.Success<PricingExportPublicationLease?>(null); }
-                // 所有发布修改先锁所属 Export；子 Outbox 与它是同一个聚合事务。
-                var intent = await database.ExportPublications.SingleAsync(x => x.ExportId == export.Id, budget.Token).ConfigureAwait(false);
-                var now = await database.DatabaseTimeAsync(budget.Token).ConfigureAwait(false);
-                if (intent.Attempts >= options.MaxAttempts)
-                {
-                    intent.State = "Stopped";
-                    intent.StoppedAt = now;
-                    intent.LeaseUntil = null;
-                    intent.ErrorCode ??= "pricing.export.publication_exhausted";
-                    _ = export.RecordPublicationProgress(intent.ErrorCode);
-                    await database.SaveChangesAsync(budget.Token).ConfigureAwait(false);
-                    await transaction.CommitAsync(budget.Token).ConfigureAwait(false);
-                    continue;
-                }
-                intent.State = "Delivering";
-                intent.Epoch++;
-                intent.Attempts++;
-                intent.LeaseUntil = now.Add(options.LeaseDuration);
-                intent.MaxLeaseUntil = now.Add(options.MaxExecutionDuration);
+                intent.State = "Stopped";
+                intent.StoppedAt = now;
+                intent.LeaseUntil = null;
+                intent.ErrorCode ??= "pricing.export.publication_exhausted";
                 _ = export.RecordPublicationProgress(intent.ErrorCode);
-                await database.SaveChangesAsync(budget.Token).ConfigureAwait(false);
-                await database.Entry(intent).ReloadAsync(budget.Token).ConfigureAwait(false);
-                await transaction.CommitAsync(budget.Token).ConfigureAwait(false);
-                return Result.Success<PricingExportPublicationLease?>(Lease(intent));
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                continue;
             }
-            return Result.Success<PricingExportPublicationLease?>(null);
+            intent.State = "Delivering";
+            intent.Epoch++;
+            intent.Attempts++;
+            intent.LeaseUntil = now.Add(options.LeaseDuration);
+            intent.MaxLeaseUntil = now.Add(options.MaxExecutionDuration);
+            _ = export.RecordPublicationProgress(intent.ErrorCode);
+            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await database.Entry(intent).ReloadAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return Result.Success<PricingExportPublicationLease?>(Lease(intent));
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable<PricingExportPublicationLease?>(); }
-        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return Unavailable<PricingExportPublicationLease?>(); }
-        finally { database.ChangeTracker.Clear(); }
+        return Result.Success<PricingExportPublicationLease?>(null);
     }
 
-    public async Task<Result<PricingExportStatus>> HandleAsync(CompletePricingExportPublication command, CancellationToken cancellationToken = default)
+    public Task<Result<PricingExportStatus>> HandleAsync(CompletePricingExportPublication command, CancellationToken cancellationToken = default) =>
+        ExecuteWithAvailabilityAsync(token => CompleteAsync(command, token), cancellationToken);
+
+    private async Task<Result<PricingExportStatus>> CompleteAsync(CompletePricingExportPublication command, CancellationToken cancellationToken)
+    {
+        database.ChangeTracker.Clear();
+        await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken).ConfigureAwait(false);
+        await SetLimitsAsync(cancellationToken).ConfigureAwait(false);
+        var export = await database.Exports.FromSqlInterpolated($"SELECT * FROM pricing.exports WHERE \"Id\" = {command.Lease.ExportId} FOR UPDATE")
+            .SingleOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (export is null) { return Lost<PricingExportStatus>(); }
+        var intent = await database.ExportPublications.SingleOrDefaultAsync(x => x.ExportId == export.Id, cancellationToken).ConfigureAwait(false);
+        if (intent is null || intent.PublicationId != command.Lease.PublicationId) { return Lost<PricingExportStatus>(); }
+        var receipt = command.Receipt;
+        var expected = export.ArtifactDigest is { } digest && export.ArtifactLength is { } length
+            ? new GeneratedFileDescriptionV1(export.OwnerId, export.Id.Value, digest, length, export.Format, 1, 1) : null;
+        if (receipt is null || receipt.Producer != intent.Producer || receipt.FileId != intent.FileId || receipt.UploadId != intent.UploadId
+            || receipt.PublicationId != intent.PublicationId || receipt.Description != expected || receipt.PublishedAt == default || receipt.ExpiresAt <= receipt.PublishedAt)
+        { return Result.Failure<PricingExportStatus>(new Error("pricing.export.invalid_receipt", "成果回执与原发布意图不一致。")); }
+        if (intent.State != "Delivered")
+        {
+            var now = await database.DatabaseTimeAsync(cancellationToken).ConfigureAwait(false);
+            if (!Owns(intent, command.Lease.Epoch, now)) { return Lost<PricingExportStatus>(); }
+            intent.State = "Delivered";
+            intent.CompletedAt = now;
+            intent.LeaseUntil = null;
+            intent.ErrorCode = null;
+        }
+        var completed = export.CompletePublication(receipt.PublishedAt, receipt.ExpiresAt);
+        if (completed.IsFailure) { return Result.Failure<PricingExportStatus>(completed.Error); }
+        await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await database.Entry(export).ReloadAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return Result.Success(PricingExportCommands.Status(export, intent));
+    }
+
+    private async Task<Result<T>> ExecuteWithAvailabilityAsync<T>(Func<CancellationToken, Task<Result<T>>> operation,
+        CancellationToken cancellationToken)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         budget.CancelAfter(TimeSpan.FromSeconds(5));
-        database.ChangeTracker.Clear();
-        try
-        {
-            await using var transaction = await database.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted, budget.Token).ConfigureAwait(false);
-            await SetLimitsAsync(budget.Token).ConfigureAwait(false);
-            var export = await database.Exports.FromSqlInterpolated($"SELECT * FROM pricing.exports WHERE \"Id\" = {command.Lease.ExportId} FOR UPDATE")
-                .SingleOrDefaultAsync(budget.Token).ConfigureAwait(false);
-            if (export is null) { return Lost<PricingExportStatus>(); }
-            var intent = await database.ExportPublications.SingleOrDefaultAsync(x => x.ExportId == export.Id, budget.Token).ConfigureAwait(false);
-            if (intent is null || intent.PublicationId != command.Lease.PublicationId) { return Lost<PricingExportStatus>(); }
-            var receipt = command.Receipt;
-            var expected = export.ArtifactDigest is { } digest && export.ArtifactLength is { } length
-                ? new GeneratedFileDescriptionV1(export.OwnerId, export.Id.Value, digest, length, export.Format, 1, 1) : null;
-            if (receipt is null || receipt.Producer != intent.Producer || receipt.FileId != intent.FileId || receipt.UploadId != intent.UploadId
-                || receipt.PublicationId != intent.PublicationId || receipt.Description != expected || receipt.PublishedAt == default || receipt.ExpiresAt <= receipt.PublishedAt)
-            { return Result.Failure<PricingExportStatus>(new Error("pricing.export.invalid_receipt", "成果回执与原发布意图不一致。")); }
-            if (intent.State != "Delivered")
-            {
-                var now = await database.DatabaseTimeAsync(budget.Token).ConfigureAwait(false);
-                if (!Owns(intent, command.Lease.Epoch, now)) { return Lost<PricingExportStatus>(); }
-                intent.State = "Delivered";
-                intent.CompletedAt = now;
-                intent.LeaseUntil = null;
-                intent.ErrorCode = null;
-            }
-            var completed = export.CompletePublication(receipt.PublishedAt, receipt.ExpiresAt);
-            if (completed.IsFailure) { return Result.Failure<PricingExportStatus>(completed.Error); }
-            await database.SaveChangesAsync(budget.Token).ConfigureAwait(false);
-            await database.Entry(export).ReloadAsync(budget.Token).ConfigureAwait(false);
-            await transaction.CommitAsync(budget.Token).ConfigureAwait(false);
-            return Result.Success(PricingExportCommands.Status(export, intent));
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable<PricingExportStatus>(); }
-        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return Unavailable<PricingExportStatus>(); }
+        try { return await operation(budget.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { return Unavailable<T>(); }
+        catch (Exception error) when (error is NpgsqlException or DbUpdateException) { return Unavailable<T>(); }
         finally { database.ChangeTracker.Clear(); }
     }
 
