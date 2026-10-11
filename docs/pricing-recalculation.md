@@ -106,7 +106,7 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 | `Pricing:Webhook:MaxAttempts` | `5` | 1 至 10；超时、429、5xx 有界退避，其余 4xx 进入失败 |
 
 启用 Pricing 的 RabbitMQ 消息配置后，Pricing 先通过本地订阅把事件物化为私有投递记录，再由后台进程在数据库事务之外发送 HTTP；Webhook 开关和 Messaging 开关必须同时启用，否则宿主快速失败。
-接收方必须返回包含 `EventId`、`IdempotencyKey` 与 `Accepted=true` 的 `PricingWebhookAcceptedV1` JSON 确认，并按幂等键去重；仅返回 2xx 但确认无效会进入 Failed。超时意味着结果未知，取消中的请求也记录为 Unknown，系统只按有界策略重试，不声称 exactly-once；Failed、DeadLettered、Unknown 均可按当前尝试次数人工恢复。
+接收方必须返回包含 `EventId`、`IdempotencyKey` 与 `Accepted=true` 的 `PricingWebhookAcceptedV1` JSON 确认，并按幂等键去重；仅返回 2xx 但确认无效会进入 Failed。对于可重试的 429、408 和 5xx，若响应带有合法 `Retry-After`，系统优先采用该等待时间；等待时间限制在 0 至 300 秒，缺失或非法值回退到本地指数退避。超时意味着结果未知，取消中的请求也记录为 Unknown，系统只按有界策略重试，不声称 exactly-once；Failed、DeadLettered、Unknown 均可按当前尝试次数人工恢复。
 事件携带受理重算的 `ExecutionOrigin`，投递 worker 通过 `pricing.webhook.deliver` 后台观察记录 OperationId、RootOperationId、TraceId 和 CorrelationId，便于调查关联。
 当前接收端仅用于本地和 CI 验证，不代表已经接入生产供应商。
 
