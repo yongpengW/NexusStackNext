@@ -48,6 +48,50 @@ public sealed class IdentityResourceAuthorizationTests
         await AssertCannotCreateRoleAsync(manager);
     }
 
+    [Fact]
+    public async Task RemovingAMenu_StopsItsHistoricalEndpointPermission_AndRejectsParentRemoval()
+    {
+        await using var app = new PlatformAppWithRootAccount();
+        using var root = app.CreateClient();
+        using var reader = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+
+        var parent = await CreateAsync(root, "/api/identity/menus", new { title = "Parent", sortOrder = 1 });
+        var parentId = parent.GetProperty("menuId").ReadHttpInt64();
+        var child = await CreateAsync(root, "/api/identity/menus", new { title = "Child", sortOrder = 1, parentMenuId = parentId });
+        var childId = child.GetProperty("menuId").ReadHttpInt64();
+        var leaf = await CreateAsync(root, "/api/identity/menus", new { title = "Reader", sortOrder = 2 });
+        var leafId = leaf.GetProperty("menuId").ReadHttpInt64();
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus", method = "GET", menuId = leafId });
+        var role = await CreateAsync(root, "/api/identity/roles", new { code = "menu-delete-reader", name = "Menu delete reader" });
+        var roleId = role.GetProperty("roleId").ReadHttpInt64();
+        using (var grant = await root.PostAsync(Relative($"/api/identity/roles/{roleId}/menus/{leafId}"), null))
+        { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+        var user = await CreateAsync(reader, "/api/identity/users", new { userName = "menu-delete-reader", password = "menu-delete-reader-password" });
+        var userId = user.GetProperty("userId").ReadHttpInt64();
+        using (var assigned = await root.PostAsync(Relative($"/api/identity/users/{userId}/roles/{roleId}"), null))
+        { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+        await PlatformSettingsAccessTests.LoginAsync(reader, "menu-delete-reader", "menu-delete-reader-password");
+
+        using (var before = await reader.GetAsync(Relative("/api/identity/menus")))
+        { Assert.Equal(HttpStatusCode.OK, before.StatusCode); }
+
+        var current = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+        var version = current.GetProperty("data").GetProperty("version").ReadHttpInt64();
+        using (var parentDelete = await root.PostAsJsonAsync(Relative($"/api/identity/menus/{parentId}/remove"), new { expectedVersion = version }))
+        { Assert.Equal(HttpStatusCode.Conflict, parentDelete.StatusCode); }
+
+        current = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+        version = current.GetProperty("data").GetProperty("version").ReadHttpInt64();
+        using (var removed = await root.PostAsJsonAsync(Relative($"/api/identity/menus/{leafId}/remove"), new { expectedVersion = version }))
+        { Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode); }
+        using (var denied = await reader.GetAsync(Relative("/api/identity/menus")))
+        { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        using (var childStillThere = await root.GetAsync(Relative("/api/identity/menus")))
+        { Assert.Equal(HttpStatusCode.OK, childStillThere.StatusCode); }
+        _ = childId;
+    }
+
     [PostgresFact]
     public async Task Gateway_RejectsResourceEscalation_AfterIndependentMigrationAndProcessRestart()
     {
@@ -94,6 +138,45 @@ public sealed class IdentityResourceAuthorizationTests
                     await AssertCannotCreateRoleAsync(reader);
                 }
             }
+        }
+        finally { File.Delete(routes); }
+    }
+
+    [PostgresFact]
+    public async Task Gateway_StopsAReaderAfterItsGrantedMenuIsDeleted()
+    {
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateThroughCliAsync();
+        var routes = Path.Combine(Path.GetTempPath(), $"nsn-identity-menu-delete-routes-{Guid.NewGuid():N}.json");
+        var settings = new Dictionary<string, string> { ["Jwt__SigningKey"] = BusinessProcess.SigningKey };
+        try
+        {
+            await using var platform = await PlatformHostProcess.StartAsync(database.ConnectionString, "menu-delete-root-password", settings: settings);
+            await WritePlatformRoutesAsync(routes, platform.Client.BaseAddress!);
+            await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
+            using var root = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            using var reader = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            await PlatformSettingsAccessTests.LoginAsync(root, "journey-root", "menu-delete-root-password");
+            var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Gateway delete", sortOrder = 1 });
+            var menuId = menu.GetProperty("menuId").GetString()!;
+            _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus", method = "GET", menuId });
+            var role = await CreateAsync(root, "/api/identity/roles", new { code = "gateway-menu-reader", name = "Gateway menu reader" });
+            var roleId = role.GetProperty("roleId").GetString()!;
+            using (var grant = await root.PostAsync(Relative($"/api/identity/roles/{roleId}/menus/{menuId}"), null))
+            { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+            var user = await CreateAsync(reader, "/api/identity/users", new { userName = "gateway-menu-reader", password = "gateway-menu-reader-password" });
+            var userId = user.GetProperty("userId").GetString()!;
+            using (var assigned = await root.PostAsync(Relative($"/api/identity/users/{userId}/roles/{roleId}"), null))
+            { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+            await PlatformSettingsAccessTests.LoginAsync(reader, "gateway-menu-reader", "gateway-menu-reader-password");
+            using (var allowed = await reader.GetAsync(Relative("/api/identity/menus")))
+            { Assert.Equal(HttpStatusCode.OK, allowed.StatusCode); }
+            var menus = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+            var version = menus.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using (var removed = await root.PostAsJsonAsync(Relative($"/api/identity/menus/{menuId}/remove"), new { expectedVersion = version }))
+            { Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode); }
+            using var denied = await reader.GetAsync(Relative("/api/identity/menus"));
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
         }
         finally { File.Delete(routes); }
     }

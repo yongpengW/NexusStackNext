@@ -25,10 +25,12 @@ namespace NexusStackNext.Identity.Application;
 /// <param name="users">用户仓储。</param>
 /// <param name="roles">角色仓储。</param>
 /// <param name="apiResources">API 资源仓储。</param>
+/// <param name="trees">当前菜单树，用于排除已经删除的历史菜单引用。</param>
 public sealed class UserPermissionReader(
     IUserRepository users,
     IRoleRepository roles,
-    IApiResourceRepository apiResources) : IPermissionSource
+    IApiResourceRepository apiResources,
+    IMenuTreeRepository trees) : IPermissionSource
 {
     /// <summary>读出用户当前有效的权限键集合。</summary>
     /// <param name="userId">用户标识。</param>
@@ -66,6 +68,13 @@ public sealed class UserPermissionReader(
         var menuIds = grantedRoles
             .SelectMany(static role => role.GrantedMenuIds)
             .ToHashSet();
+
+        var tree = await trees.FindAsync(cancellationToken).ConfigureAwait(false);
+        if (tree is null)
+        {
+            return Result.Success(PermissionKeySet.Empty);
+        }
+        menuIds.IntersectWith(tree.Nodes.Select(static node => node.Id));
 
         if (menuIds.Count == 0)
         {

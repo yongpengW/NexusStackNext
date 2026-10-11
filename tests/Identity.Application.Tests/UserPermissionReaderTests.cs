@@ -8,6 +8,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.Identity.Application;
 using NexusStackNext.Identity.Domain.ApiResources;
 using NexusStackNext.Identity.Domain.Ids;
+using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Users;
 using NexusStackNext.Identity.Domain.ValueObjects;
@@ -193,6 +194,20 @@ public sealed class UserPermissionReaderTests
     }
 
     [Fact]
+    public async Task DeletedMenu_DoesNotKeepHistoricalEndpointPermission()
+    {
+        await using var fixture = new Fixture();
+        await fixture.AddUserAsync();
+        await fixture.AssignAsync(1, await fixture.AddRoleAsync(7, UsersMenu));
+        await fixture.AddResourceAsync(1, "/api/identity/users/{id}", "GET", UsersMenu);
+
+        Assert.Equal(1, (await fixture.ReadAsync(new UserId(1))).Value.Count);
+        await fixture.RemoveMenuAsync(UsersMenu);
+
+        Assert.Equal(0, (await fixture.ReadAsync(new UserId(1))).Value.Count);
+    }
+
+    [Fact]
     public async Task NullUserId_IsRejected()
     {
         await using var fixture = new Fixture();
@@ -208,6 +223,7 @@ public sealed class UserPermissionReaderTests
         private readonly IUserRepository _users;
         private readonly IRoleRepository _roles;
         private readonly IApiResourceRepository _resources;
+        private readonly IMenuTreeRepository _trees;
         private readonly IIdentityUnitOfWork _unit;
         private readonly Dictionary<long, User> _createdUsers = new();
 
@@ -222,6 +238,7 @@ public sealed class UserPermissionReaderTests
             _users = _scope.ServiceProvider.GetRequiredService<IUserRepository>();
             _roles = _scope.ServiceProvider.GetRequiredService<IRoleRepository>();
             _resources = _scope.ServiceProvider.GetRequiredService<IApiResourceRepository>();
+            _trees = _scope.ServiceProvider.GetRequiredService<IMenuTreeRepository>();
             _unit = _scope.ServiceProvider.GetRequiredService<IIdentityUnitOfWork>();
         }
 
@@ -257,6 +274,17 @@ public sealed class UserPermissionReaderTests
 
         public async Task<Role> AddRoleAsync(long id, params long[] menuIds)
         {
+            var tree = await _trees.FindAsync();
+            if (tree is null)
+            {
+                tree = MenuTree.Create(new MenuTreeId(100));
+                await _trees.AddAsync(tree);
+            }
+            foreach (var menuId in menuIds.Where(menuId => tree.Find(new MenuId(menuId)) is null))
+            {
+                Assert.True(tree.AddRoot(new MenuId(menuId), MenuTitle.Create($"菜单 {menuId}").Value).IsSuccess);
+            }
+            await CommitAsync();
             var role = Role.Create(
                 new RoleId(id),
                 RoleCode.Create($"role-{id}").Value,
@@ -292,6 +320,14 @@ public sealed class UserPermissionReaderTests
         public async Task AssignAsync(long userId, Role role)
         {
             _createdUsers[userId].AssignRole(role.Id, Now);
+            await CommitAsync();
+        }
+
+        public async Task RemoveMenuAsync(long menuId)
+        {
+            var tree = await _trees.FindAsync();
+            Assert.NotNull(tree);
+            Assert.True(tree.Remove(new MenuId(menuId)).IsSuccess);
             await CommitAsync();
         }
     }

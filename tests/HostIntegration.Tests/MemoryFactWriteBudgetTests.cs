@@ -203,7 +203,7 @@ public sealed class MemoryFactWriteBudgetTests
         }
         var recovered = await sender.QueryAsync(new GetMenusQuery());
         Assert.True(recovered.IsSuccess);
-        Assert.Equal(created.Value.MenuId, Assert.Single(recovered.Value).MenuId);
+        Assert.Equal(created.Value.MenuId, Assert.Single(recovered.Value.Items).MenuId);
         Assert.Equal(before, await outbox.ReadPendingAsync(10, clock.UtcNow));
     }
 
