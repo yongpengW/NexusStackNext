@@ -140,6 +140,22 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             Assert.Equal(1, receiver.QueryCount);
             Assert.Equal(1, receiver.RequestCount(eventId));
             Assert.Equal(1, receiver.EffectCount(eventId));
+
+            using var client = new HttpClient();
+            using var duplicate = new HttpRequestMessage(HttpMethod.Post, new Uri(receiver.BaseAddress, "/webhooks/pricing"))
+            {
+                Content = JsonContent.Create(message),
+            };
+            duplicate.Headers.Add("Idempotency-Key", eventId.ToString());
+            using var acknowledgement = await client.SendAsync(duplicate);
+            Assert.Equal(HttpStatusCode.OK, acknowledgement.StatusCode);
+            var accepted = await acknowledgement.Content.ReadFromJsonAsync<PricingWebhookAcceptedV1>();
+            Assert.NotNull(accepted);
+            Assert.True(accepted.Accepted);
+            Assert.Equal(eventId, accepted.EventId);
+            Assert.Equal(eventId, accepted.IdempotencyKey);
+            Assert.Equal(2, receiver.RequestCount(eventId));
+            Assert.Equal(1, receiver.EffectCount(eventId));
         }
         finally
         {
