@@ -88,7 +88,13 @@ internal sealed class PricingWebhookDeliveryService(PricingDbContext database, P
             }
             else
             {
-                current.NextAttemptAt = clock.UtcNow.AddSeconds(Math.Min(300, Math.Pow(2, current.AttemptCount)));
+                var delay = outcome.RetryAfter is { } retryAfter
+                    && retryAfter >= TimeSpan.Zero
+                    && retryAfter <= PricingWebhookDeliveryPolicy.MaxRetryAfter
+                    ? retryAfter
+                    : TimeSpan.FromSeconds(Math.Min(PricingWebhookDeliveryPolicy.MaxRetryAfter.TotalSeconds,
+                        Math.Pow(2, current.AttemptCount)));
+                current.NextAttemptAt = clock.UtcNow.Add(delay);
             }
             await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
@@ -113,7 +119,8 @@ internal sealed class HttpPricingWebhookSender(HttpClient client) : IPricingWebh
             var status = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
             {
-                return new PricingWebhookSendResult(false, status == 408 || status == 429 || status >= 500, status, $"http_{status}");
+                var retryable = status == 408 || status == 429 || status >= 500;
+                return new PricingWebhookSendResult(false, retryable, status, $"http_{status}", retryable ? ParseRetryAfter(response) : null);
             }
             try
             {
@@ -136,6 +143,26 @@ internal sealed class HttpPricingWebhookSender(HttpClient client) : IPricingWebh
         {
             return new PricingWebhookSendResult(false, true, null, "transport_unavailable");
         }
+    }
+
+    private static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Retry-After", out var values)) { return null; }
+        var raw = values.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(raw)) { return null; }
+        if (raw.All(static character => character is >= '0' and <= '9')
+            && int.TryParse(raw, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+        {
+            return seconds >= 0 && seconds <= PricingWebhookDeliveryPolicy.MaxRetryAfter.TotalSeconds
+                ? TimeSpan.FromSeconds(seconds)
+                : null;
+        }
+        if (!DateTimeOffset.TryParseExact(raw, "R", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var date))
+        { return null; }
+        var delay = date - DateTimeOffset.UtcNow;
+        if (delay < TimeSpan.Zero) { return TimeSpan.Zero; }
+        return delay <= PricingWebhookDeliveryPolicy.MaxRetryAfter ? delay : null;
     }
 }
 
@@ -162,4 +189,9 @@ internal sealed partial class PricingWebhookWorker(IServiceScopeFactory scopes, 
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
         Message = "Pricing Webhook 投递循环暂时失败，将在下一轮继续。")]
     private static partial void LogDeliveryRoundFailed(ILogger logger, Exception error);
+}
+
+internal static class PricingWebhookDeliveryPolicy
+{
+    internal static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(300);
 }

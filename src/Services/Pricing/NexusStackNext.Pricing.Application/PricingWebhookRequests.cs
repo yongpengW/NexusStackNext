@@ -25,7 +25,8 @@ public interface IPricingWebhookSender
 public sealed record PricingWebhookSendRequest(Uri Endpoint, string Payload, Guid IdempotencyKey, string TraceId);
 
 /// <summary>外部发送结果；响应正文不进入业务状态。</summary>
-public sealed record PricingWebhookSendResult(bool Succeeded, bool Retryable, int? StatusCode, string? ErrorCode);
+public sealed record PricingWebhookSendResult(bool Succeeded, bool Retryable, int? StatusCode, string? ErrorCode,
+    TimeSpan? RetryAfter = null);
 
 /// <summary>触发一轮待投递通知。</summary>
 public interface IPricingWebhookDeliveryRunner

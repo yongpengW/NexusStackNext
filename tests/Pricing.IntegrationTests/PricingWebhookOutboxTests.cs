@@ -189,11 +189,12 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
     [PostgresFact]
     public async Task Http_sender_classifies_retryable_permanent_and_timeout_responses()
     {
-        var cases = new[]
+        var cases = new (HttpStatusCode Status, bool Retryable, string? RetryAfter, TimeSpan? ExpectedRetryAfter)[]
         {
-            (Status: HttpStatusCode.TooManyRequests, Retryable: true),
-            (Status: HttpStatusCode.InternalServerError, Retryable: true),
-            (Status: HttpStatusCode.BadRequest, Retryable: false),
+            (Status: HttpStatusCode.TooManyRequests, Retryable: true, RetryAfter: "not-a-delay", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.InternalServerError, Retryable: true, RetryAfter: "301", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.InternalServerError, Retryable: true, RetryAfter: "+17", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.BadRequest, Retryable: false, RetryAfter: "17", ExpectedRetryAfter: null),
         };
         foreach (var testCase in cases)
         {
@@ -202,13 +203,14 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             services.AddNexusStackApplication();
             services.AddPricingPostgres(database.ConnectionString,
                 webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
-            services.AddSingleton<HttpClient>(new HttpClient(new StatusHandler(testCase.Status)));
+            services.AddSingleton<HttpClient>(new HttpClient(new StatusHandler(testCase.Status, testCase.RetryAfter)));
             await using var provider = services.BuildServiceProvider();
             var sender = provider.GetRequiredService<IPricingWebhookSender>();
             var result = await sender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
             Assert.False(result.Succeeded);
             Assert.Equal(testCase.Retryable, result.Retryable);
             Assert.Equal((int)testCase.Status, result.StatusCode);
+            Assert.Equal(testCase.ExpectedRetryAfter, result.RetryAfter);
         }
 
         var timeoutServices = new ServiceCollection();
@@ -225,8 +227,54 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
     }
 
     [PostgresFact]
+    public async Task Http_sender_reads_bounded_retry_after_and_delivery_prefers_it_over_exponential_backoff()
+    {
+        await database.ResetAsync();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddNexusStackApplication();
+        services.AddPricingPostgres(database.ConnectionString,
+            webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+        services.AddSingleton<HttpClient>(new HttpClient(new StatusHandler(HttpStatusCode.TooManyRequests, "17")));
+        await using var provider = services.BuildServiceProvider();
+        var sender = provider.GetRequiredService<IPricingWebhookSender>();
+        var sent = await sender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
+        Assert.True(sent.Retryable);
+        Assert.Equal(TimeSpan.FromSeconds(17), sent.RetryAfter);
+
+        var pastDateServices = new ServiceCollection();
+        pastDateServices.AddLogging();
+        pastDateServices.AddNexusStackApplication();
+        pastDateServices.AddPricingPostgres(database.ConnectionString,
+            webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+        pastDateServices.AddSingleton<HttpClient>(new HttpClient(new StatusHandler(
+            HttpStatusCode.TooManyRequests, DateTimeOffset.UtcNow.AddMinutes(-1).ToString("R", System.Globalization.CultureInfo.InvariantCulture))));
+        await using var pastDateProvider = pastDateServices.BuildServiceProvider();
+        var pastDateResult = await pastDateProvider.GetRequiredService<IPricingWebhookSender>()
+            .SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
+        Assert.Equal(TimeSpan.Zero, pastDateResult.RetryAfter);
+
+        var clock = new MutableClock(DateTimeOffset.UtcNow);
+        var fixedSender = new FixedWebhookSender(new PricingWebhookSendResult(false, true, 429, "http_429", TimeSpan.FromSeconds(17)));
+        var options = new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing", MaxAttempts = 3 };
+        var (deliveryProvider, eventId) = await CreatePendingAsync(fixedSender, options, clock);
+        await using (deliveryProvider)
+        await using (var scope = deliveryProvider.CreateAsyncScope())
+        {
+            Assert.Equal(0, await scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>().DeliverPendingAsync());
+            var status = (await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPricingWebhook(eventId))).Value!;
+            Assert.InRange((status.NextAttemptAt!.Value - clock.UtcNow).TotalSeconds, 16.99, 17.01);
+            clock.Advance(TimeSpan.FromSeconds(17));
+            Assert.Equal(0, await scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>().DeliverPendingAsync());
+            clock.Advance(TimeSpan.FromSeconds(17));
+            Assert.Equal(0, await scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>().DeliverPendingAsync());
+        }
+    }
+
+    [PostgresFact]
     public async Task Retryable_delivery_uses_bounded_backoff_and_dead_letters_at_max_attempts()
     {
+        await database.ResetAsync();
         var clock = new MutableClock(DateTimeOffset.UtcNow);
         var sender = new FixedWebhookSender(new PricingWebhookSendResult(false, true, 429, "http_429"));
         var options = new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing", MaxAttempts = 3 };
@@ -357,10 +405,14 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         }
     }
 
-    private sealed class StatusHandler(HttpStatusCode status) : HttpMessageHandler
+    private sealed class StatusHandler(HttpStatusCode status, string? retryAfter = null) : HttpMessageHandler
     {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(status));
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(status);
+            if (retryAfter is not null) { response.Headers.TryAddWithoutValidation("Retry-After", retryAfter); }
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class HangingHandler : HttpMessageHandler
