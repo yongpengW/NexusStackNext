@@ -266,10 +266,50 @@ jobs:
           dotnet format "$out/CiProbe.slnx" --verify-no-changes --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Generated project format failed.' }
 
+  deployment-checks:
+    name: 生成工程容器入口
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: 验证生成工程的真实容器入口与端口隔离
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probeId = [Guid]::NewGuid().ToString('N')
+          $hive = Join-Path $env:RUNNER_TEMP "nsn-container-hive-$probeId"
+          $out = Join-Path $env:RUNNER_TEMP "nsn-container-gen-$probeId"
+          dotnet new install . --debug:custom-hive $hive
+          if ($LASTEXITCODE -ne 0) { throw 'Template install failed.' }
+          dotnet new nexusstack-next -n ContainerProbe -o $out --debug:custom-hive $hive --allow-scripts yes
+          if ($LASTEXITCODE -ne 0) { throw 'Template generation failed.' }
+          $composePath = Join-Path $out 'deployment/compose.yaml'
+          $composeText = [IO.File]::ReadAllText($composePath)
+          if ([string]::IsNullOrWhiteSpace($composeText) -or -not $composeText.Contains('  costing:')) { throw 'Missing deployment mutation target.' }
+          try {
+            $broken = $composeText.Replace('  costing:', "  costing:`n    ports:`n      - `"127.0.0.1:0:8080`"")
+            [IO.File]::WriteAllText($composePath, $broken, [Text.UTF8Encoding]::new($false))
+            $rejected = $false
+            try { & (Join-Path $out 'scripts/verify-container-deployment.ps1') }
+            catch {
+              if ($_.Exception.Message -notlike '*Non-edge container published a host port: costing*') { throw }
+              $rejected = $true
+            }
+            if (-not $rejected) { throw 'Published business port was not rejected.' }
+            Write-Output 'PASS: a real published business port is rejected.'
+          }
+          finally { [IO.File]::WriteAllText($composePath, $composeText, [Text.UTF8Encoding]::new($false)) }
+          & (Join-Path $out 'scripts/verify-container-deployment.ps1')
+
   build-and-test:
     # Preserve the required check name; always() must never mask an upstream failure.
     name: 构建与测试
-    needs: [test-shards, repository-checks]
+    needs: [test-shards, repository-checks, deployment-checks]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -284,7 +324,8 @@ jobs:
         env:
           SHARD_RESULT: ${{ needs.test-shards.result }}
           REPOSITORY_RESULT: ${{ needs.repository-checks.result }}
-        run: ./scripts/ci-test-tools.ps1 -Action Prerequisites -ShardResult $env:SHARD_RESULT -RepositoryResult $env:REPOSITORY_RESULT
+          DEPLOYMENT_RESULT: ${{ needs.deployment-checks.result }}
+        run: ./scripts/ci-test-tools.ps1 -Action Prerequisites -ShardResult $env:SHARD_RESULT -RepositoryResult $env:REPOSITORY_RESULT -DeploymentResult $env:DEPLOYMENT_RESULT
 
       - uses: actions/setup-dotnet@v5
         with:

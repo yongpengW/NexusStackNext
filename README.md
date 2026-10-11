@@ -251,6 +251,8 @@ Auditing 的调查查询经网关和模块权限检查后访问 `/api/auditing/e
 ```
 
 环境变量最高，是为了让容器编排能在不改镜像的前提下覆盖任何一项。
+
+单机四宿主容器样例、独立迁移与边缘端口说明见 [容器入口](deployment/README.md)。私有配置继续留在被忽略的 `env/*.dev`，仅 Gateway 发布宿主端口。
 这条顺序**有测试守着**（`tests/Composition.Tests/ConfigurationPriorityTests.cs`）——
 因为它写错了不会报错，只会静默取到错的值。
 
