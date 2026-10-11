@@ -223,7 +223,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/check-issues.ps1
 
-      - name: 断言模板能生成可构建的工程
+      - name: 断言模板生成工程可构建且格式正确
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -232,10 +232,12 @@ jobs:
           $out  = Join-Path ([System.IO.Path]::GetTempPath()) "nsn-ci-gen-$probeId"
           dotnet new install . --debug:custom-hive $hive
           if ($LASTEXITCODE -ne 0) { throw 'Template installation failed.' }
-          dotnet new nexusstack-next -n CiProbe -o $out --debug:custom-hive $hive
+          dotnet new nexusstack-next -n CiProbe -o $out --debug:custom-hive $hive --allow-scripts yes
           if ($LASTEXITCODE -ne 0) { throw 'Template generation failed.' }
           dotnet build "$out/CiProbe.slnx" --configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Generated project build failed.' }
+          dotnet format "$out/CiProbe.slnx" --verify-no-changes --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'Generated project format failed.' }
 
   build-and-test:
     # Preserve the required check name; always() must never mask an upstream failure.

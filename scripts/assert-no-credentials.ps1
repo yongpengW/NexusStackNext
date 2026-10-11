@@ -22,7 +22,8 @@ dotnet new install $repoRoot --debug:custom-hive $hive | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error '模板安装失败'; exit 1 }
 
 Write-Host '生成探针工程…'
-dotnet new nexusstack-next -n CredentialProbe -o $out --debug:custom-hive $hive | Out-Null
+# 仓库自身的模板后置动作需显式允许，避免自动检查等待交互确认。
+dotnet new nexusstack-next -n CredentialProbe -o $out --debug:custom-hive $hive --allow-scripts yes | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Error '模板生成失败'; exit 1 }
 
 # ---------- 先查一件比"含不含凭据"更硬的事 ----------

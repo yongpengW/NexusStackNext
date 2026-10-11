@@ -282,11 +282,13 @@ Seq 只在配置了 `Serilog:Seq:ServerUrl` 时接入，没有 Seq 也能正常�
 
 ```powershell
 dotnet new install .
-dotnet new nexusstack-next -n MyProject
+dotnet new nexusstack-next -n MyProject --allow-scripts yes
 ```
 
 生成物自带全部规范文件（`AGENTS.md`、`CONTEXT-MAP.md`、`docs/adr/`、`docs/agents/`、每个上下文的 `CONTEXT.md`），
-即"规范随模板走"。
+即"规范随模板走"。创建时先还原依赖，再调用 `dotnet format --no-restore`，
+整理命名空间改名后变化的导入顺序；`--allow-scripts yes` 允许这一创建后动作。
+若选择不执行创建后动作，在生成目录手动运行 `dotnet restore` 和 `dotnet format --no-restore`。
 
 ## 怎么在这个仓库里工作
 
