@@ -17,6 +17,8 @@ Compose 仅发布 Gateway 的 `127.0.0.1:5190`，三个后端只在容器网络�
 
 网关操作日志使用自己的库。数据库与日志各模块默认 PostgreSQL；新库先创建，再由下面的显式 CLI 初始化。数据库用户与权限按环境配置，本样例不创建服务器、不授予生产权限。根账户完成初始化后从文件中移除初始口令，再重建平台容器；账户继续保留。
 
+本样例显式允许同机容器网络中的 Identity 会话 HTTP 调用。使用服务间 HTTPS 的部署应移除 `IdentitySession__AllowUnencryptedHttp` 并配置 HTTPS 地址与证书信任。
+
 需要异步跨服务协作时，在对应私有文件配置 RabbitMQ，并启用 `Costing__Messaging__Enabled` / `Pricing__Messaging__Enabled`；Redis 缓存、Webhook 和服务间成果发布按各模块文档配置。样例没有内置公司地址、默认口令或生产证书。配置中心可以照常使用，应用设置优先级保持环境变量最高。
 
 从仓库根目录执行：

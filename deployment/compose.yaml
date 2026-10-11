@@ -21,6 +21,7 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
       IdentitySession__BaseAddress: http://platform:8080/
+      IdentitySession__AllowUnencryptedHttp: "true"
       AgileConfig__Cache__Directory: /app/agile
 
   pricing:
@@ -32,6 +33,7 @@ services:
     environment:
       DOTNET_ENVIRONMENT: Production
       IdentitySession__BaseAddress: http://platform:8080/
+      IdentitySession__AllowUnencryptedHttp: "true"
       AgileConfig__Cache__Directory: /app/agile
 
   gateway:
@@ -44,6 +46,7 @@ services:
       DOTNET_ENVIRONMENT: Production
       Gateway__RouteTablePath: /config/routes.json
       IdentitySession__BaseAddress: http://platform:8080/
+      IdentitySession__AllowUnencryptedHttp: "true"
       AgileConfig__Cache__Directory: /app/agile
     volumes:
       - ../env/container.routes.dev:/config/routes.json:ro
