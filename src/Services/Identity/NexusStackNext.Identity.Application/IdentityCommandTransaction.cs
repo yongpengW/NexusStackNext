@@ -99,7 +99,7 @@ internal sealed class IdentityCommandHandler<TCommand>(
         catch (CommittedFactCapacityBusyException) { return Result.Failure(CommittedFactCapacityBusyException.Reason); }
         catch (IdentityWriteConflictException) when (command is IExpectedUserVersion) { return Result.Failure(UserLifecycleErrors.Conflict); }
         catch (IdentityWriteConflictException) when (command is ReplaceRoleMenusCommand) { return Result.Failure(AuthorizationManagementErrors.RoleConflict); }
-        catch (IdentityWriteConflictException) when (command is RemoveMenuCommand) { return Result.Failure(MenuLifecycleErrors.Conflict); }
+        catch (IdentityWriteConflictException) when (command is IExpectedMenuTreeVersion) { return Result.Failure(MenuLifecycleErrors.Conflict); }
     }
 }
 

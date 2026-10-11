@@ -615,6 +615,8 @@ public static class IdentityUseCaseServiceCollectionExtensions
         AddCommand<CreateMenuCommand, MenuCreated, CreateMenuHandler>(services);
         AddQuery<GetMenusQuery, MenuTreeView, GetMenusHandler>(services);
         AddCommand<RemoveMenuCommand, RemoveMenuHandler>(services);
+        AddCommand<UpdateMenuCommand, UpdateMenuHandler>(services);
+        AddCommand<MoveMenuCommand, MoveMenuHandler>(services);
 
         // 根账号播种。它是**命令**而不是"启动时的一段内联代码"：
         // 于是它的幂等性、口令哈希、`isBuiltIn` 三件事都能被单独测到，

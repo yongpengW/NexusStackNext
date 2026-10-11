@@ -498,6 +498,22 @@ public static class IdentityModule
                 : responses.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
         }).ProducesApiErrors(415).Produces<ApiResponse<MenuCreated>>(201).RequirePermission("/api/identity/menus", "POST");
 
+        identity.MapPut("/menus/{menuId:long}", async (long menuId, UpdateMenuRequest request,
+            ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new UpdateMenuCommand(menuId, request.ExpectedVersion, request.Title, request.SortOrder), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/menus/{menuId}", "PUT").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.menu.update", "修改菜单标题与排序"));
+
+        identity.MapPost("/menus/{menuId:long}/move", async (long menuId, MoveMenuRequest request,
+            ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new MoveMenuCommand(menuId, request.ExpectedVersion, request.NewParentMenuId), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/menus/{menuId}/move", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.menu.move", "移动菜单及其子树"));
+
         identity.MapPost("/menus/{menuId:long}/remove", async (long menuId, MenuVersionRequest request,
             ISender sender, CancellationToken token) =>
         {
@@ -527,7 +543,7 @@ public static class IdentityModule
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.user.conflict" => StatusCodes.Status409Conflict,
-            "identity.role.conflict" or "identity.menu.conflict" or "identity.menu.has_children" => StatusCodes.Status409Conflict,
+            "identity.role.conflict" or "identity.menu.conflict" or "identity.menu.has_children" or "identity.menu.move_into_own_subtree" or "identity.menu.depth_exceeded" => StatusCodes.Status409Conflict,
             "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
@@ -592,3 +608,5 @@ internal sealed record UserPermissionsResponse(long UserId, IReadOnlyList<string
 internal sealed record AuthorizationResponse(long UserId, string RequiredKey, string Decision, int GrantedCount);
 internal sealed record MenuCollectionResponse(long Version, int Count, IReadOnlyList<MenuView> Items);
 internal sealed record MenuVersionRequest([property: JsonRequired] long ExpectedVersion);
+internal sealed record UpdateMenuRequest([property: JsonRequired] long ExpectedVersion, string Title, int SortOrder);
+internal sealed record MoveMenuRequest([property: JsonRequired] long ExpectedVersion, long? NewParentMenuId);

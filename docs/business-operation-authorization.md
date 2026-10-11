@@ -24,6 +24,8 @@ API 资源 method 区分 GET/POST/PUT，path 与端点模板对应，不能用�
 | 撤回用户角色 | `/api/identity/users/{userId}/roles/{roleId}/revoke:POST` | `{ expectedVersion }`，来自 User |
 | 整体替换角色菜单 | `/api/identity/roles/{roleId}/menus:PUT` | `{ expectedVersion, menuIds }`，来自 Role；空数组撤回全部 |
 | 删除叶菜单 | `/api/identity/menus/{menuId}/remove:POST` | `{ expectedVersion }`，来自菜单树；有子节点或版本冲突返回 409，提交后历史菜单引用不再产生权限 |
+| 修改菜单标题/排序 | `/api/identity/menus/{menuId}:PUT` | `{ expectedVersion, title, sortOrder }`，来自菜单树；相同内容为空操作，旧版本返回 409 |
+| 移动菜单子树 | `/api/identity/menus/{menuId}/move:POST` | `{ expectedVersion, newParentMenuId }`；null 移到根，循环、超深度或版本冲突返回 409 |
 
 成功 204，过期版本 409；缺版本或非法标识 400，引用不存在 404。menuIds 必须提供且最多 256 项，空数组合法，null 非法。
 Int64 输出为字符串；输入接受数字及数字字符串。相同集合或已不存在的角色归属是空操作，版本不变。
@@ -81,7 +83,7 @@ Int64 输出为字符串；输入接受数字及数字字符串。相同集合�
 
 ## 边界与验证
 
-角色/API 启停、菜单更新／删除、角色物理删除尚无管理 HTTP 生命周期，本票不声称已经实现。
+角色/API 启停、角色物理删除尚无管理 HTTP 生命周期，本票不声称已经实现；菜单编辑、移动和叶节点删除已按 MenuTree 版本条件写入。
 如果目录引用未来消失，当前权威链会忽略它；新授予和绑定校验引用存在。对象级可见范围继续属于业务上下文，
 Files 的 Owner 检查独立保留。没有租户权限、权限通配符或并行的权限码体系。
 

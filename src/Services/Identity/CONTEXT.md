@@ -71,7 +71,7 @@ _Avoid_: 权限更新、刷新权限
 _Avoid_: 缓存权限集合、对象所有权、持久允许凭据
 
 角色菜单集合按 Role 的 Version 条件替换；用户角色归属按 User 的 Version 条件撤回，只改变拥有该集合的聚合。
-菜单叶节点按 MenuTree 的 Version 条件删除；删除不会跨聚合清理 Role 或 ApiResource 历史引用，权威权限投影会排除已不存在的菜单。
+菜单节点的标题/排序编辑、子树移动和叶节点删除都按 MenuTree 的 Version 条件写入；移动只重写树内路径，不改变菜单标识或角色授予关系。删除不会跨聚合清理 Role 或 ApiResource 历史引用，权威权限投影会排除已不存在的菜单。
 行为及目录生命周期的后续范围见[ADR-0028](../../../docs/adr/0028-current-operation-authority.md)。
 
 **FactCapacityPolicy**:
