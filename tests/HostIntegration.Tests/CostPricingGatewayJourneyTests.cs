@@ -13,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using NexusStackNext.Auditing.Contracts;
 using NexusStackNext.BuildingBlocks.Application.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
@@ -36,6 +37,7 @@ public sealed class CostPricingGatewayJourneyTests
         await using var costs = await IdentityJourneyDatabase.CreateAsync();
         await using var prices = await IdentityJourneyDatabase.CreateAsync();
         await identity.MigrateThroughCliAsync();
+        await TaskOperationJourneyTests.MigrateJournalAsync(typeof(GatewayHostMarker).Assembly.Location, identity.ConnectionString);
         await MigrateBusinessAsync(typeof(CostingHostMarker).Assembly.Location, "Costing", costs.ConnectionString);
         await MigrateBusinessAsync(typeof(PricingHostMarker).Assembly.Location, "Pricing", prices.ConnectionString);
 
@@ -44,11 +46,13 @@ public sealed class CostPricingGatewayJourneyTests
         var costSubscription = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-pricing" };
         var tap = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-tap" };
         var facts = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-facts" };
+        var operations = new EventSubscription { EventName = OperationObservedV1.Name, ConsumerName = prefix + "-operations" };
         var webhook = new EventSubscription { EventName = PricingRecalculationCompletedV1.Name, ConsumerName = "pricing-webhook" };
-        var topology = EventTopology.Create(broker.ExchangeName, [costSubscription, tap, facts, webhook]);
+        var topology = EventTopology.Create(broker.ExchangeName, [costSubscription, tap, facts, operations, webhook]);
         var redis = Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_REDIS")!;
         await using var cacheProxy = new RedisFaultProxy(redis);
         var settings = AuditBusinessJourneyTests.Settings(broker, facts.ConsumerName);
+        settings["Auditing__Messaging__OperationConsumerName"] = operations.ConsumerName;
         settings["Jwt__SigningKey"] = BusinessProcess.SigningKey;
         PlatformHostProcess? platform = null;
         platform = await PlatformHostProcess.StartAsync(identity.ConnectionString, "chain-root-password", settings: settings);
@@ -82,12 +86,14 @@ public sealed class CostPricingGatewayJourneyTests
         priceSettings["Pricing__Webhook__Endpoint"] = new Uri(receiver.Address, "/webhooks/pricing").AbsoluteUri;
         var gatewaySettings = new Dictionary<string, string>(settings, StringComparer.Ordinal)
         {
-            ["OperationJournal__Storage__Provider"] = "Memory",
+            ["OperationJournal__Storage__Provider"] = "Postgres",
+            ["ConnectionStrings__OperationJournal"] = identity.ConnectionString,
             ["Gateway__RateLimit__PermitLimit"] = "1000",
         };
         var batchId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
         var traceId = Guid.NewGuid().ToString("N");
+        long operatorId = 0;
         var input = new
         {
             batchRequestId = batchId,
@@ -122,6 +128,7 @@ public sealed class CostPricingGatewayJourneyTests
                 using var user = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
                 await PlatformSettingsAccessTests.LoginAsync(root, "journey-root", "chain-root-password");
                 var registered = await CreateAsync(user, "/api/identity/users", new { userName = "cost-operator", password = "cost-operator-password" });
+                operatorId = registered.GetProperty("userId").ReadHttpInt64();
                 await PlatformSettingsAccessTests.LoginAsync(user, "cost-operator", "cost-operator-password");
                 await AssertDeniedAsync(gateway.Client, batchId, HttpStatusCode.Unauthorized);
                 await AssertDeniedAsync(user, batchId, HttpStatusCode.Forbidden);
@@ -213,6 +220,10 @@ public sealed class CostPricingGatewayJourneyTests
             Assert.Equal(quote.GetProperty("version").GetString(), finalQuote.GetProperty("version").GetString());
             var audit = await WaitDataAsync(finalGateway.Client, $"/api/auditing/entries?source=pricing&subjectId={itemId:D}", data => data.GetArrayLength() >= 3);
             Assert.Contains(audit.EnumerateArray(), entry => entry.GetProperty("fact").GetProperty("action").GetString() == "pricing.price-quote.result-applied");
+            var operationsObserved = await WaitDataAsync(finalGateway.Client, "/api/auditing/operations?correlationId=cost-pricing-chain", data => data.GetArrayLength() >= 2);
+            var gatewayOperation = Assert.Single(operationsObserved.EnumerateArray(), operation => operation.GetProperty("source").GetString() == "gateway");
+            Assert.Contains(operationsObserved.EnumerateArray(), operation => operation.GetProperty("source").GetString() == "costing");
+            Assert.Equal(operatorId.ToString(System.Globalization.CultureInfo.InvariantCulture), gatewayOperation.GetProperty("actorId").GetString());
         }
         finally
         {
