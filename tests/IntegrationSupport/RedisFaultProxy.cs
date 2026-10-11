@@ -3,11 +3,13 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using StackExchange.Redis;
+using Xunit;
 
-namespace NexusStackNext.Pricing.IntegrationTests;
+namespace NexusStackNext.IntegrationSupport;
 
 // 只在测试 Redis 的 TCP 缝上控制断线/迟到请求；所有命令仍由真实 Redis 执行。
-internal sealed class RedisFaultProxy : IAsyncDisposable
+/// <summary>真实 Redis 的 TCP 故障与迟到填充控制；不记录协议载荷。</summary>
+public sealed class RedisFaultProxy : IAsyncDisposable
 {
     private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
     private readonly CancellationTokenSource _stop = new();
@@ -20,6 +22,8 @@ internal sealed class RedisFaultProxy : IAsyncDisposable
     private int _pauseFill;
     private volatile bool _offline;
 
+    /// <summary>启动只供测试使用的本机代理。</summary>
+    /// <param name="connectionString">测试 Redis 配置，不回显。</param>
     public RedisFaultProxy(string connectionString)
     {
         var options = ConfigurationOptions.Parse(connectionString);
@@ -32,10 +36,17 @@ internal sealed class RedisFaultProxy : IAsyncDisposable
         _accept = AcceptAsync();
     }
 
+    /// <summary>只传给测试宿主的代理连接配置。</summary>
     public string ConnectionString { get; }
+    /// <summary>暂停下一次填充请求。</summary>
     public void PauseNextFill() => Interlocked.Exchange(ref _pauseFill, 1);
+    /// <summary>等待真实填充进入暂停点。</summary>
+    /// <returns>有界暂停确认。</returns>
     public Task WaitForPausedFillAsync() => _fillPaused.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    /// <summary>释放暂停的填充请求。</summary>
     public void ReleaseFill() => _releaseFill.TrySetResult();
+    /// <summary>切换故障状态，断开本代理的连接。</summary>
+    /// <param name="offline">是否拒绝连接。</param>
     public void SetOffline(bool offline)
     {
         _offline = offline;
@@ -127,6 +138,7 @@ internal sealed class RedisFaultProxy : IAsyncDisposable
         return null;
     }
 
+    /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
         await _stop.CancelAsync();

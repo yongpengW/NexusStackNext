@@ -492,6 +492,19 @@ namespace NexusStackNext.Costing.Infrastructure.Migrations
                     b.ToTable("tasks", "costing");
                 });
 
+            modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostSheetCacheInvalidation", b =>
+                {
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Version")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("ItemId", "Version");
+
+                    b.ToTable("cache_invalidations", "costing");
+                });
+
             modelBuilder.Entity("NexusStackNext.Costing.Infrastructure.CostingAuditRecoveryControl", b =>
                 {
                     b.Property<int>("Id")

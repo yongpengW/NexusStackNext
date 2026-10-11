@@ -31,13 +31,25 @@ public static class CostingServices
     public static IServiceCollection AddCostingFactCleanup(this IServiceCollection services, CommittedFactCleanupOptions? options = null)
         => services.AddCommittedFactCleanup<CostingDbContext>("costing", NexusStackNext.Costing.Contracts.CostSheetCommittedV1.Name, options);
 
+    /// <summary>显式启动展示缓存失效投递器；权威读取不依赖后台工作。</summary>
+    /// <param name="services">容器。</param>
+    /// <returns>原容器。</returns>
+    public static IServiceCollection AddCostingCacheInvalidationWorker(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.AddHostedService<CostingCacheInvalidationWorker>();
+        return services;
+    }
+
     /// <summary>注册持久化成本核算模块。</summary>
     /// <param name="services">容器。</param>
     /// <param name="connectionString">所属数据库的连接配置。</param>
     /// <param name="options">有界执行策略。</param>
     /// <param name="batchOptions">本上下文批次读取与短事务策略。</param>
+    /// <param name="cacheOptions">展示查询缓存与回源预算。</param>
     /// <returns>容器。</returns>
-    public static IServiceCollection AddCostingPostgres(this IServiceCollection services, string connectionString, CostingTaskOptions? options = null, CostingBatchOptions? batchOptions = null)
+    public static IServiceCollection AddCostingPostgres(this IServiceCollection services, string connectionString, CostingTaskOptions? options = null,
+        CostingBatchOptions? batchOptions = null, CostingCacheOptions? cacheOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -47,6 +59,11 @@ public static class CostingServices
         var batchPolicy = batchOptions ?? new CostingBatchOptions();
         batchPolicy.Validate();
         services.AddSingleton(batchPolicy);
+        var cache = cacheOptions ?? new CostingCacheOptions();
+        cache.Validate();
+        services.AddSingleton(cache);
+        services.AddSingleton<CostingQueryBudget>();
+        services.AddSingleton<CostingRedisCache>();
         services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
         services.AddScoped<CostingCommittedFactInterceptor>();
         services.AddScoped(provider => CostingDatabase.CreateContext(connectionString, provider));
@@ -58,6 +75,7 @@ public static class CostingServices
         services.AddScoped<IQueryHandler<GetCostCalculation, CostCalculationStatus>, CostingCommands>();
         services.AddScoped<IQueryHandler<ListCostCalculations, CostCalculationPage>, CostingTaskQueries>();
         services.AddScoped<IQueryHandler<GetCostSheet, CostSheetView>, CostingCommands>();
+        services.AddScoped<IQueryHandler<GetCostSheetDisplay, CostSheetView>, CostingDisplayQueries>();
         services.AddScoped<ICommandHandler<AcceptCostBatch, CostBatchStatus>, CostBatchAcceptance>();
         services.AddScoped<IQueryHandler<GetCostBatch, CostBatchStatus>, CostBatchAcceptance>();
         services.AddScoped<IQueryHandler<ListCostBatchRows, CostBatchRowPage>, CostBatchAcceptance>();

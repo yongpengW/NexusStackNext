@@ -42,8 +42,10 @@ public static class CostingModule
         if (string.IsNullOrWhiteSpace(connection)) { throw new InvalidOperationException("必须配置 ConnectionStrings:Costing，使用独立业务数据库。"); }
         var capacityWrite = configuration.GetSection("Costing:AuditDelivery:CapacityWrite").Get<CommittedFactCapacityWriteOptions>() ?? new();
         connection = capacityWrite.ConfigureConnection(connection);
+        var cache = configuration.GetSection("Costing:Cache").Get<CostingCacheOptions>() ?? new CostingCacheOptions();
         services.AddCostingPostgres(connection, configuration.GetSection("Costing:Tasks").Get<CostingTaskOptions>(),
-            configuration.GetSection("Costing:Batches").Get<CostingBatchOptions>());
+            configuration.GetSection("Costing:Batches").Get<CostingBatchOptions>(), cache);
+        if (cache.Enabled) { services.AddCostingCacheInvalidationWorker(); }
         var capacityRead = configuration.GetSection("Costing:AuditDelivery:CapacityRead").Get<CommittedFactCapacityReadOptions>() ?? new();
         capacityRead.Validate();
         services.AddCostingFactCapacityReader(capacityRead);
@@ -231,6 +233,11 @@ public static class CostingModule
             var result = await sender.QueryAsync(new GetCostSheet(itemId), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).RequirePermission("/api/costing/items/{itemId}", "GET").Produces<ApiResponse<CostSheetView>>();
+        group.MapGet("/items/{itemId:guid}/display", async (Guid itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetCostSheetDisplay(itemId), token).ConfigureAwait(false);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/costing/items/{itemId}/display", "GET").Produces<ApiResponse<CostSheetView>>();
         group.MapGet("/tasks", async (int? page, int? limit, string? state, Guid? itemId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var query = new ListCostCalculations(page ?? 1, limit ?? 50, state, itemId);
@@ -263,7 +270,7 @@ public static class CostingModule
         statusCode: error.Code switch
         {
             "costing.batch.not_found" or "costing.not_found" or "costing.delivery_not_found" or "costing.delivery_recovery.not_found" => StatusCodes.Status404NotFound,
-            "costing.delivery_recovery.exhausted" or "costing.audit_policy.control_exhausted" or "costing.audit_capacity_exhausted" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
+            "costing.delivery_recovery.exhausted" or "costing.audit_policy.control_exhausted" or "costing.audit_capacity_exhausted" or "costing.query_busy" or "costing.query_timeout" or "audit_capacity.unavailable" or "audit_capacity.busy" => StatusCodes.Status503ServiceUnavailable,
             "costing.batch.retry_conflict" or "costing.batch.cancel_conflict" or "costing.batch.request_conflict" or "costing.delivery_recovery.request_conflict" or "costing.audit_policy.conflict" or "costing.request_conflict" or "costing.version_conflict" or "costing.retry_conflict" or "costing.delivery_conflict" or "costing.cancel_conflict" => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });

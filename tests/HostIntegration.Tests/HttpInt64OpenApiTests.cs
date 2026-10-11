@@ -22,12 +22,14 @@ public sealed class HttpInt64OpenApiTests
         {
             var source = await client.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
             AssertEndpointSchemas(source, path, versionedWrite);
+            if (path == "/api/costing/items/{itemId}") { AssertReadSchema(source, "/api/costing/items/{itemId}/display"); }
         }
         var own = await gateway.GetFromJsonAsync<JsonElement>(new Uri("/openapi/gateway.json", UriKind.Relative));
         AssertSchemasAndReferences(own);
         var aggregate = await gateway.GetFromJsonAsync<JsonElement>(new Uri("/openapi/v1.json", UriKind.Relative));
         AssertEndpointSchemas(aggregate, "/api/scheduling/tasks", "/api/scheduling/tasks/{id}/pause");
         AssertEndpointSchemas(aggregate, "/api/costing/items/{itemId}", "/api/costing/cost");
+        AssertReadSchema(aggregate, "/api/costing/items/{itemId}/display");
         AssertEndpointSchemas(aggregate, "/api/pricing/items/{itemId}", "/api/pricing/fee");
         AssertOutput(aggregate.GetProperty("components").GetProperty("schemas").GetProperty("EdgeProblem")
             .GetProperty("properties").GetProperty("timestamp"), nullable: false);
@@ -52,6 +54,16 @@ public sealed class HttpInt64OpenApiTests
         var input = Resolve(document, paths.GetProperty(writePath).GetProperty("post").GetProperty("requestBody")
             .GetProperty("content").GetProperty("application/json").GetProperty("schema"));
         AssertInput(input.GetProperty("properties").GetProperty("expectedVersion"), nullable: false);
+    }
+
+    private static void AssertReadSchema(JsonElement document, string readPath)
+    {
+        var paths = document.GetProperty("paths");
+        var response = Resolve(document, paths.GetProperty(readPath).GetProperty("get").GetProperty("responses")
+            .GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema"));
+        AssertOutput(response.GetProperty("properties").GetProperty("timestamp"), nullable: false);
+        var data = Resolve(document, response.GetProperty("properties").GetProperty("data"));
+        AssertOutput(data.GetProperty("properties").GetProperty("version"), nullable: false);
     }
 
     private static void AssertSchemasAndReferences(JsonElement document)

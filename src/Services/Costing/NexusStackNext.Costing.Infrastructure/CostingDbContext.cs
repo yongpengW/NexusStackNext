@@ -18,6 +18,18 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
     public DbSet<CostBatchEntry> Batches => Set<CostBatchEntry>();
     public DbSet<CostBatchRowEntry> BatchRows => Set<CostBatchRowEntry>();
     public DbSet<CostBatchAttemptEntry> BatchAttempts => Set<CostBatchAttemptEntry>();
+    public DbSet<CostSheetCacheInvalidation> CacheInvalidations => Set<CostSheetCacheInvalidation>();
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<CostSheet>().Where(x => x.State is EntityState.Added or EntityState.Modified).ToArray())
+        {
+            if (!CacheInvalidations.Local.Any(x => x.ItemId == entry.Entity.Id.Value && x.Version == entry.Entity.Version))
+            { CacheInvalidations.Add(new CostSheetCacheInvalidation { ItemId = entry.Entity.Id.Value, Version = entry.Entity.Version }); }
+        }
+        return base.SaveChangesAsync(cancellationToken);
+    }
 
     protected override void ConfigureModel(ModelBuilder modelBuilder)
     {
@@ -27,6 +39,9 @@ internal sealed class CostingDbContext(DbContextOptions<CostingDbContext> option
         modelBuilder.ConfigureFactCapacityPolicy();
         modelBuilder.ConfigureCostingAuditRecovery();
         modelBuilder.ConfigureCostBatches();
+        var invalidation = modelBuilder.Entity<CostSheetCacheInvalidation>();
+        invalidation.ToTable("cache_invalidations");
+        invalidation.HasKey(x => new { x.ItemId, x.Version });
         var sheet = modelBuilder.Entity<CostSheet>();
         sheet.ToTable("sheets");
         sheet.HasKey(x => x.Id);
@@ -101,6 +116,12 @@ internal sealed class ScheduledCostReceiptEntry
     public ScheduledCostReceipt ToView() => new(OccurrenceId, PlanId, TriggerSequence, ItemId, CreatedBy, Decision, TaskId, ErrorCode, ReceivedAt);
 }
 
+internal sealed class CostSheetCacheInvalidation
+{
+    public Guid ItemId { get; set; }
+    public long Version { get; set; }
+}
+
 /// <summary>迁移工具的显式入口，只从环境读取连接配置。</summary>
 internal sealed class CostingDbContextFactory : IDesignTimeDbContextFactory<CostingDbContext>
 {
@@ -156,6 +177,7 @@ public static class CostingDatabase
             _ = await context.Batches.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.BatchRows.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
             _ = await context.BatchAttempts.AsNoTracking().Take(1).ToArrayAsync(timeout.Token).ConfigureAwait(false);
+            _ = await context.CacheInvalidations.AnyAsync(timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception error) when (error is System.Data.Common.DbException or OperationCanceledException or ArgumentException)

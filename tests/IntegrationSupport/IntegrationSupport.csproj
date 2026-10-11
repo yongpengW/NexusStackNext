@@ -25,6 +25,7 @@
     -->
     <PackageReference Include="xunit" />
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
 </Project>
