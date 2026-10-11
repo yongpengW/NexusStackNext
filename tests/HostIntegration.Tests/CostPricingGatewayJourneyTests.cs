@@ -132,7 +132,7 @@ public sealed class CostPricingGatewayJourneyTests
                 await PlatformSettingsAccessTests.LoginAsync(user, "cost-operator", "cost-operator-password");
                 await AssertDeniedAsync(gateway.Client, batchId, HttpStatusCode.Unauthorized);
                 await AssertDeniedAsync(user, batchId, HttpStatusCode.Forbidden);
-                await GrantOperatorAsync(root, registered.GetProperty("userId").ReadHttpInt64());
+                await GrantOperatorAsync(root, operatorId);
                 using var request = new HttpRequestMessage(HttpMethod.Post, Relative("/api/costing/batches")) { Content = JsonContent.Create(input) };
                 request.Headers.Add("traceparent", $"00-{traceId}-1234567890abcdef-01");
                 request.Headers.Add("X-Correlation-Id", "cost-pricing-chain");
@@ -209,6 +209,13 @@ public sealed class CostPricingGatewayJourneyTests
             var retained = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", _ => true);
             Assert.Equal("DeadLettered", retained.GetProperty("state").GetString());
             var attemptsBeforeRetry = retained.GetProperty("attemptCount").GetInt32();
+            using var anonymousClient = new HttpClient { BaseAddress = finalGateway.Client.BaseAddress };
+            using (var anonymousRetry = await anonymousClient.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry }))
+            { Assert.Equal(HttpStatusCode.Unauthorized, anonymousRetry.StatusCode); }
+            using var deniedOperator = new HttpClient { BaseAddress = finalGateway.Client.BaseAddress };
+            await PlatformSettingsAccessTests.LoginAsync(deniedOperator, "cost-operator", "cost-operator-password");
+            using (var deniedRetry = await deniedOperator.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry }))
+            { Assert.Equal(HttpStatusCode.Forbidden, deniedRetry.StatusCode); }
             using var retried = await finalGateway.Client.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry });
             Assert.Equal(HttpStatusCode.Accepted, retried.StatusCode);
             var delivered = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", data => data.GetProperty("state").GetString() == "Succeeded");
@@ -224,6 +231,22 @@ public sealed class CostPricingGatewayJourneyTests
             var gatewayOperation = Assert.Single(operationsObserved.EnumerateArray(), operation => operation.GetProperty("source").GetString() == "gateway");
             Assert.Contains(operationsObserved.EnumerateArray(), operation => operation.GetProperty("source").GetString() == "costing");
             Assert.Equal(operatorId.ToString(System.Globalization.CultureInfo.InvariantCulture), gatewayOperation.GetProperty("actorId").GetString());
+
+            // Both caches contain 100. A committed change while Redis is offline must invalidate that old value after recovery.
+            cacheProxy.SetOffline(true);
+            var changedBatchId = Guid.NewGuid();
+            using var changedBatch = await operatorClient.PostAsJsonAsync(Relative("/api/costing/batches"), new
+            {
+                batchRequestId = changedBatchId,
+                rows = new[] { new { sourceRow = 1, itemId, expectedVersion = cost.GetProperty("version").GetString(), purchaseCost = 105m, freightCost = 20m } },
+            });
+            Assert.Equal(HttpStatusCode.Accepted, changedBatch.StatusCode);
+            await WaitDataAsync(operatorClient, $"/api/costing/batches/{changedBatchId}", data => data.GetProperty("state").GetString() == "Completed");
+            await WaitDataAsync(operatorClient, $"/api/costing/items/{itemId}/display", data => data.GetProperty("unitCost").ValueKind == JsonValueKind.Number && data.GetProperty("unitCost").GetDecimal() == 125m);
+            await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", data => data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 125m);
+            cacheProxy.SetOffline(false);
+            await WaitCacheAsync(operatorClient, cache, $"/api/costing/items/{itemId}/display", $"{settings["Costing__Cache__Namespace"]}:costing:sheet:v1:{itemId:N}", "UnitCost", 125m);
+            await WaitCacheAsync(finalGateway.Client, cache, $"/api/pricing/items/{itemId}", $"{settings["Pricing__Cache__Namespace"]}:pricing:quote:v2:{itemId:N}", "BreakEvenPrice", 125m);
         }
         finally
         {
