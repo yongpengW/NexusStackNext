@@ -112,6 +112,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["POST /api/pricing/exports/{exportId:guid}/retry"] = nameof(PricingExportJourneyTests) + "；技术生命周期例外：恢复原委托，不伪造新报价提交。",
             ["POST /api/pricing/tasks/{taskId:guid}/cancel"] = TaskLifecycle,
             ["POST /api/pricing/tasks/{taskId:guid}/retry"] = TaskLifecycle,
+            ["POST /api/pricing/webhooks/{eventId:guid}/retry"] = RecoveryLifecycle,
             ["POST /api/pricing/audit-deliveries/{messageId:guid}/retry"] = RecoveryLifecycle,
             ["PUT /api/pricing/audit-capacity"] = PolicyChanges,
         },
