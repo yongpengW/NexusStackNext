@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -9,6 +10,87 @@ namespace NexusStackNext.HostIntegration.Tests;
 
 public sealed class IdentityResourceAuthorizationTests
 {
+    [Fact]
+    public async Task MenuEditor_ChangesContentConditionally_WithoutChangingPermissionOrNoOpVersion()
+    {
+        await using var app = new PlatformAppWithRootAccount();
+        using var root = app.CreateClient();
+        using var editor = app.CreateClient();
+        using var anonymous = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        var (menuId, userId) = await CreateMenuReaderAsync(root, editor);
+        var before = await ReadMenusAsync(root);
+        var version = before.GetProperty("version").ReadHttpInt64();
+        var path = Relative($"/api/identity/menus/{menuId}");
+        var edit = new { title = "Renamed", sortOrder = 7, expectedVersion = version };
+        using (var unauthenticated = await anonymous.PutAsJsonAsync(path, edit))
+        { Assert.Equal(HttpStatusCode.Unauthorized, unauthenticated.StatusCode); }
+        using (var forbidden = await editor.PutAsJsonAsync(path, edit))
+        { Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode); }
+
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus/{menuId}", method = "PUT", menuId });
+        var permissions = await ReadPermissionsAsync(root, userId);
+        using (var changed = await editor.PutAsJsonAsync(path, edit))
+        { Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode); }
+        var current = await ReadMenusAsync(editor);
+        Assert.Equal(version + 1, current.GetProperty("version").ReadHttpInt64());
+        var node = Assert.Single(current.GetProperty("items").EnumerateArray());
+        Assert.Equal(menuId, node.GetProperty("menuId").GetString());
+        Assert.Equal("Renamed", node.GetProperty("title").GetString());
+        Assert.Equal(7, node.GetProperty("sortOrder").GetInt32());
+        using (var stale = await editor.PutAsJsonAsync(path, edit))
+        { Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode); }
+        using (var noOp = await editor.PutAsJsonAsync(path, new { title = "Renamed", sortOrder = 7, expectedVersion = version + 1 }))
+        { Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode); }
+        using (var invalid = await editor.PutAsJsonAsync(path, new { title = " ", sortOrder = 7, expectedVersion = version + 1 }))
+        { Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode); }
+        using (var invalidVersion = await editor.PutAsJsonAsync(path, new { title = "Renamed", sortOrder = 7, expectedVersion = 0 }))
+        { Assert.Equal(HttpStatusCode.BadRequest, invalidVersion.StatusCode); }
+        using (var missing = await root.PutAsJsonAsync(Relative("/api/identity/menus/1"), edit))
+        { Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode); }
+        Assert.Equal(current.GetRawText(), (await ReadMenusAsync(editor)).GetRawText());
+        Assert.Equal(permissions, await ReadPermissionsAsync(root, userId));
+    }
+
+    [Fact]
+    public async Task MenuMover_RebasesTheWholeSubtree_AndRejectsCyclesAndStaleVersions()
+    {
+        await using var app = new PlatformAppWithRootAccount();
+        using var root = app.CreateClient();
+        await PlatformSettingsAccessTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        var first = await CreateAsync(root, "/api/identity/menus", new { title = "First", sortOrder = 1 });
+        var firstId = first.GetProperty("menuId").GetString()!;
+        var second = await CreateAsync(root, "/api/identity/menus", new { title = "Second", sortOrder = 2 });
+        var secondId = second.GetProperty("menuId").GetString()!;
+        var child = await CreateAsync(root, "/api/identity/menus", new { title = "Child", sortOrder = 1, parentMenuId = long.Parse(firstId, CultureInfo.InvariantCulture) });
+        var childId = child.GetProperty("menuId").GetString()!;
+        var grandchild = await CreateAsync(root, "/api/identity/menus", new { title = "Grandchild", sortOrder = 1, parentMenuId = long.Parse(childId, CultureInfo.InvariantCulture) });
+        var grandchildId = grandchild.GetProperty("menuId").GetString()!;
+        var before = await ReadMenusAsync(root);
+        var version = before.GetProperty("version").ReadHttpInt64();
+        var movePath = Relative($"/api/identity/menus/{childId}/move");
+        using (var moved = await root.PostAsJsonAsync(movePath, new { expectedVersion = version, newParentMenuId = long.Parse(secondId, CultureInfo.InvariantCulture) }))
+        { Assert.Equal(HttpStatusCode.NoContent, moved.StatusCode); }
+        var after = await ReadMenusAsync(root);
+        var movedChild = Assert.Single(after.GetProperty("items").EnumerateArray(), item => item.GetProperty("menuId").GetString() == childId);
+        var movedGrandchild = Assert.Single(after.GetProperty("items").EnumerateArray(), item => item.GetProperty("menuId").GetString() == grandchildId);
+        Assert.Equal(secondId, movedChild.GetProperty("parentMenuId").GetString());
+        Assert.Equal($"/{secondId}/{childId}/", movedChild.GetProperty("path").GetString());
+        Assert.Equal(childId, movedGrandchild.GetProperty("parentMenuId").GetString());
+        Assert.Equal($"/{secondId}/{childId}/{grandchildId}/", movedGrandchild.GetProperty("path").GetString());
+        var movedVersion = after.GetProperty("version").ReadHttpInt64();
+        using (var noOp = await root.PostAsJsonAsync(movePath, new { expectedVersion = movedVersion, newParentMenuId = long.Parse(secondId, CultureInfo.InvariantCulture) }))
+        { Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode); }
+        Assert.Equal(movedVersion, (await ReadMenusAsync(root)).GetProperty("version").ReadHttpInt64());
+        using (var cycle = await root.PostAsJsonAsync(movePath, new { expectedVersion = movedVersion, newParentMenuId = long.Parse(grandchildId, CultureInfo.InvariantCulture) }))
+        { Assert.Equal(HttpStatusCode.Conflict, cycle.StatusCode); }
+        using (var missingParent = await root.PostAsJsonAsync(movePath, new { expectedVersion = movedVersion, newParentMenuId = 999999L }))
+        { Assert.Equal(HttpStatusCode.NotFound, missingParent.StatusCode); }
+        using (var stale = await root.PostAsJsonAsync(movePath, new { expectedVersion = version, newParentMenuId = (long?)null }))
+        { Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode); }
+        Assert.Equal(movedVersion, (await ReadMenusAsync(root)).GetProperty("version").ReadHttpInt64());
+    }
+
     [Fact]
     public async Task MenuReader_CannotAttachAnUnregisteredManagementPermissionToTheirMenu()
     {
@@ -181,6 +263,45 @@ public sealed class IdentityResourceAuthorizationTests
         finally { File.Delete(routes); }
     }
 
+    [PostgresFact]
+    public async Task Gateway_UpdatesAndMovesMenusWithTheObservedTreeVersion()
+    {
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateThroughCliAsync();
+        var routes = Path.Combine(Path.GetTempPath(), $"nsn-identity-menu-edit-routes-{Guid.NewGuid():N}.json");
+        var settings = new Dictionary<string, string> { ["Jwt__SigningKey"] = BusinessProcess.SigningKey };
+        try
+        {
+            await using var platform = await PlatformHostProcess.StartAsync(database.ConnectionString, "menu-edit-gateway-password", settings: settings);
+            await WritePlatformRoutesAsync(routes, platform.Client.BaseAddress!);
+            await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
+            using var root = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            await PlatformSettingsAccessTests.LoginAsync(root, "journey-root", "menu-edit-gateway-password");
+            var first = await CreateAsync(root, "/api/identity/menus", new { title = "First", sortOrder = 1 });
+            var firstId = first.GetProperty("menuId").ReadHttpInt64();
+            var second = await CreateAsync(root, "/api/identity/menus", new { title = "Second", sortOrder = 2 });
+            var secondId = second.GetProperty("menuId").ReadHttpInt64();
+            var child = await CreateAsync(root, "/api/identity/menus", new { title = "Child", sortOrder = 1, parentMenuId = firstId });
+            var childId = child.GetProperty("menuId").ReadHttpInt64();
+            var before = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+            var version = before.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using (var updated = await root.PutAsJsonAsync(Relative($"/api/identity/menus/{childId}"),
+                new { title = "Gateway child", sortOrder = 9, expectedVersion = version }))
+            { Assert.Equal(HttpStatusCode.NoContent, updated.StatusCode); }
+            var afterUpdate = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+            version = afterUpdate.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using (var moved = await root.PostAsJsonAsync(Relative($"/api/identity/menus/{childId}/move"),
+                new { expectedVersion = version, newParentMenuId = secondId }))
+            { Assert.Equal(HttpStatusCode.NoContent, moved.StatusCode); }
+            var afterMove = await root.GetFromJsonAsync<JsonElement>(Relative("/api/identity/menus"));
+            var movedChild = Assert.Single(afterMove.GetProperty("data").GetProperty("items").EnumerateArray(), item => item.GetProperty("menuId").ReadHttpInt64() == childId);
+            Assert.Equal(secondId, movedChild.GetProperty("parentMenuId").ReadHttpInt64());
+            Assert.Equal("Gateway child", movedChild.GetProperty("title").GetString());
+            Assert.Equal(9, movedChild.GetProperty("sortOrder").GetInt32());
+        }
+        finally { File.Delete(routes); }
+    }
+
     private static async Task WritePlatformRoutesAsync(string path, Uri platform)
     {
         var table = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.json")))!;
@@ -234,6 +355,13 @@ public sealed class IdentityResourceAuthorizationTests
     {
         using var response = await client.PostAsJsonAsync(Relative(path), payload);
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return await response.Content.ReadApiDataAsync();
+    }
+
+    private static async Task<JsonElement> ReadMenusAsync(HttpClient client)
+    {
+        using var response = await client.GetAsync(Relative("/api/identity/menus"));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return await response.Content.ReadApiDataAsync();
     }
 

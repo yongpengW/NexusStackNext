@@ -209,6 +209,53 @@ public sealed class IdentityPersistenceJourneyTests(JourneyDatabaseTemplates dat
         }
     }
 
+    [PostgresFact]
+    public async Task EditedAndMovedMenu_SubtreePersistsAcrossRestart()
+    {
+        await using var database = await databases.CreateAsync();
+        long childId;
+        long secondId;
+        long grandchildId;
+        await using (var app = new PersistentIdentityApp(database.ConnectionString, "menu-edit-root-password"))
+        {
+            using var root = app.CreateClient();
+            await AuthenticateAsync(root, "journey-root", "menu-edit-root-password");
+            var first = await CreateAsync(root, "/api/identity/menus", new { title = "First", sortOrder = 1 });
+            var firstId = first.GetProperty("menuId").ReadHttpInt64();
+            var second = await CreateAsync(root, "/api/identity/menus", new { title = "Second", sortOrder = 2 });
+            secondId = second.GetProperty("menuId").ReadHttpInt64();
+            var child = await CreateAsync(root, "/api/identity/menus", new { title = "Child", sortOrder = 1, parentMenuId = firstId });
+            childId = child.GetProperty("menuId").ReadHttpInt64();
+            var grandchild = await CreateAsync(root, "/api/identity/menus", new { title = "Grandchild", sortOrder = 1, parentMenuId = childId });
+            grandchildId = grandchild.GetProperty("menuId").ReadHttpInt64();
+            var before = await root.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
+            var version = before.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using (var updated = await root.PutAsJsonAsync(new Uri($"/api/identity/menus/{childId}", UriKind.Relative),
+                new { title = "Renamed child", sortOrder = 8, expectedVersion = version }))
+            { Assert.Equal(HttpStatusCode.NoContent, updated.StatusCode); }
+            var afterUpdate = await root.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
+            version = afterUpdate.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using (var moved = await root.PostAsJsonAsync(new Uri($"/api/identity/menus/{childId}/move", UriKind.Relative),
+                new { expectedVersion = version, newParentMenuId = secondId }))
+            { Assert.Equal(HttpStatusCode.NoContent, moved.StatusCode); }
+        }
+
+        await using (var restarted = new PersistentIdentityApp(database.ConnectionString, "menu-edit-root-password"))
+        {
+            using var root = restarted.CreateClient();
+            await AuthenticateAsync(root, "journey-root", "menu-edit-root-password");
+            var menus = await root.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
+            var items = menus.GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
+            var child = Assert.Single(items, item => item.GetProperty("menuId").ReadHttpInt64() == childId);
+            var grandchild = Assert.Single(items, item => item.GetProperty("menuId").ReadHttpInt64() == grandchildId);
+            Assert.Equal(secondId, child.GetProperty("parentMenuId").ReadHttpInt64());
+            Assert.Equal("Renamed child", child.GetProperty("title").GetString());
+            Assert.Equal(8, child.GetProperty("sortOrder").GetInt32());
+            Assert.Equal($"/{secondId}/{childId}/", child.GetProperty("path").GetString());
+            Assert.Equal($"/{secondId}/{childId}/{grandchildId}/", grandchild.GetProperty("path").GetString());
+        }
+    }
+
     private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
     {
         using var response = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), payload);
