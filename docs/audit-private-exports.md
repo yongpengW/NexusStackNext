@@ -55,3 +55,11 @@ PlatformHost 默认 `Auditing:Exports:Enabled=false`；需要 Auditing PostgreSQ
 先执行 PlatformHost 的 `migrate-auditing` 独立迁移，普通宿主启动不迁移。增量 PrivateInvestigationExports 新增本上下文 exports 表，保留既有事实、观察、指纹及 Inbox，不重置已合并迁移。存在任何导出历史时拒绝 Down（auditing_exports_history_retained），检查与删除在同一排他锁事务内。
 
 Pricing 与 Auditing 已成为两个真实消费者，现共用 Files.Contracts 的 IExportFiles、基础设施 HTTPS 适配器和精确文本 XLSX 写入实现；请求、筛选、状态及列集仍分别属于各上下文，没有通用报表框架。
+
+## 完整网关旅程
+
+[审计、私有成果与恢复 #175](https://github.com/yongpengW/NexusStackNext/issues/175) 的 `AuditExportRecoveryTests` 从独立空库执行六个迁移 CLI，再启动真实 Gateway / PlatformHost 进程。管理员经网关授权普通调查者；业务提交经真实 RabbitMQ 成为事实或操作观察，再由调查者申请、取消、恢复和下载私有 XLSX。
+
+三种故障点分别位于内容写入前、内容封存后与发布回执返回前。杀死生成进程后按原委托恢复，检查原文件身份、摘要与工作簿字节；撤销导出许可后，原令牌仍可调查事实但不能下载，进程重启仍保持裁决。重新授权后字节不变，非本人和匿名访问拒绝；本人删除成果不删除审计事实及导出历史。
+
+中央容量满额与恢复、投递副本及操作日志重投分别由 `CentralAuditCapacityBrokerTests`、`AuditBusinessJourneyTests` 和 `OperationLoggingJourneyTests` 的专项旅程验证。完整网关旅程不代替这些故障边界；本机相关测试、双轴评审和完整 Linux CI 的结果记录在 #175 与其 PR。
