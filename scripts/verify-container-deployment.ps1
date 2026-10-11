@@ -18,7 +18,7 @@ function Invoke-Docker([string[]]$Arguments) {
     [IO.File]::AppendAllText($diagnostic, ($output -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
     if ($code -ne 0) {
         # Build has no environment files in its context; compiler diagnostics are safe to show.
-        if ($Arguments -contains 'build') { Write-Output ($output -join "`n") }
+        if ($Arguments -contains 'build') { Write-Host ($output -join "`n") }
         throw "Container CLI failed ($($Arguments -join ' ')); private diagnostics: $diagnostic"
     }
     return ($output -join "`n")
