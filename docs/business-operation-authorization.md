@@ -38,7 +38,7 @@ Int64 输出为字符串；输入接受数字及数字字符串。相同集合�
 
 ## 当前操作表
 
-每一行是一项独立许可，下表列出 23 个 Costing 和 14 个 Pricing 核心端点；覆盖测试枚举宿主实际端点及实际策略。
+每一行是一项独立许可，下表列出 24 个 Costing 和 16 个 Pricing 核心端点；覆盖测试枚举宿主实际端点及实际策略。
 Pricing 导出的扩展许可及本人范围见[私有导出](pricing-private-exports.md)。新增核心接口必须同时声明许可并更新此表。
 
 | 方法 | 模板 |
@@ -62,6 +62,7 @@ Pricing 导出的扩展许可及本人范围见[私有导出](pricing-private-ex
 | GET | `/api/costing/tasks/{taskId}/delivery` |
 | POST | `/api/costing/tasks/{taskId}/delivery/retry` |
 | GET | `/api/costing/items/{itemId}` |
+| GET | `/api/costing/items/{itemId}/display` |
 | GET | `/api/costing/tasks` |
 | POST | `/api/costing/tasks/{taskId}/cancel` |
 | GET | `/api/costing/tasks/{taskId}` |
@@ -73,6 +74,8 @@ Pricing 导出的扩展许可及本人范围见[私有导出](pricing-private-ex
 | GET | `/api/pricing/audit-deliveries/recovery-capacity` |
 | POST | `/api/pricing/audit-deliveries/{messageId}/retry` |
 | GET | `/api/pricing/audit-deliveries/recoveries/{requestId}` |
+| GET | `/api/pricing/webhooks/{eventId}` |
+| POST | `/api/pricing/webhooks/{eventId}/retry` |
 | POST | `/api/pricing/cost` |
 | POST | `/api/pricing/fee` |
 | GET | `/api/pricing/items/{itemId}` |
