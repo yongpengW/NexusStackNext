@@ -2,7 +2,7 @@
 
 当前 Costing/Pricing 的真实操作按端点授权；读取不自动授予提交，提交不自动授予任务管理或其他上下文。
 机制、并发界限与取舍见[ADR-0028](adr/0028-current-operation-authority.md)，配置沿用[当前会话授权](current-session-authorization.md)。
-本机继续开发、不换机，整体 NS/PoS 目标仍暂停；本轮范围是[票据54](https://github.com/yongpengW/NexusStackNext/issues/54)。
+核心授权由[票据54](https://github.com/yongpengW/NexusStackNext/issues/54)交付，菜单管理等后续能力以原生票据及下表为准。
 
 ## 引导
 
@@ -38,8 +38,8 @@ Int64 输出为字符串；输入接受数字及数字字符串。相同集合�
 
 ## 当前操作表
 
-每一行是一项独立许可，含全部 23 个 Costing 和 14 个 Pricing 真实端点；覆盖测试枚举宿主实际端点及实际策略。
-下表由当前代码声明列出，新增接口必须同时声明许可并更新此表。
+每一行是一项独立许可，下表列出 23 个 Costing 和 14 个 Pricing 核心端点；覆盖测试枚举宿主实际端点及实际策略。
+Pricing 导出的扩展许可及本人范围见[私有导出](pricing-private-exports.md)。新增核心接口必须同时声明许可并更新此表。
 
 | 方法 | 模板 |
 | --- | --- |

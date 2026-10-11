@@ -2,7 +2,8 @@
 
 [交付票据：Costing 批次导入：行结论与可恢复检查点](https://github.com/yongpengW/NexusStackNext/issues/50)。
 这是一条成本导入竖切，演示公式仍为采购成本加单位运费。不是公司 PoS 成本公式、Excel 适配器或通用批次框架。
-业务角色授权、文件适配和私有异步导出由后续票据交付；当前全部接口沿用根操作者策略。
+批次接口要求有效会话及各自的[操作许可](business-operation-authorization.md)；读取不授予重试或取消。
+本入口接收 JSON；已交付的私有异步导出见[Pricing 导出](pricing-private-exports.md)，不改变这里的输入格式。
 
 ## 接受不可变输入
 

@@ -1,6 +1,6 @@
 # Pricing 私有报价 CSV 导出
 
-实现对应 [#150](https://github.com/yongpengW/NexusStackNext/issues/150)，依赖已交付的 [Files 生成成果协议](private-generated-files.md)。完整故障矩阵由 [#151](https://github.com/yongpengW/NexusStackNext/issues/151) 承载；父票 [#56](https://github.com/yongpengW/NexusStackNext/issues/56) 的完成以原生验收记录为准。继续本机开发，整体 NS/PoS 目标仍暂停。
+实现对应 [#150](https://github.com/yongpengW/NexusStackNext/issues/150)，依赖已交付的 [Files 生成成果协议](private-generated-files.md)。完整故障矩阵由 [#151](https://github.com/yongpengW/NexusStackNext/issues/151) 交付；父票 [#56](https://github.com/yongpengW/NexusStackNext/issues/56) 的完成以原生验收记录为准。
 
 ## 接受一次委托
 

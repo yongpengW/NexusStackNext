@@ -16,7 +16,7 @@ pwsh -File scripts/run-tests.ps1 -Project HostIntegration.Tests -Concurrency 4 -
 每例数据库、MQ拓扑与故障注入属于本例；真实平台进程默认文件根独立，显式根继续由调用旅程持有。
 逐类依据见[资源审查](local-test-resource-audit.md)，测量见[耗时记录](host-test-performance.md)。
 最终资格与dev交付以[票据128](https://github.com/yongpengW/NexusStackNext/issues/128)为准，不能由声明数量推断完成。
-继续本机、共用测试服务；整体NS/PoS能力目标继续暂停。下方为已交付历史，不用于限制本轮已授权范围。
+继续本机、共用测试服务。下方为已交付历史，不用于限制本轮已授权范围。
 当前工作见[票据124](https://github.com/yongpengW/NexusStackNext/issues/124)：
 基于已合并dev 0620d42分段测量240项独占专项；仅13类37项复用普通空结构准备，整类继续独占。
 新增Costing-only/Pricing-only蓝图不含journal，首次journal CLI与历史迁移、真实OS重启继续执行。
@@ -112,7 +112,7 @@ HTTP可达不能证明配置中心业务数据库健康；这些指标也不等�
 
 真实试验、完整资格、最终双轴评审及dev交付结果，以
 [共用测试库普通宿主旅程四路受控并发试验](https://github.com/yongpengW/NexusStackNext/issues/116)
-的最新原生证据为准。开发继续本机、共用测试服务；整体NS/PoS能力目标仍暂停。
+的最新原生证据为准。开发继续本机、共用测试服务。
 
 ## 当前扩大候选：票据120
 

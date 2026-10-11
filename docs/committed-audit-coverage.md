@@ -157,7 +157,8 @@ Costing PostgreSQL 容量已通过 PR #79 合并；Pricing 容量及新增恢复
 Memory 容量的本机检查、Linux CI 与双轴评审以 #80 最终记录为准；策略管理及专门恢复分别由 #101 / #103 交付，中央事实归档按用户决定暂缓。
 来源容量只读诊断由 [#91](https://github.com/yongpengW/NexusStackNext/issues/91) 实施，发布资格以该票最终记录为准。
 `FactCapacityDiagnosticsTests` / `BusinessFactCapacityDiagnosticsTests` 验证各来源和存储模式的实际占用、剩余量、超限与精确整数。
-`FactCapacityAccessTests` 验证四个平台的实际授权与撤回、三个网关配置的真实 HTTP 转发、OpenAPI 及操作观察；业务样板仍只允许根操作者。
+`FactCapacityAccessTests` 验证四个平台的实际授权与撤回、三个网关配置的真实 HTTP 转发、OpenAPI 及操作观察；
+业务样板当前也按独立操作许可授权，普通用户授予、撤回及重启证据见 `BusinessAuthorizationJourneyTests` / `BusinessAuthorizationPersistenceTests`。
 `FactCapacityFailureTests` 验证账本缺失、独立短预算、服务器查询结束、调用者取消及数据库不可用恢复；
 `MemoryFactCapacityDiagnosticsConcurrencyTests` 验证事实构造期间只返回已提交快照或不可读，恢复后无部分占用。
 详见 [ADR-0024](adr/0024-committed-fact-delivery-retention.md)。
