@@ -2,16 +2,17 @@ using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Events.RabbitMq;
-using NexusStackNext.Gateway.Routing;
+using NexusStackNext.Gateway;
 using NexusStackNext.IntegrationSupport;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
 [Collection(JourneyDatabaseDefinition.Name)]
-public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
+public sealed class AuditExportRecoveryTests
 {
     [AuditBrokerFact]
     public Task Frozen_mq_fact_reaches_owner_xlsx_after_lost_publication_reply_and_process_restart() => VerifyAsync(GeneratedFileFaultPoint.AfterPublication);
@@ -22,9 +23,10 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
     [AuditBrokerFact]
     public Task Owner_recovers_exhausted_generation_after_death_before_content_with_original_candidate_and_bytes() => VerifyAsync(GeneratedFileFaultPoint.BeforeContent);
 
-    private async Task VerifyAsync(GeneratedFileFaultPoint point)
+    private static async Task VerifyAsync(GeneratedFileFaultPoint point)
     {
-        await using var database = await databases.CreateAsync();
+        await using var database = await IdentityJourneyDatabase.CreateAsync();
+        await database.MigrateThroughCliAsync();
         using var certificates = new GeneratedFileCertificates();
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-audit", ClientName = prefix };
@@ -41,10 +43,11 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
         await using var fault = await GeneratedFileReplyFault.StartAsync(certificates, files.HttpsAddress, point);
         var transport = certificates.PricingClientOptions(fault.BaseAddress);
         var temporaryDirectory = Path.Combine(Path.GetTempPath(), "nsn-audit-export-recovery-" + Guid.NewGuid().ToString("N"));
+        var routePath = Path.Combine(Path.GetTempPath(), "nsn-audit-export-routes-" + Guid.NewGuid().ToString("N") + ".json");
         var settings = AuditBusinessJourneyTests.Settings(broker, prefix);
         settings["DOTNET_ENVIRONMENT"] = "Testing";
         settings["Auditing__Exports__Enabled"] = "true";
-        settings["Auditing__Exports__Worker__Enabled"] = "true";
+        settings["Auditing__Exports__Worker__Enabled"] = "false";
         settings["Auditing__Exports__Execution__LeaseDuration"] = "00:00:03";
         settings["Auditing__Exports__Execution__PollInterval"] = "00:00:00.100";
         settings["Auditing__Exports__Execution__TemporaryDirectory"] = temporaryDirectory;
@@ -61,17 +64,39 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
         try
         {
             await using var platform = await PlatformHostProcess.StartAsync(database.ConnectionString, filesRoot: files.FilesRoot, settings: settings);
-            await using var gateway = new GatewayHttpApp(platform.Client.BaseAddress!.AbsoluteUri)
+            var routes = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.json")))!;
+            foreach (var cluster in routes["clusters"]!.AsArray())
             {
-                SigningKey = PersistentIdentityApp.SigningKey,
-                SessionAuthorityAddress = files.Client.BaseAddress!.AbsoluteUri,
-                RateLimitPermitLimit = 1000,
-            };
-            var shipped = GatewayRouteTable.FromJson(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "routes.json"))).Value;
-            gateway.UseRoutes(shipped.Routes.Select(route => route with { ClusterId = "backend", RateLimitPolicy = null }));
-            using var owner = gateway.CreateClient();
-            await PlatformSettingsAccessTests.LoginAsync(owner, "journey-root", "audit-export-password");
-            using (var changed = await owner.PutAsJsonAsync(Relative("/api/platform/settings/export.precision"), new { value = "private-value-must-not-be-exported" }))
+                foreach (var destination in cluster!["destinations"]!.AsArray()) { destination!["address"] = platform.Client.BaseAddress!.AbsoluteUri; }
+            }
+            await File.WriteAllTextAsync(routePath, routes.ToJsonString());
+            await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routePath,
+                new Dictionary<string, string>
+                {
+                    ["Jwt__SigningKey"] = PersistentIdentityApp.SigningKey,
+                    ["IdentitySession__BaseAddress"] = files.Client.BaseAddress!.AbsoluteUri,
+                    ["Gateway__RateLimit__PermitLimit"] = "1000",
+                });
+            using var root = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            using var owner = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            using var anonymous = new HttpClient { BaseAddress = gateway.Client.BaseAddress };
+            await PlatformSettingsAccessTests.LoginAsync(root, "journey-root", "audit-export-password");
+            var ownerId = (await CreateAsync(root, "/api/identity/users", new { userName = "audit-export-owner", password = "audit-owner-password" })).GetProperty("userId").GetString();
+            var readMenu = (await CreateAsync(root, "/api/identity/menus", new { title = "Audit read", sortOrder = 1 })).GetProperty("menuId").GetString();
+            var exportMenu = (await CreateAsync(root, "/api/identity/menus", new { title = "Audit export", sortOrder = 2 })).GetProperty("menuId").GetString();
+            foreach (var path in new[] { "/api/auditing/entries", "/api/auditing/operations" })
+            { _ = await CreateAsync(root, "/api/identity/api-resources", new { path, method = "GET", menuId = readMenu }); }
+            _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/auditing/exports", method = "POST", menuId = exportMenu });
+            var roleId = (await CreateAsync(root, "/api/identity/roles", new { code = "audit-exporter", name = "Audit exporter" })).GetProperty("roleId").GetString();
+            foreach (var menu in new[] { readMenu, exportMenu })
+            {
+                using var granted = await root.PostAsync(Relative($"/api/identity/roles/{roleId}/menus/{menu}"), null);
+                Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode);
+            }
+            using (var assigned = await root.PostAsync(Relative($"/api/identity/users/{ownerId}/roles/{roleId}"), null))
+            { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+            await PlatformSettingsAccessTests.LoginAsync(owner, "audit-export-owner", "audit-owner-password");
+            using (var changed = await root.PutAsJsonAsync(Relative("/api/platform/settings/export.precision"), new { value = "private-value-must-not-be-exported" }))
             { Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode); }
             var factPage = await AuditBusinessJourneyTests.WaitForCountAsync(owner, 1);
             var operationId = factPage.GetProperty("data").EnumerateArray().Single().GetProperty("fact").GetProperty("execution").GetProperty("operationId").GetGuid();
@@ -90,10 +115,27 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
             object request = point == GeneratedFileFaultPoint.AfterContent
                 ? new { requestId, operations = new { source = "platform", operationId, outcome = "completed" } }
                 : new { requestId, facts = new { source = "platform", subjectId = "export.precision" } };
+            using var cancelAccepted = await owner.PostAsJsonAsync(Relative("/api/auditing/exports"),
+                new { requestId = Guid.NewGuid(), facts = new { source = "platform", subjectId = "export.precision" } });
+            Assert.Equal(HttpStatusCode.Accepted, cancelAccepted.StatusCode);
+            var cancelOriginal = await cancelAccepted.Content.ReadApiDataAsync();
+            var cancelId = cancelOriginal.GetProperty("exportId").GetGuid();
+            var cancelRequest = new { expectedVersion = cancelOriginal.GetProperty("version").GetString() };
+            using (var cancelled = await owner.PostAsJsonAsync(Relative($"/api/auditing/exports/{cancelId}/cancel"), cancelRequest))
+            { Assert.Equal("Cancelled", (await cancelled.Content.ReadApiDataAsync()).GetProperty("state").GetString()); }
+            using (var repeated = await owner.PostAsJsonAsync(Relative($"/api/auditing/exports/{cancelId}/cancel"), cancelRequest))
+            { Assert.Equal("Cancelled", (await repeated.Content.ReadApiDataAsync()).GetProperty("state").GetString()); }
+            using (var denied = await anonymous.PostAsJsonAsync(Relative("/api/auditing/exports"), request))
+            { Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode); }
             using var accepted = await owner.PostAsJsonAsync(Relative("/api/auditing/exports"), request);
             Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
             var original = await accepted.Content.ReadApiDataAsync();
             var id = original.GetProperty("exportId").GetGuid();
+            settings["Auditing__Exports__Worker__Enabled"] = "true";
+            settings["Kestrel__Endpoints__Public__Url"] = platform.Client.BaseAddress!.AbsoluteUri;
+            await platform.CrashAsync();
+            await using var processing = await PlatformHostProcess.StartAsync(database.ConnectionString, filesRoot: files.FilesRoot, settings: settings);
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
             try { await fault.WaitForFaultAsync(); }
             catch (TimeoutException)
             {
@@ -107,7 +149,7 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
             var sealedFile = await receiptReply.Content.ReadApiDataAsync();
             var fileId = sealedFile.GetProperty("fileId").GetString();
             var digest = sealedFile.GetProperty("description").GetProperty("sha256").GetString();
-            await platform.CrashAsync();
+            await processing.CrashAsync();
             fault.Release();
             Assert.Empty(Directory.EnumerateFiles(temporaryDirectory));
             if (point == GeneratedFileFaultPoint.AfterContent)
@@ -115,9 +157,8 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
                 Directory.Delete(temporaryDirectory);
                 await File.WriteAllTextAsync(temporaryDirectory, "rendering unavailable after sealed bytes");
             }
-            settings["Kestrel__Endpoints__Public__Url"] = platform.Client.BaseAddress.AbsoluteUri;
             await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, filesRoot: files.FilesRoot, settings: settings);
-            await BusinessProcess.WaitForIdentityForwardingAsync(owner, HttpStatusCode.OK);
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
             if (point == GeneratedFileFaultPoint.BeforeContent)
             {
@@ -153,7 +194,8 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
             var artifact = await artifactReply.Content.ReadApiDataAsync();
             using var download = await owner.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!));
             Assert.Equal(HttpStatusCode.OK, download.StatusCode);
-            await using var content = await download.Content.ReadAsStreamAsync();
+            var originalBytes = await download.Content.ReadAsByteArrayAsync();
+            using var content = new MemoryStream(originalBytes);
             using var archive = new ZipArchive(content);
             var worksheet = XDocument.Load(archive.GetEntry("xl/worksheets/sheet1.xml")!.Open());
             XNamespace spreadsheet = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -164,14 +206,61 @@ public sealed class AuditExportRecoveryTests(JourneyDatabaseTemplates databases)
             Assert.DoesNotContain("private-value-must-not-be-exported", worksheet.ToString(), StringComparison.Ordinal);
             using var replay = await owner.PostAsJsonAsync(Relative("/api/auditing/exports"), request);
             Assert.Equal(fileId, (await replay.Content.ReadApiDataAsync()).GetProperty("fileId").GetString());
+            using (var foreign = await root.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode); }
+            using (var unsigned = await anonymous.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.Equal(HttpStatusCode.Unauthorized, unsigned.StatusCode); }
+            using (var role = await root.GetAsync(Relative($"/api/identity/roles/{roleId}")))
+            {
+                var version = (await role.Content.ReadApiDataAsync()).GetProperty("version").GetString();
+                using var revoked = await root.PutAsJsonAsync(Relative($"/api/identity/roles/{roleId}/menus"), new { expectedVersion = version, menuIds = new[] { readMenu } });
+                Assert.Equal(HttpStatusCode.NoContent, revoked.StatusCode);
+            }
+            using (var denied = await owner.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+            using (var allowed = await owner.GetAsync(Relative("/api/auditing/entries?source=platform")))
+            { Assert.Equal(HttpStatusCode.OK, allowed.StatusCode); }
+            await restarted.CrashAsync();
+            await using var afterRevocation = await PlatformHostProcess.StartAsync(database.ConnectionString, filesRoot: files.FilesRoot, settings: settings);
+            await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
+            using (var denied = await owner.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+            using (var granted = await root.PostAsync(Relative($"/api/identity/roles/{roleId}/menus/{exportMenu}"), null))
+            { Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode); }
+            using var retainedDownload = await owner.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!));
+            Assert.Equal(HttpStatusCode.OK, retainedDownload.StatusCode);
+            Assert.Equal(originalBytes, await retainedDownload.Content.ReadAsByteArrayAsync());
+            using (var center = await owner.GetAsync(Relative("/api/auditing/exports")))
+            {
+                var exports = (await center.Content.ReadApiDataAsync()).EnumerateArray().ToArray();
+                Assert.Equal(2, exports.Length);
+                Assert.Equal("Cancelled", Assert.Single(exports, entry => entry.GetProperty("exportId").GetGuid() == cancelId).GetProperty("state").GetString());
+                Assert.Equal(fileId, Assert.Single(exports, entry => entry.GetProperty("exportId").GetGuid() == id).GetProperty("fileId").GetString());
+            }
+            using (var deleted = await owner.DeleteAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.True(deleted.StatusCode is HttpStatusCode.NoContent or HttpStatusCode.Accepted); }
+            using (var gone = await owner.GetAsync(Relative(artifact.GetProperty("downloadPath").GetString()!)))
+            { Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode); }
+            using (var retained = await owner.GetAsync(Relative($"/api/auditing/exports/{id}/artifact")))
+            { Assert.Equal("Deleted", (await retained.Content.ReadApiDataAsync()).GetProperty("state").GetString()); }
+            var retainedFacts = await AuditBusinessJourneyTests.WaitForCountAsync(owner, 1);
+            Assert.Equal("export.precision", Assert.Single(retainedFacts.GetProperty("data").EnumerateArray()).GetProperty("fact").GetProperty("subjectId").GetString());
         }
         finally
         {
             if (File.Exists(temporaryDirectory)) { File.Delete(temporaryDirectory); }
             else if (Directory.Exists(temporaryDirectory)) { Directory.Delete(temporaryDirectory); }
+            File.Delete(routePath);
             await AuditBusinessJourneyTests.DeleteTopologyAsync(broker, topology);
         }
     }
 
     private static Uri Relative(string path) => new(path, UriKind.Relative);
+
+    private static async Task<JsonElement> CreateAsync(HttpClient client, string path, object body)
+    {
+        using var response = await client.PostAsJsonAsync(Relative(path), body);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return await response.Content.ReadApiDataAsync();
+    }
 }

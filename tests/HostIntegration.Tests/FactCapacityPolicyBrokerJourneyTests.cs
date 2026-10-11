@@ -295,9 +295,8 @@ public sealed class FactCapacityPolicyBrokerJourneyTests(JourneyDatabaseTemplate
                 await PlatformSettingsAccessTests.LoginAsync(producer.Client, "journey-root", "memory-policy-root");
                 foreach (var source in new[] { "platform", "identity", "files", "scheduling" })
                 {
-                    using var diagnosis = await producer.Client.GetAsync(new Uri($"/api/{source}/audit-capacity", UriKind.Relative));
-                    Assert.Equal(HttpStatusCode.OK, diagnosis.StatusCode);
-                    Assert.False((await diagnosis.Content.ReadApiDataAsync()).GetProperty("isPersistent").GetBoolean());
+                    var diagnosis = await ReadCapacityAsync(producer.Client, source);
+                    Assert.False(diagnosis.GetProperty("isPersistent").GetBoolean());
                     var accepted = await AdjustAsync(producer.Client, source);
                     var envelope = await ReadEnvelopeAsync(broker, Assert.Single(taps, item => item.EventName == source + ".fact-capacity-policy-changed.v1"));
                     Assert.Equal(accepted.EventId, envelope.MessageId);
@@ -422,15 +421,32 @@ public sealed class FactCapacityPolicyBrokerJourneyTests(JourneyDatabaseTemplate
     internal static async Task<(FactCapacityPolicyRequest Request, Guid EventId)> AdjustAsync(HttpClient client, string source)
     {
         var path = new Uri($"/api/{source}/audit-capacity", UriKind.Relative);
-        using var initialResponse = await client.GetAsync(path);
-        Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
-        var initial = await initialResponse.Content.ReadApiDataAsync();
+        var initial = await ReadCapacityAsync(client, source);
         var request = new FactCapacityPolicyRequest(Guid.NewGuid(), initial.GetProperty("policyRevision").ReadHttpInt64(),
             initial.GetProperty("maxRecords").ReadHttpInt64() + 1, initial.GetProperty("maxPayloadBytes").ReadHttpInt64(),
             initial.GetProperty("maxRecordPayloadBytes").GetInt32(), "operator-adjustment");
         using var adjusted = await client.PutAsJsonAsync(path, request);
         Assert.Equal(HttpStatusCode.OK, adjusted.StatusCode);
         return (request, (await adjusted.Content.ReadApiDataAsync()).GetProperty("eventId").GetGuid());
+    }
+
+    private static async Task<JsonElement> ReadCapacityAsync(HttpClient client, string source)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        while (true)
+        {
+            using var response = await client.GetAsync(new Uri($"/api/{source}/audit-capacity", UriKind.Relative), timeout.Token);
+            // A source publisher or maintenance operation can briefly own the Memory store's lock.
+            if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+            {
+                var error = await response.Content.ReadFromJsonAsync<JsonElement>(timeout.Token);
+                Assert.Equal("audit_capacity.unavailable", error.GetProperty("errorCode").GetString());
+                await Task.Delay(100, timeout.Token);
+                continue;
+            }
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return await response.Content.ReadApiDataAsync();
+        }
     }
 
     internal static async Task<EventEnvelope> ReadEnvelopeAsync(RabbitMqOptions broker, EventSubscription subscription, bool deadLetter = false, Guid? expectedMessageId = null)
