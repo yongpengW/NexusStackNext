@@ -162,6 +162,53 @@ public sealed class IdentityPersistenceJourneyTests(JourneyDatabaseTemplates dat
         Assert.Equal(menuId, Assert.Single(menus.GetProperty("data").GetProperty("items").EnumerateArray()).GetProperty("menuId").ReadHttpInt64());
     }
 
+    [PostgresFact]
+    public async Task DeletedMenu_RevokesHistoricalPermission_AndRemainsDeletedAfterRestart()
+    {
+        await using var database = await databases.CreateAsync();
+        const string userName = "deleted-menu-reader";
+        const string password = "deleted-menu-reader-password";
+        long menuId;
+        await using (var app = new PersistentIdentityApp(database.ConnectionString, "root-test-password"))
+        {
+            using var root = app.CreateClient();
+            using var reader = app.CreateClient();
+            await AuthenticateAsync(root, "journey-root", "root-test-password");
+            var menu = await CreateAsync(root, "/api/identity/menus", new { title = "Deleted menu", sortOrder = 1 });
+            menuId = menu.GetProperty("menuId").ReadHttpInt64();
+            _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus", method = "GET", menuId });
+            var role = await CreateAsync(root, "/api/identity/roles", new { code = "deleted-menu-reader", name = "Deleted menu reader" });
+            var roleId = role.GetProperty("roleId").ReadHttpInt64();
+            using (var grant = await root.PostAsync(new Uri($"/api/identity/roles/{roleId}/menus/{menuId}", UriKind.Relative), null))
+            { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+            var user = await CreateAsync(reader, "/api/identity/users", new { userName, password });
+            var userId = user.GetProperty("userId").ReadHttpInt64();
+            using (var assigned = await root.PostAsync(new Uri($"/api/identity/users/{userId}/roles/{roleId}", UriKind.Relative), null))
+            { Assert.Equal(HttpStatusCode.NoContent, assigned.StatusCode); }
+            await AuthenticateAsync(reader, userName, password);
+            using (var allowed = await reader.GetAsync(new Uri("/api/identity/menus", UriKind.Relative)))
+            { Assert.Equal(HttpStatusCode.OK, allowed.StatusCode); }
+            var menus = await root.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
+            var version = menus.GetProperty("data").GetProperty("version").ReadHttpInt64();
+            using var removed = await root.PostAsJsonAsync(new Uri($"/api/identity/menus/{menuId}/remove", UriKind.Relative), new { expectedVersion = version });
+            Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+            using var denied = await reader.GetAsync(new Uri("/api/identity/menus", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+
+        await using (var restarted = new PersistentIdentityApp(database.ConnectionString, "root-test-password"))
+        {
+            using var root = restarted.CreateClient();
+            using var reader = restarted.CreateClient();
+            await AuthenticateAsync(root, "journey-root", "root-test-password");
+            var menus = await root.GetFromJsonAsync<JsonElement>(new Uri("/api/identity/menus", UriKind.Relative));
+            Assert.DoesNotContain(menus.GetProperty("data").GetProperty("items").EnumerateArray(), item => item.GetProperty("menuId").ReadHttpInt64() == menuId);
+            await AuthenticateAsync(reader, userName, password);
+            using var denied = await reader.GetAsync(new Uri("/api/identity/menus", UriKind.Relative));
+            Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        }
+    }
+
     private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
     {
         using var response = await client.PostAsJsonAsync(new Uri(path, UriKind.Relative), payload);

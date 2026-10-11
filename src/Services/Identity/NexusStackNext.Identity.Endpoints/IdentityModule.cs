@@ -481,7 +481,7 @@ public static class IdentityModule
 
             return result.IsFailure
                 ? Failure(result.Error)
-                : responses.Ok(new MenuCollectionResponse(result.Value.Count, result.Value));
+                : responses.Ok(new MenuCollectionResponse(result.Value.Version, result.Value.Items.Count, result.Value.Items));
         }).Produces<ApiResponse<MenuCollectionResponse>>().RequirePermission("/api/identity/menus", "GET");
 
         identity.MapPost("/menus", async (ApiResponses responses,
@@ -497,6 +497,14 @@ public static class IdentityModule
                 ? Failure(result.Error)
                 : responses.Created($"/api/identity/menus/{result.Value.MenuId}", result.Value);
         }).ProducesApiErrors(415).Produces<ApiResponse<MenuCreated>>(201).RequirePermission("/api/identity/menus", "POST");
+
+        identity.MapPost("/menus/{menuId:long}/remove", async (long menuId, MenuVersionRequest request,
+            ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new RemoveMenuCommand(menuId, request.ExpectedVersion), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/menus/{menuId}/remove", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.menu.remove", "删除叶菜单并撤销其权限投影"));
 
         return endpoints;
     }
@@ -519,7 +527,7 @@ public static class IdentityModule
             "identity.user_name.taken" or "identity.role_code.taken" => StatusCodes.Status409Conflict,
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.user.conflict" => StatusCodes.Status409Conflict,
-            "identity.role.conflict" => StatusCodes.Status409Conflict,
+            "identity.role.conflict" or "identity.menu.conflict" or "identity.menu.has_children" => StatusCodes.Status409Conflict,
             "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
@@ -582,4 +590,5 @@ internal sealed record UserCreatedResponse(long UserId);
 internal sealed record RoleCreatedResponse(long RoleId);
 internal sealed record UserPermissionsResponse(long UserId, IReadOnlyList<string> Keys);
 internal sealed record AuthorizationResponse(long UserId, string RequiredKey, string Decision, int GrantedCount);
-internal sealed record MenuCollectionResponse(int Count, IReadOnlyList<MenuView> Items);
+internal sealed record MenuCollectionResponse(long Version, int Count, IReadOnlyList<MenuView> Items);
+internal sealed record MenuVersionRequest([property: JsonRequired] long ExpectedVersion);

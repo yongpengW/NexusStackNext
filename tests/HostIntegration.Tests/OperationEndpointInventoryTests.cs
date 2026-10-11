@@ -61,6 +61,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["POST /api/identity/refresh"] = IdentityChanges,
             ["POST /api/identity/api-resources"] = IdentityChanges,
             ["POST /api/identity/menus"] = IdentityChanges,
+            ["POST /api/identity/menus/{menuId:long}/remove"] = IdentityChanges,
             ["POST /api/identity/authorize"] = "查询型POST：只计算授权结论，保留操作观察，不生成业务提交事实。",
             ["POST /api/files/"] = FileChanges,
             ["DELETE /api/files/{id:long}"] = FileChanges,

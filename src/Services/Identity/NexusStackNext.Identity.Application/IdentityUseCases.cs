@@ -91,8 +91,8 @@ public sealed record CreateMenuCommand(string Title, int SortOrder, long? Parent
 /// <param name="Path">物化路径（形如 <c>/1/2</c>）。</param>
 public sealed record MenuCreated(long MenuId, long? ParentMenuId, string Title, string Path);
 
-/// <summary>列出菜单树。</summary>
-public sealed record GetMenusQuery : IQuery<IReadOnlyList<MenuView>>;
+/// <summary>列出菜单树及其聚合版本。</summary>
+public sealed record GetMenusQuery : IQuery<MenuTreeView>;
 
 /// <summary>一个菜单节点在 HTTP 上的样子。</summary>
 /// <param name="MenuId">节点标识。</param>
@@ -102,6 +102,11 @@ public sealed record GetMenusQuery : IQuery<IReadOnlyList<MenuView>>;
 /// <param name="SortOrder">同级排序。</param>
 /// <param name="Depth">深度（根为 1）。</param>
 public sealed record MenuView(long MenuId, long? ParentMenuId, string Title, string Path, int SortOrder, int Depth);
+
+/// <summary>菜单管理读取面；版本用于条件删除等聚合写入。</summary>
+/// <param name="Version">菜单树聚合版本。</param>
+/// <param name="Items">菜单节点。</param>
+public sealed record MenuTreeView(long Version, IReadOnlyList<MenuView> Items);
 
 /// <summary>
 /// 确保存在一个内置根账号。已有内置用户时幂等跳过；普通用户占名时稳定拒绝。
@@ -456,10 +461,10 @@ public sealed class CreateMenuHandler(
 /// <summary>列出菜单树。</summary>
 /// <param name="trees">菜单树仓储。</param>
 public sealed class GetMenusHandler(IMenuTreeRepository trees)
-    : IQueryHandler<GetMenusQuery, IReadOnlyList<MenuView>>
+    : IQueryHandler<GetMenusQuery, MenuTreeView>
 {
     /// <inheritdoc />
-    public async Task<Result<IReadOnlyList<MenuView>>> HandleAsync(
+    public async Task<Result<MenuTreeView>> HandleAsync(
         GetMenusQuery query,
         CancellationToken cancellationToken = default)
     {
@@ -483,7 +488,7 @@ public sealed class GetMenusHandler(IMenuTreeRepository trees)
                     node.SortOrder,
                     node.Path.Depth))];
 
-        return Result.Success(views);
+        return Result.Success(new MenuTreeView(tree?.Version ?? 0, views));
     }
 }
 
@@ -608,7 +613,8 @@ public static class IdentityUseCaseServiceCollectionExtensions
 
         // 菜单这一环（票据 67）：建节点、读整棵树。
         AddCommand<CreateMenuCommand, MenuCreated, CreateMenuHandler>(services);
-        AddQuery<GetMenusQuery, IReadOnlyList<MenuView>, GetMenusHandler>(services);
+        AddQuery<GetMenusQuery, MenuTreeView, GetMenusHandler>(services);
+        AddCommand<RemoveMenuCommand, RemoveMenuHandler>(services);
 
         // 根账号播种。它是**命令**而不是"启动时的一段内联代码"：
         // 于是它的幂等性、口令哈希、`isBuiltIn` 三件事都能被单独测到，
@@ -631,6 +637,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddSingleton<IRequestValidator<CreateUserCommand>, CreateUserCommandValidator>();
         services.AddSingleton<IRequestValidator<IExpectedUserVersion>, ExpectedUserVersionValidator>();
         services.AddSingleton<IRequestValidator<ReplaceRoleMenusCommand>, ReplaceRoleMenusValidator>();
+        services.AddSingleton<IRequestValidator<IExpectedMenuTreeVersion>, ExpectedMenuTreeVersionValidator>();
         services.AddSingleton<IRequestValidator<INewUserPassword>, NewUserPasswordValidator>();
 
         // 一个校验器覆盖所有带标识的请求——靠的是 IRequestValidator<in TRequest> 的逆变。
