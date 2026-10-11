@@ -22,7 +22,7 @@ namespace NexusStackNext.Pricing.IntegrationTests;
 public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) : IClassFixture<PricingDatabaseFixture>
 {
     [PricingWebhookBrokerFact]
-    public async Task Outbox_Rabbit_consumer_and_real_http_receiver_support_failure_and_manual_retry()
+    public async Task Outbox_Rabbit_consumer_and_real_http_receiver_reconcile_a_failure_after_the_effect()
     {
         await database.ResetAsync();
         var prefix = RabbitMqTestBroker.UniquePrefix();
@@ -71,14 +71,15 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
 
             var pending = await sender.QueryAsync(new GetPricingWebhook(eventId));
             Assert.True(pending.IsSuccess);
-            Assert.Equal("DeadLettered", pending.Value.State);
+            Assert.Equal("Unknown", pending.Value.State);
             var retry = await sender.SendAsync(new RetryPricingWebhook(eventId, 1));
             Assert.True(retry.IsSuccess);
-            Assert.Equal("Pending", retry.Value.State);
-            Assert.True(await WaitForSuccessfulDeliveryAsync(runner));
+            Assert.Equal("Succeeded", retry.Value.State);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
             var succeeded = await sender.QueryAsync(new GetPricingWebhook(eventId));
             Assert.Equal("Succeeded", succeeded.Value.State);
-            Assert.Equal(2, receiver.RequestCount(eventId));
+            Assert.Equal(1, receiver.QueryCount);
+            Assert.Equal(1, receiver.RequestCount(eventId));
             Assert.Equal(1, receiver.EffectCount(eventId));
         }
         finally
@@ -90,7 +91,7 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
     }
 
     [PricingWebhookBrokerFact]
-    public async Task Real_http_response_loss_after_persisted_effect_is_replayed_without_duplicate_effect()
+    public async Task Real_http_response_loss_is_reconciled_after_receiver_restart_without_a_second_post()
     {
         var isolatedDatabase = new PricingDatabaseFixture();
         await isolatedDatabase.InitializeAsync();
@@ -127,14 +128,17 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
             Assert.Equal(0, await runner.DeliverPendingAsync());
             var api = scope.ServiceProvider.GetRequiredService<ISender>();
-            Assert.Equal("DeadLettered", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
+            Assert.Equal("Unknown", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
 
             await receiver.DisposeAsync();
             receiver = await WebhookReceiver.StartAsync(statePath, failFirst: false, dropFirstResponse: false);
-            Assert.True((await api.SendAsync(new RetryPricingWebhook(eventId, 1))).IsSuccess);
-            Assert.True(await WaitForSuccessfulDeliveryAsync(runner));
+            var reconciled = await api.SendAsync(new RetryPricingWebhook(eventId, 1));
+            Assert.True(reconciled.IsSuccess);
+            Assert.Equal("Succeeded", reconciled.Value.State);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
             Assert.Equal("Succeeded", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
-            Assert.Equal(2, receiver.RequestCount(eventId));
+            Assert.Equal(1, receiver.QueryCount);
+            Assert.Equal(1, receiver.RequestCount(eventId));
             Assert.Equal(1, receiver.EffectCount(eventId));
         }
         finally
@@ -154,18 +158,8 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             if (receiver.FirstEventId is { } eventId)
             {
                 var status = await sender.QueryAsync(new GetPricingWebhook(eventId), timeout.Token);
-                if (status.IsSuccess && status.Value.State == "DeadLettered") { return; }
+                if (status.IsSuccess && status.Value.State == "Unknown") { return; }
             }
-            await Task.Delay(100, timeout.Token);
-        }
-    }
-
-    private static async Task<bool> WaitForSuccessfulDeliveryAsync(IPricingWebhookDeliveryRunner runner)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        while (true)
-        {
-            if (await runner.DeliverPendingAsync(timeout.Token) == 1) { return true; }
             await Task.Delay(100, timeout.Token);
         }
     }
@@ -208,6 +202,7 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
         private int _dropResponses = dropFirstResponse ? 1 : 0;
         public Uri BaseAddress { get; private set; } = null!;
         public Guid? FirstEventId { get; private set; }
+        public int QueryCount { get; private set; }
         public Guid EventId => _firstFailure.Task.GetAwaiter().GetResult();
         public static async Task<WebhookReceiver> StartAsync(string statePath, bool failFirst, bool dropFirstResponse = false)
         {
@@ -216,6 +211,7 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
             var app = builder.Build();
             var receiver = new WebhookReceiver(app, await PersistentWebhookStore.LoadAsync(statePath), failFirst, dropFirstResponse);
             app.MapPost("/webhooks/pricing", receiver.AcceptAsync);
+            app.MapGet("/webhooks/pricing", receiver.QueryAsync);
             await app.StartAsync();
             receiver.BaseAddress = new Uri(app.Urls.Single());
             return receiver;
@@ -239,6 +235,17 @@ public sealed class PricingWebhookBrokerTests(PricingDatabaseFixture database) :
                 return;
             }
             await response.WriteAsJsonAsync(new PricingWebhookAcceptedV1 { EventId = id, IdempotencyKey = message.IdempotencyKey, Accepted = true });
+        }
+        private async Task QueryAsync(HttpRequest request, HttpResponse response)
+        {
+            var key = Guid.Parse(request.Headers["Idempotency-Key"].ToString());
+            QueryCount++;
+            await response.WriteAsJsonAsync(new PricingWebhookAcceptedV1
+            {
+                EventId = key,
+                IdempotencyKey = key,
+                Accepted = store.EffectCount(key) == 1,
+            });
         }
         public Task<Guid> WaitForFirstFailureAsync() => _firstFailure.Task.WaitAsync(TimeSpan.FromSeconds(20));
         public int RequestCount(Guid eventId) => store.RequestCount(eventId);

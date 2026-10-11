@@ -15,6 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../WebhookProcessHost/WebhookProcessHost.csproj" />
     <ProjectReference Include="..\IntegrationSupport\IntegrationSupport.csproj" />
     <ProjectReference Include="..\TestSupport\TestSupport.csproj" />
     <ProjectReference Include="../../src/Hosts/NexusStackNext.CostingHost/NexusStackNext.CostingHost.csproj" />

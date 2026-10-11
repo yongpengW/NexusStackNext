@@ -46,6 +46,6 @@ public sealed record PricingWebhookAcceptedV1
     /// <summary>确认的幂等键。</summary>
     public required Guid IdempotencyKey { get; init; }
 
-    /// <summary>接收端已接受并持久化该通知。</summary>
+    /// <summary>接收端已接受并持久化该通知；仅 GET 核对的 200 响应可用 false 明确证明尚未接受。</summary>
     public required bool Accepted { get; init; }
 }

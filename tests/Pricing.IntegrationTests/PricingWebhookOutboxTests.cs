@@ -171,9 +171,9 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
     }
 
     [PostgresFact]
-    public async Task Invalid_ack_is_failed_and_does_not_retry()
+    public async Task Invalid_ack_keeps_the_outcome_unknown_and_does_not_retry()
     {
-        var sender = new FixedWebhookSender(new PricingWebhookSendResult(false, false, 202, "invalid_ack"));
+        var sender = new FixedWebhookSender(new PricingWebhookSendResult(false, false, 202, "invalid_ack", OutcomeUnknown: true));
         var (provider, eventId) = await CreatePendingAsync(sender);
         await using (provider)
         await using (var scope = provider.CreateAsyncScope())
@@ -181,20 +181,22 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
             Assert.Equal(0, await runner.DeliverPendingAsync());
             var status = await scope.ServiceProvider.GetRequiredService<ISender>().QueryAsync(new GetPricingWebhook(eventId));
-            Assert.Equal("Failed", status.Value.State);
+            Assert.Equal("Unknown", status.Value.State);
             Assert.Equal("invalid_ack", status.Value.LastError);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(1, sender.Calls);
         }
     }
 
     [PostgresFact]
     public async Task Http_sender_classifies_retryable_permanent_and_timeout_responses()
     {
-        var cases = new (HttpStatusCode Status, bool Retryable, string? RetryAfter, TimeSpan? ExpectedRetryAfter)[]
+        var cases = new (HttpStatusCode Status, bool Retryable, bool Unknown, string? RetryAfter, TimeSpan? ExpectedRetryAfter)[]
         {
-            (Status: HttpStatusCode.TooManyRequests, Retryable: true, RetryAfter: "not-a-delay", ExpectedRetryAfter: null),
-            (Status: HttpStatusCode.InternalServerError, Retryable: true, RetryAfter: "301", ExpectedRetryAfter: null),
-            (Status: HttpStatusCode.InternalServerError, Retryable: true, RetryAfter: "+17", ExpectedRetryAfter: null),
-            (Status: HttpStatusCode.BadRequest, Retryable: false, RetryAfter: "17", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.TooManyRequests, Retryable: true, Unknown: false, RetryAfter: "not-a-delay", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.InternalServerError, Retryable: false, Unknown: true, RetryAfter: "301", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.RequestTimeout, Retryable: false, Unknown: true, RetryAfter: "+17", ExpectedRetryAfter: null),
+            (Status: HttpStatusCode.BadRequest, Retryable: false, Unknown: false, RetryAfter: "17", ExpectedRetryAfter: null),
         };
         foreach (var testCase in cases)
         {
@@ -209,6 +211,7 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             var result = await sender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
             Assert.False(result.Succeeded);
             Assert.Equal(testCase.Retryable, result.Retryable);
+            Assert.Equal(testCase.Unknown, result.OutcomeUnknown);
             Assert.Equal((int)testCase.Status, result.StatusCode);
             Assert.Equal(testCase.ExpectedRetryAfter, result.RetryAfter);
         }
@@ -223,7 +226,85 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
         var timeoutSender = timeoutProvider.GetRequiredService<IPricingWebhookSender>();
         var timeoutResult = await timeoutSender.SendAsync(new(new Uri("https://receiver.test/webhooks/pricing"), "{}", Guid.NewGuid(), "trace"));
         Assert.False(timeoutResult.Succeeded);
-        Assert.True(timeoutResult.Retryable);
+        Assert.False(timeoutResult.Retryable);
+        Assert.True(timeoutResult.OutcomeUnknown);
+    }
+
+    [PostgresFact]
+    public async Task Receipt_query_does_not_treat_an_incomplete_response_as_proof_of_non_acceptance()
+    {
+        var key = Guid.NewGuid();
+        foreach (var testCase in new[]
+        {
+            (Status: HttpStatusCode.OK, Key: key, Accepted: true, Expected: PricingWebhookReceipt.Accepted),
+            (Status: HttpStatusCode.OK, Key: key, Accepted: false, Expected: PricingWebhookReceipt.NotAccepted),
+            (Status: HttpStatusCode.Accepted, Key: key, Accepted: false, Expected: PricingWebhookReceipt.Unknown),
+            (Status: HttpStatusCode.OK, Key: Guid.NewGuid(), Accepted: false, Expected: PricingWebhookReceipt.Unknown),
+            (Status: HttpStatusCode.NotFound, Key: key, Accepted: false, Expected: PricingWebhookReceipt.Unknown),
+        })
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            services.AddNexusStackApplication();
+            services.AddPricingPostgres(database.ConnectionString,
+                webhookOptions: new PricingWebhookOptions { Enabled = true, Endpoint = "https://receiver.test/webhooks/pricing" });
+            services.AddSingleton<HttpClient>(new HttpClient(new ReceiptHandler(testCase.Status, testCase.Key, testCase.Accepted)));
+            await using var provider = services.BuildServiceProvider();
+            var result = await provider.GetRequiredService<IPricingWebhookSender>()
+                .QueryAsync(new(new Uri("https://receiver.test/webhooks/pricing"), key, "trace-reconcile"));
+            Assert.Equal(testCase.Expected, result.Receipt);
+        }
+    }
+
+    [PostgresFact]
+    public async Task Unavailable_receipt_keeps_the_original_unknown_attempt_and_only_explicit_non_acceptance_allows_retry()
+    {
+        var external = new FixedWebhookSender(new PricingWebhookSendResult(false, false, null, "timeout", OutcomeUnknown: true));
+        var (provider, eventId) = await CreatePendingAsync(external);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            var api = scope.ServiceProvider.GetRequiredService<ISender>();
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            external.Receipt = new(PricingWebhookReceipt.Unknown, 503, "http_503");
+            var unavailable = await api.SendAsync(new RetryPricingWebhook(eventId, 1));
+            Assert.Equal("pricing.webhook.unavailable", unavailable.Error.Code);
+            Assert.Equal("Unknown", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(1, external.Calls);
+
+            external.Receipt = new(PricingWebhookReceipt.NotAccepted, 200, null);
+            var retry = await api.SendAsync(new RetryPricingWebhook(eventId, 1));
+            Assert.True(retry.IsSuccess);
+            Assert.Equal("Pending", retry.Value.State);
+            Assert.Equal(1, retry.Value.AttemptCount);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(2, external.Calls);
+            Assert.All(external.Keys, key => Assert.Equal(eventId, key));
+        }
+    }
+
+    [PostgresFact]
+    public async Task Permanent_rejection_stops_automatic_delivery_and_manual_retry_keeps_the_original_key()
+    {
+        var external = new FixedWebhookSender(new PricingWebhookSendResult(false, false, 422, "http_422"));
+        var (provider, eventId) = await CreatePendingAsync(external);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            var api = scope.ServiceProvider.GetRequiredService<ISender>();
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal("Failed", (await api.QueryAsync(new GetPricingWebhook(eventId))).Value.State);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(1, external.Calls);
+            Assert.True((await api.SendAsync(new RetryPricingWebhook(eventId, 1))).IsSuccess);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            Assert.Equal(2, external.Calls);
+            Assert.Equal(0, external.QueryCalls);
+            Assert.All(external.Keys, key => Assert.Equal(eventId, key));
+        }
     }
 
     [PostgresFact]
@@ -310,6 +391,31 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
     }
 
     [PostgresFact]
+    public async Task Interrupted_send_keeps_the_attempt_unknown_and_reconciles_without_resending()
+    {
+        var external = new InterruptedWebhookSender();
+        var (provider, eventId) = await CreatePendingAsync(external);
+        await using (provider)
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var api = scope.ServiceProvider.GetRequiredService<ISender>();
+            external.ReadStatus = async () => (await api.QueryAsync(new GetPricingWebhook(eventId))).Value;
+            var runner = scope.ServiceProvider.GetRequiredService<IPricingWebhookDeliveryRunner>();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => runner.DeliverPendingAsync());
+
+            Assert.Equal("Unknown", external.StateBeforeInterruption);
+            var interrupted = (await api.QueryAsync(new GetPricingWebhook(eventId))).Value;
+            Assert.Equal("Unknown", interrupted.State);
+            Assert.Equal(1, interrupted.AttemptCount);
+            Assert.Equal(0, await runner.DeliverPendingAsync());
+            var reconciled = await api.SendAsync(new RetryPricingWebhook(eventId, 1));
+            Assert.True(reconciled.IsSuccess);
+            Assert.Equal("Succeeded", reconciled.Value.State);
+            Assert.Equal(1, external.SendCount);
+        }
+    }
+
+    [PostgresFact]
     public async Task Canceled_send_is_unknown_and_can_be_manually_retried()
     {
         using var cancellation = new CancellationTokenSource();
@@ -388,21 +494,50 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
 
     private sealed class FixedWebhookSender(PricingWebhookSendResult result) : IPricingWebhookSender
     {
-        public int Calls { get; private set; }
+        public PricingWebhookQueryResult Receipt { get; set; } = new(PricingWebhookReceipt.NotAccepted, 200, null);
+        public Task<PricingWebhookQueryResult> QueryAsync(PricingWebhookQueryRequest request, CancellationToken cancellationToken = default)
+        {
+            QueryCalls++;
+            return Task.FromResult(Receipt);
+        }
+
+        public int QueryCalls { get; private set; }
+        public List<Guid> Keys { get; } = [];
+        public int Calls => Keys.Count;
         public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default)
         {
-            Calls++;
+            Keys.Add(request.IdempotencyKey);
             return Task.FromResult(result);
         }
     }
 
     private sealed class CancelingWebhookSender(CancellationTokenSource cancellation) : IPricingWebhookSender
     {
+        public Task<PricingWebhookQueryResult> QueryAsync(PricingWebhookQueryRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(new PricingWebhookQueryResult(PricingWebhookReceipt.NotAccepted, 200, null));
+
         public Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default)
         {
             cancellation.Cancel();
             return Task.FromException<PricingWebhookSendResult>(new OperationCanceledException(cancellation.Token));
         }
+    }
+
+    private sealed class InterruptedWebhookSender : IPricingWebhookSender
+    {
+        public Func<Task<PricingWebhookStatus>> ReadStatus { get; set; } = null!;
+        public string? StateBeforeInterruption { get; private set; }
+        public int SendCount { get; private set; }
+
+        public async Task<PricingWebhookSendResult> SendAsync(PricingWebhookSendRequest request, CancellationToken cancellationToken = default)
+        {
+            SendCount++;
+            StateBeforeInterruption = (await ReadStatus()).State;
+            throw new InvalidOperationException("Injected interruption after the external effect.");
+        }
+
+        public Task<PricingWebhookQueryResult> QueryAsync(PricingWebhookQueryRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(new PricingWebhookQueryResult(PricingWebhookReceipt.Accepted, 200, null));
     }
 
     private sealed class StatusHandler(HttpStatusCode status, string? retryAfter = null) : HttpMessageHandler
@@ -413,6 +548,15 @@ public sealed class PricingWebhookOutboxTests(PricingDatabaseFixture database) :
             if (retryAfter is not null) { response.Headers.TryAddWithoutValidation("Retry-After", retryAfter); }
             return Task.FromResult(response);
         }
+    }
+
+    private sealed class ReceiptHandler(HttpStatusCode status, Guid key, bool accepted) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = JsonContent.Create(new PricingWebhookAcceptedV1 { EventId = key, IdempotencyKey = key, Accepted = accepted }),
+            });
     }
 
     private sealed class HangingHandler : HttpMessageHandler

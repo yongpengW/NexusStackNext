@@ -88,6 +88,7 @@
   </Folder>
 
   <Folder Name="/tests/">
+    <Project Path="tests/WebhookProcessHost/WebhookProcessHost.csproj" />
     <Project Path="tests/Architecture.Tests/Architecture.Tests.csproj" />
     <Project Path="tests/BuildingBlocks.Domain.Tests/BuildingBlocks.Domain.Tests.csproj" />
     <Project Path="tests/BuildingBlocks.Application.Tests/BuildingBlocks.Application.Tests.csproj" />

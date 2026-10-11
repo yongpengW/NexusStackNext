@@ -172,7 +172,7 @@ public sealed class CostPricingGatewayJourneyTests
             Assert.Equal(100m, quote.GetProperty("breakEvenPrice").GetDecimal());
             var completion = await receiver.Completion.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(itemId, completion.ItemId);
-            await WaitDataAsync(operatorClient, $"/api/pricing/webhooks/{completion.EventId}", data => data.GetProperty("state").GetString() == "DeadLettered");
+            await WaitDataAsync(operatorClient, $"/api/pricing/webhooks/{completion.EventId}", data => data.GetProperty("state").GetString() == "Unknown");
 
             cacheProxy.SetOffline(false);
             await using var connection = await ConnectionMultiplexer.ConnectAsync(redis);
@@ -208,7 +208,7 @@ public sealed class CostPricingGatewayJourneyTests
             finalGateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, gatewaySettings);
             await PlatformSettingsAccessTests.LoginAsync(finalGateway.Client, "journey-root", "chain-root-password");
             var retained = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", _ => true);
-            Assert.Equal("DeadLettered", retained.GetProperty("state").GetString());
+            Assert.Equal("Unknown", retained.GetProperty("state").GetString());
             var attemptsBeforeRetry = retained.GetProperty("attemptCount").GetInt32();
             using var anonymousClient = new HttpClient { BaseAddress = finalGateway.Client.BaseAddress };
             using (var anonymousRetry = await anonymousClient.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry }))
@@ -217,11 +217,21 @@ public sealed class CostPricingGatewayJourneyTests
             await PlatformSettingsAccessTests.LoginAsync(deniedOperator, "cost-operator", "cost-operator-password");
             using (var deniedRetry = await deniedOperator.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry }))
             { Assert.Equal(HttpStatusCode.Forbidden, deniedRetry.StatusCode); }
+            receiver.QueryUnavailable = true;
+            using (var unavailable = await finalGateway.Client.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry }))
+            {
+                Assert.Equal(HttpStatusCode.ServiceUnavailable, unavailable.StatusCode);
+                Assert.Equal("pricing.webhook.unavailable", (await unavailable.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("errorCode").GetString());
+            }
+            var stillUnknown = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", _ => true);
+            Assert.Equal("Unknown", stillUnknown.GetProperty("state").GetString());
+            Assert.Equal(attemptsBeforeRetry, stillUnknown.GetProperty("attemptCount").GetInt32());
+            receiver.QueryUnavailable = false;
             using var retried = await finalGateway.Client.PostAsJsonAsync(Relative($"/api/pricing/webhooks/{completion.EventId}/retry"), new { expectedAttemptCount = attemptsBeforeRetry });
             Assert.Equal(HttpStatusCode.Accepted, retried.StatusCode);
             var delivered = await WaitDataAsync(finalGateway.Client, $"/api/pricing/webhooks/{completion.EventId}", data => data.GetProperty("state").GetString() == "Succeeded");
-            Assert.Equal(2, delivered.GetProperty("attemptCount").GetInt32());
-            Assert.Equal(2, receiver.Requests[completion.EventId]);
+            Assert.Equal(1, delivered.GetProperty("attemptCount").GetInt32());
+            Assert.Equal(1, receiver.Requests[completion.EventId]);
             Assert.Equal(1, receiver.EffectCount(completion.EventId));
             Assert.False(receiver.SawBearer);
             var finalQuote = await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", _ => true);
@@ -396,6 +406,7 @@ public sealed class CostPricingGatewayJourneyTests
         public TaskCompletionSource<PricingRecalculationCompletedV1> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ConcurrentDictionary<Guid, int> Requests { get; } = new();
         public bool SawBearer { get; private set; }
+        public bool QueryUnavailable { get; set; }
         public Uri Address => new(app.Urls.Single());
         public int EffectCount(Guid id) => _effects.Contains(id) ? 1 : 0;
 
@@ -407,6 +418,7 @@ public sealed class CostPricingGatewayJourneyTests
             var app = builder.Build();
             var receiver = new CompletionReceiver(app);
             app.MapPost("/webhooks/pricing", receiver.AcceptAsync);
+            app.MapGet("/webhooks/pricing", receiver.QueryAsync);
             await app.StartAsync();
             return receiver;
         }
@@ -425,6 +437,24 @@ public sealed class CostPricingGatewayJourneyTests
                 Completion.TrySetResult(message);
                 if (count == 1) { response.StatusCode = 500; return; }
                 await response.WriteAsJsonAsync(new PricingWebhookAcceptedV1 { EventId = message.EventId, IdempotencyKey = message.IdempotencyKey, Accepted = true });
+            }
+            finally { _gate.Release(); }
+        }
+
+        private async Task QueryAsync(HttpRequest request, HttpResponse response)
+        {
+            if (QueryUnavailable) { response.StatusCode = StatusCodes.Status503ServiceUnavailable; return; }
+            var key = Guid.Parse(request.Headers["Idempotency-Key"].ToString());
+            await _gate.WaitAsync();
+            try
+            {
+                SawBearer |= request.Headers.ContainsKey("Authorization");
+                await response.WriteAsJsonAsync(new PricingWebhookAcceptedV1
+                {
+                    EventId = key,
+                    IdempotencyKey = key,
+                    Accepted = _effects.Contains(key),
+                });
             }
             finally { _gate.Release(); }
         }
