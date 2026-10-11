@@ -43,6 +43,7 @@ public sealed class CostPricingGatewayJourneyTests
 
         var prefix = RabbitMqTestBroker.UniquePrefix();
         var broker = RabbitMqTestBroker.Options with { ExchangeName = prefix + "-chain", ClientName = prefix };
+        await using var rabbitProxy = new RabbitMqFaultProxy(broker);
         var costSubscription = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-pricing" };
         var tap = new EventSubscription { EventName = CostCalculatedV1.Name, ConsumerName = prefix + "-tap" };
         var facts = new EventSubscription { EventName = "platform.setting-committed.v1", ConsumerName = prefix + "-facts" };
@@ -51,7 +52,7 @@ public sealed class CostPricingGatewayJourneyTests
         var topology = EventTopology.Create(broker.ExchangeName, [costSubscription, tap, facts, operations, webhook]);
         var redis = Environment.GetEnvironmentVariable("NEXUSSTACK_TEST_REDIS")!;
         await using var cacheProxy = new RedisFaultProxy(redis);
-        var settings = AuditBusinessJourneyTests.Settings(broker, facts.ConsumerName);
+        var settings = AuditBusinessJourneyTests.Settings(rabbitProxy.Options, facts.ConsumerName);
         settings["Auditing__Messaging__OperationConsumerName"] = operations.ConsumerName;
         settings["Jwt__SigningKey"] = BusinessProcess.SigningKey;
         PlatformHostProcess? platform = null;
@@ -234,6 +235,9 @@ public sealed class CostPricingGatewayJourneyTests
 
             // Both caches contain 100. A committed change while Redis is offline must invalidate that old value after recovery.
             cacheProxy.SetOffline(true);
+            await rabbitProxy.WaitForConnectionAsync(TimeSpan.FromSeconds(15));
+            rabbitProxy.SetOffline(true);
+            await rabbitProxy.WaitForDisconnectedAsync(TimeSpan.FromSeconds(15));
             var changedBatchId = Guid.NewGuid();
             using var changedBatch = await operatorClient.PostAsJsonAsync(Relative("/api/costing/batches"), new
             {
@@ -243,8 +247,11 @@ public sealed class CostPricingGatewayJourneyTests
             Assert.Equal(HttpStatusCode.Accepted, changedBatch.StatusCode);
             await WaitDataAsync(operatorClient, $"/api/costing/batches/{changedBatchId}", data => data.GetProperty("state").GetString() == "Completed");
             await WaitDataAsync(operatorClient, $"/api/costing/items/{itemId}/display", data => data.GetProperty("unitCost").ValueKind == JsonValueKind.Number && data.GetProperty("unitCost").GetDecimal() == 125m);
-            await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", data => data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 125m);
+            var duringDisconnect = await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", _ => true);
+            Assert.Equal(100m, duringDisconnect.GetProperty("breakEvenPrice").GetDecimal());
+            rabbitProxy.SetOffline(false);
             cacheProxy.SetOffline(false);
+            await WaitDataAsync(finalGateway.Client, $"/api/pricing/items/{itemId}", data => data.GetProperty("breakEvenPrice").ValueKind == JsonValueKind.Number && data.GetProperty("breakEvenPrice").GetDecimal() == 125m);
             await WaitCacheAsync(operatorClient, cache, $"/api/costing/items/{itemId}/display", $"{settings["Costing__Cache__Namespace"]}:costing:sheet:v1:{itemId:N}", "UnitCost", 125m);
             await WaitCacheAsync(finalGateway.Client, cache, $"/api/pricing/items/{itemId}", $"{settings["Pricing__Cache__Namespace"]}:pricing:quote:v2:{itemId:N}", "BreakEvenPrice", 125m);
         }
