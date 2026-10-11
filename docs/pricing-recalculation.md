@@ -103,12 +103,27 @@ Aspire 可选读取 `NEXUSSTACK_PRICING_DB`，非空时增加 Pricing，并切�
 |---|---|---|
 | `Pricing:Webhook:Enabled` | `false` | 功能开关；默认不产生外部通知 |
 | `Pricing:Webhook:Endpoint` | 空 | 启用时必须是 HTTPS 受控接收端 |
-| `Pricing:Webhook:MaxAttempts` | `5` | 1 至 10；超时、429、5xx 有界退避，其余 4xx 进入失败 |
+| `Pricing:Webhook:MaxAttempts` | `5` | 1 至 10；明确未受理的 429 有界退避，其余永久 4xx 进入失败；结果未知先核对 |
 
 启用 Pricing 的 RabbitMQ 消息配置后，Pricing 先通过本地订阅把事件物化为私有投递记录，再由后台进程在数据库事务之外发送 HTTP；Webhook 开关和 Messaging 开关必须同时启用，否则宿主快速失败。
-接收方必须返回包含 `EventId`、`IdempotencyKey` 与 `Accepted=true` 的 `PricingWebhookAcceptedV1` JSON 确认，并按幂等键去重；仅返回 2xx 但确认无效会进入 Failed。对于可重试的 429、408 和 5xx，若响应带有合法 `Retry-After`，系统优先采用该等待时间；等待时间限制在 0 至 300 秒，缺失或非法值回退到本地指数退避。超时意味着结果未知，取消中的请求也记录为 Unknown，系统只按有界策略重试，不声称 exactly-once；Failed、DeadLettered、Unknown 均可按当前尝试次数人工恢复。
-事件携带受理重算的 `ExecutionOrigin`，投递 worker 通过 `pricing.webhook.deliver` 后台观察记录 OperationId、RootOperationId、TraceId 和 CorrelationId，便于调查关联。
+接收方必须将幂等凭据与外部效果一起持久化，再返回包含原 `EventId`、`IdempotencyKey` 与 `Accepted=true` 的 `PricingWebhookAcceptedV1` JSON 确认。重复 POST 必须复用原结果，不能产生第二次效果。
+
+发送前先条件领取并持久记录 `Unknown` 和本次尝试次数，再在数据库事务之外发送；因此进程在外部完成后、本地保存结果前退出，也不会重新把该通知当成尚未发送。有效确认将它改为 `Succeeded`。超时、断线、408/5xx、无效成功确认以及调用方取消均保留 `Unknown`，worker 不自动重放 POST。取消继续向调用方传播。明确未受理的 429 可以自动重试，合法 `Retry-After` 限制在 0 至 300 秒；缺失或非法值回退到有界指数退避，耗尽进入 `DeadLettered`。其他永久 4xx 进入 `Failed`。这依赖受控接收端约定，不把任意外部供应商的 429 当作未发生效果的证明。
+
+`POST /api/pricing/webhooks/{eventId}/retry` 使用当前尝试次数条件恢复。对于 `Unknown`，先通过 `IPricingWebhookSender.QueryAsync` 在事务之外向原 HTTPS 端点发 GET，携带同一个 `Idempotency-Key` 与追踪标识：
+
+| 核对响应 | 恢复行为 |
+|---|---|
+| HTTP 200、两个身份匹配、`Accepted=true` | 直接恢复 `Succeeded`，保留尝试次数，不再 POST |
+| HTTP 200、两个身份匹配、`Accepted=false` | 接收端明确确认尚未受理；原身份回到立即可领取的 `Pending` |
+| 查询不可用、202/404 等其他状态、无效 JSON 或身份不匹配 | 返回 503 / `pricing.webhook.unavailable`，保持原 `Unknown`，不重发 |
+
+接收端的 GET 只核对持久结果，必须与同键的受理写入协调；缺少这个协议的端点不能通过普通 404 被推断为未受理。`Failed`、`DeadLettered` 的人工恢复继续复用原事件和载荷；条件更新拒绝过期的尝试次数或状态。人工开放的通知立即可领取，不依赖数据库与 worker 的墙钟完全一致。
+
+事件携带受理重算的 `ExecutionOrigin`，发送与核对分别通过 `pricing.webhook.deliver` / `pricing.webhook.reconcile` 后台观察记录 OperationId、RootOperationId、TraceId 和 CorrelationId，便于调查关联；确认正文、外部凭据和业务敏感载荷不进入状态或日志。
 当前接收端仅用于本地和 CI 验证，不代表已经接入生产供应商。
+
+验证边界为 `ISender`、`IPricingWebhookDeliveryRunner`、受控 HTTP 接收端及既有真实网关旅程。`WebhookProcessHost` 是仅用于测试的可执行装置：两个真实 OS 进程在已落盘而回复未返回时被杀掉，重启后仅查询原键并验证 POST 一次、效果一份；它复用产品 worker 和 HTTP 适配器，仅把测试传输改写到回环接收端，不为测试修改生产 HTTPS 校验或机器证书信任。产品宿主的认证、503 契约和 Costing/Pricing 协作继续由真实网关旅程验收。
 
 进程崩溃后 Running 任务等待租约到期再接管，超过尝试上限进入 Failed。普通失败进入有界退避或 Failed。
 公式仍是有限本地计算，现有执行者接口支持固定总预算内的条件续租；检查点、任意脚本执行与历史清理尚未实现。

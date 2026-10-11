@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using NexusStackNext.BuildingBlocks.Application;
@@ -9,12 +10,99 @@ using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
+using NexusStackNext.WebhookProcessHost;
 
 namespace NexusStackNext.HostIntegration.Tests;
 
 [Collection(JourneyDatabaseDefinition.Name)]
 public sealed class PricingWebhookJourneyTests(JourneyDatabaseTemplates databases)
 {
+    [PostgresFact]
+    public async Task Persisted_external_effect_is_reconciled_after_both_real_processes_crash_without_resending()
+    {
+        await using var database = await databases.CreateAsync("pricing");
+        var eventId = Guid.NewGuid();
+        await SeedWebhookAsync(database.ConnectionString, new PricingRecalculationCompletedV1
+        {
+            EventId = eventId,
+            IdempotencyKey = eventId,
+            ItemId = Guid.NewGuid(),
+            Version = 1,
+            InputRevision = 1,
+            CalculatedRevision = 1,
+            TraceId = "trace-process-loss",
+            CorrelationId = "correlation-process-loss",
+            OccurredAt = DateTimeOffset.UtcNow,
+        });
+        var assembly = typeof(WebhookProcessMarker).Assembly.Location;
+        var path = Path.Combine(Path.GetTempPath(), $"nsn-webhook-receipt-{Guid.NewGuid():N}.json");
+        var receiverSettings = new Dictionary<string, string>
+        {
+            ["NSN_WEBHOOK_PROBE_MODE"] = "receiver",
+            ["NSN_WEBHOOK_PROBE_STATE"] = path,
+            ["NSN_WEBHOOK_PROBE_HOLD_REPLY"] = "true",
+        };
+        BusinessProcess? receiver = null;
+        BusinessProcess? sender = null;
+        try
+        {
+            receiver = await BusinessProcess.StartAsync(assembly, "Pricing", database.ConnectionString, settings: receiverSettings);
+            sender = await BusinessProcess.StartAsync(assembly, "Pricing", database.ConnectionString, settings: new Dictionary<string, string>
+            {
+                ["NSN_WEBHOOK_PROBE_RECEIVER"] = receiver.Client.BaseAddress!.AbsoluteUri,
+            });
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            while (true)
+            {
+                var receipt = await receiver.Client.GetFromJsonAsync<ReceiverReceipt>(new Uri($"/stats/{eventId:D}", UriKind.Relative), timeout.Token);
+                if (receipt!.Accepted)
+                {
+                    Assert.Equal(1, receipt.Requests);
+                    Assert.Equal(0, receipt.Queries);
+                    break;
+                }
+                await Task.Delay(100, timeout.Token);
+            }
+            var inFlight = await sender.Client.GetFromJsonAsync<PricingWebhookStatus>(new Uri($"/status/{eventId:D}", UriKind.Relative));
+            Assert.Equal("Unknown", inFlight!.State);
+            Assert.Equal(1, inFlight.AttemptCount);
+            Assert.Equal("awaiting_confirmation", inFlight.LastError);
+            await sender.CrashAsync();
+            await receiver.CrashAsync();
+            await sender.DisposeAsync();
+            sender = null;
+            await receiver.DisposeAsync();
+            receiver = null;
+
+            receiverSettings["NSN_WEBHOOK_PROBE_HOLD_REPLY"] = "false";
+            receiver = await BusinessProcess.StartAsync(assembly, "Pricing", database.ConnectionString, settings: receiverSettings);
+            sender = await BusinessProcess.StartAsync(assembly, "Pricing", database.ConnectionString, settings: new Dictionary<string, string>
+            {
+                ["NSN_WEBHOOK_PROBE_RECEIVER"] = receiver.Client.BaseAddress!.AbsoluteUri,
+            });
+            var retained = await sender.Client.GetFromJsonAsync<PricingWebhookStatus>(new Uri($"/status/{eventId:D}", UriKind.Relative));
+            Assert.Equal("Unknown", retained!.State);
+            Assert.Equal(1, retained.AttemptCount);
+            Assert.Equal("awaiting_confirmation", retained.LastError);
+            using var response = await sender.Client.PostAsJsonAsync(new Uri($"/retry/{eventId:D}", UriKind.Relative), new { expectedAttemptCount = 1 });
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var reconciled = await response.Content.ReadFromJsonAsync<PricingWebhookStatus>();
+            Assert.Equal("Succeeded", reconciled!.State);
+            Assert.Equal(1, reconciled.AttemptCount);
+            Assert.NotNull(reconciled.DeliveredAt);
+            var final = await receiver.Client.GetFromJsonAsync<ReceiverReceipt>(new Uri($"/stats/{eventId:D}", UriKind.Relative));
+            Assert.Equal(1, final!.Requests);
+            Assert.Equal(1, final.Queries);
+            Assert.True(final.Accepted);
+        }
+        finally
+        {
+            if (sender is not null) { await sender.DisposeAsync(); }
+            if (receiver is not null) { await receiver.DisposeAsync(); }
+            File.Delete(path);
+        }
+    }
+
     [PostgresFact]
     public async Task Webhook_status_requires_permission_and_survives_pricing_process_restart()
     {
@@ -81,4 +169,6 @@ public sealed class PricingWebhookJourneyTests(JourneyDatabaseTemplates database
         var processor = scope.ServiceProvider.GetRequiredKeyedService<IIntegrationEventProcessor>(PricingRecalculationCompletedV1.Name);
         Assert.True(await processor.HandleAsync(envelope));
     }
+
+    private sealed record ReceiverReceipt(int Requests, int Queries, bool Accepted);
 }

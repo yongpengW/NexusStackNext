@@ -193,7 +193,7 @@ public static class PricingModule
             var result = await sender.SendAsync(new RetryPricingWebhook(eventId, request.ExpectedAttemptCount), token).ConfigureAwait(false);
             return result.IsSuccess ? (IResult)responses.Accepted(result.Value) : Failure(result.Error);
         }).RequirePermission("/api/pricing/webhooks/{eventId}/retry", "POST")
-            .Produces<ApiResponse<PricingWebhookStatus>>(202).ProducesApiErrors(409, 415);
+            .Produces<ApiResponse<PricingWebhookStatus>>(202).ProducesApiErrors(409, 415, 503);
         group.MapPost("/tasks/{taskId:guid}/cancel", async (Guid taskId, CancelRequest request, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new CancelPricingWork(taskId, request.ExpectedEpoch), token).ConfigureAwait(false);
@@ -224,6 +224,7 @@ public static class PricingModule
             "pricing.delivery_conflict" or "pricing.delivery_recovery.request_conflict" or "pricing.audit_policy.conflict" or "pricing.request_conflict" or "pricing.version_conflict" or "pricing.retry_conflict" or "pricing.cost_owned_by_costing" or "pricing.cancel_conflict" => StatusCodes.Status409Conflict,
             "pricing.webhook.conflict" => StatusCodes.Status409Conflict,
             "pricing.webhook.not_found" => StatusCodes.Status404NotFound,
+            "pricing.webhook.unavailable" => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status400BadRequest,
         }, extensions: new Dictionary<string, object?> { ["errorCode"] = error.Code });
 }

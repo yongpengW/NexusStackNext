@@ -41,6 +41,20 @@ internal sealed class PricingWebhookDeliveryService(PricingDbContext database, P
         var delivered = 0;
         foreach (var delivery in pending)
         {
+            var attempt = delivery.AttemptCount + 1;
+            database.ChangeTracker.Clear();
+            await using (var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var claimed = await PricingWebhookPersistence.LockAsync(database, delivery.EventId, cancellationToken).ConfigureAwait(false);
+                if (claimed is null || claimed.State != "Pending" || claimed.AttemptCount != delivery.AttemptCount) { continue; }
+                claimed.State = "Unknown";
+                claimed.AttemptCount = attempt;
+                claimed.NextAttemptAt = null;
+                claimed.LastError = "awaiting_confirmation";
+                claimed.LastStatusCode = null;
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
             PricingWebhookSendResult outcome;
             try
             {
@@ -50,53 +64,63 @@ internal sealed class PricingWebhookDeliveryService(PricingDbContext database, P
                         new(new Uri(delivery.Endpoint), delivery.Payload, delivery.EventId, delivery.TraceId), delivery.Execution)),
                     request => sender.SendAsync(request, cancellationToken),
                     static result => result.Succeeded ? BackgroundExecutionOutcome.Completed
-                        : result.Retryable ? BackgroundExecutionOutcome.Deferred : BackgroundExecutionOutcome.Failed,
+                        : result.Retryable || result.OutcomeUnknown ? BackgroundExecutionOutcome.Deferred : BackgroundExecutionOutcome.Failed,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 database.ChangeTracker.Clear();
-                var canceled = await database.WebhookDeliveries.SingleOrDefaultAsync(x => x.EventId == delivery.EventId, CancellationToken.None).ConfigureAwait(false);
-                if (canceled is not null && canceled.State == "Pending")
+                await using var transaction = await database.Database.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
+                var canceled = await PricingWebhookPersistence.LockAsync(database, delivery.EventId, CancellationToken.None).ConfigureAwait(false);
+                if (canceled is not null && canceled.State == "Unknown" && canceled.AttemptCount == attempt)
                 {
-                    canceled.AttemptCount++;
-                    canceled.State = "Unknown";
-                    canceled.NextAttemptAt = null;
                     canceled.LastError = "canceled";
-                    canceled.LastStatusCode = null;
                     await database.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+                    await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
                 }
                 throw;
             }
-            database.ChangeTracker.Clear();
-            var current = await database.WebhookDeliveries.SingleOrDefaultAsync(x => x.EventId == delivery.EventId, cancellationToken).ConfigureAwait(false);
-            if (current is null || current.State != "Pending") { continue; }
-            current.AttemptCount++;
-            current.LastStatusCode = outcome.StatusCode;
-            current.LastError = outcome.ErrorCode;
+            string state;
+            DateTimeOffset? nextAttemptAt = null;
+            DateTimeOffset? deliveredAt = null;
             if (outcome.Succeeded)
             {
-                current.State = "Succeeded";
-                current.DeliveredAt = clock.UtcNow;
-                current.NextAttemptAt = null;
-                delivered++;
+                state = "Succeeded";
+                deliveredAt = clock.UtcNow;
             }
-            else if (!outcome.Retryable || current.AttemptCount >= options.MaxAttempts)
+            else if (outcome.OutcomeUnknown)
             {
-                current.State = outcome.Retryable ? "DeadLettered" : "Failed";
-                current.NextAttemptAt = null;
+                state = "Unknown";
+            }
+            else if (!outcome.Retryable || attempt >= options.MaxAttempts)
+            {
+                state = outcome.Retryable ? "DeadLettered" : "Failed";
             }
             else
             {
+                state = "Pending";
                 var delay = outcome.RetryAfter is { } retryAfter
                     && retryAfter >= TimeSpan.Zero
                     && retryAfter <= PricingWebhookDeliveryPolicy.MaxRetryAfter
                     ? retryAfter
                     : TimeSpan.FromSeconds(Math.Min(PricingWebhookDeliveryPolicy.MaxRetryAfter.TotalSeconds,
-                        Math.Pow(2, current.AttemptCount)));
-                current.NextAttemptAt = clock.UtcNow.Add(delay);
+                        Math.Pow(2, attempt)));
+                nextAttemptAt = clock.UtcNow.Add(delay);
             }
-            await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            database.ChangeTracker.Clear();
+            await using (var transaction = await database.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var completed = await PricingWebhookPersistence.LockAsync(database, delivery.EventId, cancellationToken).ConfigureAwait(false);
+                if (completed is null || completed.State != "Unknown" || completed.AttemptCount != attempt) { continue; }
+                completed.State = state;
+                completed.DeliveredAt = deliveredAt;
+                completed.NextAttemptAt = nextAttemptAt;
+                completed.LastError = outcome.ErrorCode;
+                completed.LastStatusCode = outcome.StatusCode;
+                await database.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (outcome.Succeeded) { delivered++; }
+            }
         }
         return delivered;
     }
@@ -119,8 +143,9 @@ internal sealed class HttpPricingWebhookSender(HttpClient client) : IPricingWebh
             var status = (int)response.StatusCode;
             if (!response.IsSuccessStatusCode)
             {
-                var retryable = status == 408 || status == 429 || status >= 500;
-                return new PricingWebhookSendResult(false, retryable, status, $"http_{status}", retryable ? ParseRetryAfter(response) : null);
+                var retryable = status == 429;
+                return new PricingWebhookSendResult(false, retryable, status, $"http_{status}", retryable ? ParseRetryAfter(response) : null,
+                    OutcomeUnknown: status == 408 || status >= 500);
             }
             try
             {
@@ -128,20 +153,53 @@ internal sealed class HttpPricingWebhookSender(HttpClient client) : IPricingWebh
                 return acknowledgement is { Accepted: true, EventId: var eventId, IdempotencyKey: var idempotencyKey }
                     && eventId == request.IdempotencyKey && idempotencyKey == request.IdempotencyKey
                     ? new PricingWebhookSendResult(true, false, status, null)
-                    : new PricingWebhookSendResult(false, false, status, "invalid_ack");
+                    : new PricingWebhookSendResult(false, false, status, "invalid_ack", OutcomeUnknown: true);
             }
             catch (Exception error) when (error is System.Text.Json.JsonException or NotSupportedException)
             {
-                return new PricingWebhookSendResult(false, false, status, "invalid_ack");
+                return new PricingWebhookSendResult(false, false, status, "invalid_ack", OutcomeUnknown: true);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new PricingWebhookSendResult(false, true, null, "timeout");
+            return new PricingWebhookSendResult(false, false, null, "timeout", OutcomeUnknown: true);
         }
         catch (HttpRequestException)
         {
-            return new PricingWebhookSendResult(false, true, null, "transport_unavailable");
+            return new PricingWebhookSendResult(false, false, null, "transport_unavailable", OutcomeUnknown: true);
+        }
+    }
+
+    public async Task<PricingWebhookQueryResult> QueryAsync(PricingWebhookQueryRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Get, request.Endpoint);
+            message.Headers.Add("Idempotency-Key", request.IdempotencyKey.ToString("D"));
+            message.Headers.Add("X-NexusStack-Trace", request.TraceId);
+            using var response = await client.SendAsync(message, cancellationToken).ConfigureAwait(false);
+            var status = (int)response.StatusCode;
+            if (response.StatusCode != System.Net.HttpStatusCode.OK) { return new(PricingWebhookReceipt.Unknown, status, $"http_{status}"); }
+            try
+            {
+                var acknowledgement = await response.Content.ReadFromJsonAsync<PricingWebhookAcceptedV1>(cancellationToken).ConfigureAwait(false);
+                return acknowledgement is not null && acknowledgement.EventId == request.IdempotencyKey
+                    && acknowledgement.IdempotencyKey == request.IdempotencyKey
+                    ? new(acknowledgement.Accepted ? PricingWebhookReceipt.Accepted : PricingWebhookReceipt.NotAccepted, status, null)
+                    : new(PricingWebhookReceipt.Unknown, status, "invalid_ack");
+            }
+            catch (Exception error) when (error is System.Text.Json.JsonException or NotSupportedException)
+            {
+                return new(PricingWebhookReceipt.Unknown, status, "invalid_ack");
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new(PricingWebhookReceipt.Unknown, null, "timeout");
+        }
+        catch (HttpRequestException)
+        {
+            return new(PricingWebhookReceipt.Unknown, null, "transport_unavailable");
         }
     }
 
