@@ -131,9 +131,10 @@ public sealed class CostingFactCapacityTests
         {
             await LegacyMigrations.ApplyAsync(database.ConnectionString, "costing", new InitialCosting(), new TaskExecutionOrigin(),
                 new OutboxRetryRevision(), new CommittedFactCleanup(), new TaskManagement(),
-                new NexusStackNext.Costing.Infrastructure.Migrations.CostBatchInput(), new NexusStackNext.Costing.Infrastructure.Migrations.CostBatchExecution());
+                new NexusStackNext.Costing.Infrastructure.Migrations.CostBatchInput(), new NexusStackNext.Costing.Infrastructure.Migrations.CostBatchExecution(),
+                new NexusStackNext.Costing.Infrastructure.Migrations.CostingDisplayCache());
             // Keep the capacity ledger absent for this upgrade probe, while supplying the current
-            // request-identity registry required by manual/batch namespace arbitration.
+            // request-identity registry and display invalidation table required by current writes.
             var clock = new FixedClock(new DateTimeOffset(2026, 10, 4, 0, 0, 0, TimeSpan.Zero));
             await using var app = CreateApplication(database.ConnectionString, clock);
             await using var scope = app.CreateAsyncScope();

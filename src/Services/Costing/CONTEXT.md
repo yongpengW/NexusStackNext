@@ -75,6 +75,11 @@ _Avoid_: 计划裁决、成本计算完成、重投改写原回执
 相同请求、操作者及内容重放原裁决；凭据存在不表示消息当前仍待投递，也不表示中央已经保存事实。
 _Avoid_: CostDelivery、成本计算重试、中央审计完成
 
+**CostSheetDisplaySnapshot**:
+展示查询返回的成本对象视图，允许固定 TTL 内的旧版本；不用于编辑、任务执行、权限裁决或成本提交。
+Redis 只是该读模型的加速适配器，Costing PostgreSQL 的缓存失效意图才是恢复依据。
+_Avoid_: 权威成本读取、权限缓存、任务状态
+
 **RetryRevision**:
 所属事实消息的恢复代次。每次实际恢复加一，与观察到的停止时刻一起拒绝过期请求；不属于成本或任务版本。
 _Avoid_: CostRevision、聚合 Version、ExecutionEpoch
