@@ -11,7 +11,7 @@ using NexusStackNext.Pricing.Domain;
 namespace NexusStackNext.Pricing.Infrastructure;
 
 internal sealed class PricingCommittedFactInterceptor(IClock clock, IIntegrationEventSerializer serializer,
-    ICurrentUser? currentUser = null, IExecutionContext? execution = null) : CommittedFactInterceptor<PricingDbContext>
+    PricingWebhookOptions webhook, ICurrentUser? currentUser = null, IExecutionContext? execution = null) : CommittedFactInterceptor<PricingDbContext>
 {
     protected override IReadOnlyList<OutboxEntry> CreateFacts(PricingDbContext context)
     {
@@ -31,10 +31,10 @@ internal sealed class PricingCommittedFactInterceptor(IClock clock, IIntegration
                 : quote.CalculatedRevision != entry.Property(item => item.CalculatedRevision).OriginalValue
                     || quote.BreakEvenPrice != entry.Property(item => item.BreakEvenPrice).OriginalValue) { changes.Add((quote, "result-applied")); }
         }
-        var origin = execution?.Capture();
+        var origin = execution?.Capture() ?? context.PendingExecutionOrigin;
         var trace = origin?.TraceId ?? Activity.Current?.TraceId.ToString() ?? Guid.NewGuid().ToString("N");
         var now = clock.UtcNow;
-        return changes.Select(change => OutboxEntry.From(new PriceQuoteCommittedV1
+        var entries = changes.Select(change => OutboxEntry.From(new PriceQuoteCommittedV1
         {
             ItemId = change.Quote.Id.Value,
             Operation = change.Operation,
@@ -45,6 +45,27 @@ internal sealed class PricingCommittedFactInterceptor(IClock clock, IIntegration
             TraceId = trace,
             CorrelationId = origin?.CorrelationId ?? trace,
             Execution = origin,
-        }, serializer)).ToArray();
+        }, serializer)).ToList();
+        if (webhook.Enabled)
+        {
+            foreach (var change in changes.Where(change => change.Operation == "result-applied"))
+            {
+                var notification = new PricingRecalculationCompletedV1
+                {
+                    ItemId = change.Quote.Id.Value,
+                    Version = change.Quote.Version,
+                    InputRevision = change.Quote.InputRevision,
+                    CalculatedRevision = change.Quote.CalculatedRevision,
+                    IdempotencyKey = Guid.NewGuid(),
+                    OccurredAt = now,
+                    TraceId = trace,
+                    CorrelationId = origin?.CorrelationId ?? trace,
+                    Execution = origin,
+                };
+                notification = notification with { IdempotencyKey = notification.EventId };
+                entries.Add(OutboxEntry.From(notification, serializer));
+            }
+        }
+        return entries;
     }
 }

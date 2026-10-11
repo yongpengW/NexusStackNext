@@ -9,6 +9,7 @@ using NexusStackNext.BuildingBlocks.Infrastructure.Events;
 using NexusStackNext.BuildingBlocks.Infrastructure.Persistence;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Pricing.Application;
+using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Pricing.Domain;
 
 namespace NexusStackNext.Pricing.Infrastructure;
@@ -45,15 +46,24 @@ public static class PricingServices
     /// <param name="connectionString">所属数据库的连接配置。</param>
     /// <param name="options">有界执行策略。</param>
     /// <param name="cacheOptions">可选缓存和回源预算。</param>
+    /// <param name="webhookOptions">重算完成通知的有界配置。</param>
     /// <returns>容器。</returns>
     public static IServiceCollection AddPricingPostgres(this IServiceCollection services, string connectionString, PricingTaskOptions? options = null,
-        PricingCacheOptions? cacheOptions = null)
+        PricingCacheOptions? cacheOptions = null, PricingWebhookOptions? webhookOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         var policy = options ?? new PricingTaskOptions();
         policy.Validate();
         services.AddSingleton(policy);
+        var webhook = webhookOptions ?? new PricingWebhookOptions();
+        webhook.Validate();
+        services.AddSingleton(webhook);
+        services.AddSingleton<HttpClient>(_ => new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromSeconds(10),
+        });
+        services.AddSingleton<IPricingWebhookSender>(provider => new HttpPricingWebhookSender(provider.GetRequiredService<HttpClient>()));
         services.TryAddSingleton<IIntegrationEventSerializer, SystemTextJsonIntegrationEventSerializer>();
         services.AddScoped<PricingCommittedFactInterceptor>();
         var cache = cacheOptions ?? new PricingCacheOptions();
@@ -66,6 +76,12 @@ public static class PricingServices
         services.AddScoped<IOutboxStore, EfOutboxStore<PricingDbContext>>();
         services.AddScoped<IPricingAuditDelivery, EfPricingAuditDelivery>();
         services.AddKeyedScoped<IIntegrationEventProcessor, PricingCostIngestion>(CostCalculatedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, PricingWebhookProcessor>(PricingRecalculationCompletedV1.Name);
+        services.AddScoped<PricingWebhookDeliveryService>();
+        services.AddScoped<IPricingWebhookDeliveryRunner>(provider => provider.GetRequiredService<PricingWebhookDeliveryService>());
+        services.AddScoped<IQueryHandler<GetPricingWebhook, PricingWebhookStatus>, PricingWebhookControl>();
+        services.AddScoped<ICommandHandler<RetryPricingWebhook, PricingWebhookStatus>, PricingWebhookControl>();
+        if (webhook.Enabled) { services.AddHostedService<PricingWebhookWorker>(); }
         services.AddScoped<ICommandHandler<UpdatePricingFee, RecalculationStatus>, PricingFeeCommands>();
         services.AddScoped<ICommandHandler<UpdatePricingCost, RecalculationStatus>, PricingCommands>();
         services.AddScoped<IQueryHandler<GetRecalculation, RecalculationStatus>, PricingCommands>();
