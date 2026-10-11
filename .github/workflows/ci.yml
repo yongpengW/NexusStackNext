@@ -164,13 +164,25 @@ jobs:
           retention-days: 7
 
   repository-checks:
-    # 与产品测试并行；不启动服务，也不读取仓库的私有开发配置。
+    # 与产品测试并行；模板最小旅程独占此 runner 的 PostgreSQL，不读取私有开发配置。
     name: 仓库与工具检查
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
       issues: read
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -223,7 +235,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./scripts/check-issues.ps1
 
-      - name: 断言模板生成工程可构建且格式正确
+      - name: 验证生成工程的构建、架构、迁移与真实网关旅程
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -236,6 +248,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Template generation failed.' }
           dotnet build "$out/CiProbe.slnx" --configuration Release
           if ($LASTEXITCODE -ne 0) { throw 'Generated project build failed.' }
+          $connection = [System.Data.Common.DbConnectionStringBuilder]::new()
+          $connection['Host'] = '127.0.0.1'
+          $connection['Port'] = 5432
+          $connection['Database'] = 'postgres'
+          $connection['Username'] = 'postgres'
+          $env:NEXUSSTACK_TEST_POSTGRES = $connection.ConnectionString
+          Push-Location $out
+          try {
+            ./scripts/run-tests.ps1 -Scope Focused -Project Architecture.Tests -Configuration Release -NoBuild
+            if ($LASTEXITCODE -ne 0) { throw 'Generated architecture tests failed.' }
+            # 原生成测试面：六个平台迁移 CLI、Pricing 迁移、真实进程/网关/查询/重启。
+            ./scripts/run-tests.ps1 -Scope Focused -Project HostIntegration.Tests -Configuration Release -NoBuild -Filter 'FullyQualifiedName~PricingProcessRestartGatewayJourneyTests'
+            if ($LASTEXITCODE -ne 0) { throw 'Generated runtime journey failed.' }
+          }
+          finally { Pop-Location }
           dotnet format "$out/CiProbe.slnx" --verify-no-changes --no-restore
           if ($LASTEXITCODE -ne 0) { throw 'Generated project format failed.' }
 

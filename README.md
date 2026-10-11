@@ -289,17 +289,17 @@ dotnet new nexusstack-next -n MyProject --allow-scripts yes
 即"规范随模板走"。创建时先还原依赖，再调用 `dotnet format --no-restore`，
 整理命名空间改名后变化的导入顺序；`--allow-scripts yes` 允许这一创建后动作。
 若选择不执行创建后动作，在生成目录手动运行 `dotnet restore` 和 `dotnet format --no-restore`。
+Linux CI 在实际改名生成目录内运行架构检查、独立迁移和真实网关/进程重启旅程，顺序同样是 build → tests → format。
 
 ## 怎么在这个仓库里工作
 
 本仓库使用 MattSkills 约定：
 
-- **跟踪器**：`.scratch/<feature-slug>/` —— `spec.md`、`issues/NN-*.md`、`map.md`。
-  约定见 `docs/agents/issue-tracker.md`。
+- **跟踪器**：GitHub Issues；`.scratch/<feature-slug>/` 是冻结历史档案。约定见 `docs/agents/issue-tracker.md`。
 - **词表**：`CONTEXT-MAP.md` 指向每个上下文的 `CONTEXT.md`。写代码时用词表里的词，
   别用 `_Avoid_` 里列的同义词。
 - **决策**：`docs/adr/` 记系统级，`src/Services/<Context>/docs/adr/` 记上下文级。
-- **架构不变量**：改代码前先看 `AGENTS.md`；改完跑 `dotnet test`。
+- **架构不变量**：改代码前先看 `AGENTS.md`；测试使用 `pwsh -File scripts/run-tests.ps1`，按 `docs/testing-strategy.md` 选择范围。
 
 ## 给 AI agent 的话
 
