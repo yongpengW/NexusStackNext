@@ -47,7 +47,7 @@ Notifications 的 `EmailDelivery` 及启用后的HTTP写入口纳入遗漏检查
 |---|---|---|
 | Platform / GlobalSetting | 创建、值或说明变更、清空值；版本未变不记新事实 | `AuditBusinessJourneyTests` 验证提交、回滚、空操作、来源重启、真实 MQ 和中央库故障；`PlatformFactCapacityTests` / `MemoryPlatformFactCapacityTests` 验证整批准入；策略与条件恢复见下方六来源治理矩阵 |
 | Identity / User | 注册、角色分配/撤销、密码/联系方式变更、启禁用、会话撤销、成功登录状态、失败计数/锁定 | `IdentityCommittedFactPersistenceTests` / `MemoryIdentityTransactionTests` 验证实际变化、空操作、失败、取消、竞争与同作用域重试；`IdentityCommittedAuditTests` 验证 HTTP 拒绝仍提交安全变化、来源写失败、真实重启和 MQ |
-| Identity / Role | 创建、改名、平台范围、菜单授权/撤销/替换 | PostgreSQL 创建及修改经 `IdentityCommittedFactPersistenceTests` 验证，Memory 经 `MemoryIdentityTransactionTests` 验证；创建/授权经真实消息旅程验证。当前没有删除入口，未来新增删除须连同事实验收 |
+| Identity / Role | 创建、改名、平台范围、启停、菜单授权/撤销/替换 | PostgreSQL 创建及修改经 `IdentityCommittedFactPersistenceTests` 验证，启停经持久化重启旅程验证，Memory 经 `MemoryIdentityTransactionTests` 验证；创建/授权经真实消息旅程验证。当前没有删除入口，未来新增删除须连同事实验收 |
 | Identity / MenuTree | 建树、增删节点、移动、名称/排序改变 | PostgreSQL 节点差异经存储端口验证，包括删除最后节点、创建时已有节点、移动子树及删后重建的净变化；客体为树根及其版本，关联为节点；建树、节点创建、条件编辑/移动/删除经真实 HTTP/Gateway 及重启旅程验证 |
 | Identity / ApiResource | API 资源登记 | PostgreSQL 登记、所属 Menu 与非法输入拒绝经 ISender 验证，登记关联经真实消息旅程验证；Memory 批次失败与净变化由 `MemoryIdentityTransactionTests` 验证。菜单删除保留历史资源，但权限投影会排除不存在的菜单 |
 | Identity / RefreshToken | 签发、消费、撤销；只记录令牌内部标识，禁止令牌及其哈希/自由文本原因 | PostgreSQL 三类变化与重复撤销经存储端口验证；签发/消费、所属 User 关联及重放造成的会话撤销经真实消息旅程验证 |

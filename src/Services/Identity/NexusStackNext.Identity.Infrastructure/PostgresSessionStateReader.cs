@@ -64,7 +64,7 @@ public sealed class PostgresSessionStateReader : ISessionStateReader, IAccessSta
                       JOIN identity.menu_nodes mn ON mn."Id" = rm.menu_id
                       JOIN identity.menu_trees mt ON mt."Id" = mn.menu_tree_id
                       JOIN identity.api_resources ar ON ar."MenuId" = mn."Id"
-                      WHERE ur.user_id = u."Id" AND ar."RoutePattern" = @path AND ar."HttpMethod" = @method)
+                      WHERE ur.user_id = u."Id" AND r."IsEnabled" AND ar."RoutePattern" = @path AND ar."HttpMethod" = @method)
                   FROM identity.users u WHERE u."Id" = @id
                   """;
             if (required is { } operation)

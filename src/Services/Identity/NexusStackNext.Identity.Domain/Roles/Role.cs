@@ -109,6 +109,7 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
         Name = source.Name;
         Platforms = source.Platforms;
         IsSystem = source.IsSystem;
+        IsEnabled = source.IsEnabled;
         _grantedMenuIds.UnionWith(source._grantedMenuIds);
     }
 
@@ -136,6 +137,9 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
 
     /// <summary>是否系统内置角色。</summary>
     public bool IsSystem { get; }
+
+    /// <summary>是否参与当前授权；停用保留用户归属和菜单授权。</summary>
+    public bool IsEnabled { get; private set; } = true;
 
     /// <summary>已授权的菜单标识（有序，便于比较与断言）。</summary>
     public IReadOnlyList<MenuId> GrantedMenuIds => [.. _grantedMenuIds.OrderBy(static id => id.Value)];
@@ -185,6 +189,18 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
 
         Name = name;
         BumpVersion();
+    }
+
+    /// <summary>启停角色；系统内置角色不可停用，相同状态为空操作。</summary>
+    /// <param name="enabled">目标状态。</param>
+    /// <param name="at">变更时刻。</param>
+    /// <returns>变更结果。</returns>
+    public Result SetEnabled(bool enabled, DateTimeOffset at)
+    {
+        if (!enabled && IsSystem) { return Result.Failure(new("identity.role.system_disable", "系统内置角色不允许停用。")); }
+        if (IsEnabled == enabled) { return Result.Success(); }
+        IsEnabled = enabled;
+        return RaisePermissionsChanged(at);
     }
 
     /// <summary>改变适用平台。传入相同的集合不是改变。</summary>

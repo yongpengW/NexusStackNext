@@ -8,6 +8,45 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class BusinessAuthorizationManagementTests
 {
     [Fact]
+    public async Task Role_disable_preserves_assignments_and_grants_and_enable_restores_the_same_session_access()
+    {
+        await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
+        using var root = app.CreateClient();
+        using var user = app.CreateClient();
+        await UserLifecycleHttpTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        var menu = (await CreateAsync(root, "/api/identity/menus", new { title = "Enabled role", sortOrder = 1 })).GetProperty("menuId").GetString();
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus", method = "GET", menuId = menu });
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "enabled-role", name = "Enabled role" })).GetProperty("roleId").GetString();
+        var id = (await CreateAsync(user, "/api/identity/users", new { userName = "enabled-role-user", password = "enabled-role-password" })).GetProperty("userId").GetString();
+        await UserLifecycleHttpTests.LoginAsync(user, "enabled-role-user", "enabled-role-password");
+        using (var grant = await root.PostAsync(Path($"/api/identity/roles/{role}/menus/{menu}"), null)) { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+        using (var assign = await root.PostAsync(Path($"/api/identity/users/{id}/roles/{role}"), null)) { Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode); }
+        var originalUser = await ReadAsync(root, $"/api/identity/users/{id}");
+        using (var allowed = await user.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.OK, allowed.StatusCode); }
+        using (var disabled = await root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/disable"), new { expectedVersion = 2 })) { Assert.Equal(HttpStatusCode.NoContent, disabled.StatusCode); }
+        var current = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.False(current.GetProperty("isEnabled").GetBoolean());
+        Assert.Equal(3, current.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(menu, Assert.Single(current.GetProperty("menuIds").EnumerateArray()).GetString());
+        Assert.False(Assert.Single((await ReadAsync(root, "/api/identity/roles?search=enabled-role")).GetProperty("items").EnumerateArray()).GetProperty("isEnabled").GetBoolean());
+        using (var denied = await user.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        using (var authenticated = await user.GetAsync(Path("/api/identity/me"))) { Assert.Equal(HttpStatusCode.OK, authenticated.StatusCode); }
+        var newUser = (await CreateAsync(root, "/api/identity/users", new { userName = "disabled-role-new-user", password = "disabled-role-password" })).GetProperty("userId").GetString();
+        using (var rejectedAssignment = await root.PostAsync(Path($"/api/identity/users/{newUser}/roles/{role}"), null)) { Assert.Equal(HttpStatusCode.Forbidden, rejectedAssignment.StatusCode); }
+        var unchangedUser = await ReadAsync(root, $"/api/identity/users/{id}");
+        Assert.Equal(originalUser.GetRawText(), unchangedUser.GetRawText());
+        var facts = (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64();
+        using (var noOp = await root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/disable"), new { expectedVersion = 3 })) { Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode); }
+        using (var stale = await root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/enable"), new { expectedVersion = 2 })) { Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode); }
+        Assert.Equal(facts, (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64());
+        Assert.Equal(3, (await ReadAsync(root, $"/api/identity/roles/{role}")).GetProperty("version").ReadHttpInt64());
+        using (var enabled = await root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/enable"), new { expectedVersion = 3 })) { Assert.Equal(HttpStatusCode.NoContent, enabled.StatusCode); }
+        using (var restored = await user.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.OK, restored.StatusCode); }
+        Assert.True((await ReadAsync(root, $"/api/identity/roles/{role}")).GetProperty("isEnabled").GetBoolean());
+        Assert.Equal(4, (await ReadAsync(root, $"/api/identity/roles/{role}")).GetProperty("version").ReadHttpInt64());
+    }
+
+    [Fact]
     public async Task Role_directory_pages_and_searches_without_exposing_management_to_an_ordinary_user()
     {
         await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };

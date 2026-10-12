@@ -406,6 +406,20 @@ public static class IdentityModule
         }).RequirePermission("/api/identity/roles/{roleId}", "PUT").Produces(204).ProducesApiErrors(404, 409, 415)
             .WithMetadata(new OperationDescription("identity.role.rename", "修改角色展示名"));
 
+        identity.MapPost("/roles/{roleId:long}/disable", async (long roleId, RoleVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new SetRoleEnabledCommand(roleId, request.ExpectedVersion, false), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}/disable", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.role.disable", "停用角色"));
+
+        identity.MapPost("/roles/{roleId:long}/enable", async (long roleId, RoleVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new SetRoleEnabledCommand(roleId, request.ExpectedVersion, true), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}/enable", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.role.enable", "启用角色"));
+
         identity.MapPut("/roles/{roleId:long}/menus", async (long roleId, ReplaceRoleMenusRequest request, ISender sender, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new ReplaceRoleMenusCommand(roleId, request.ExpectedVersion, request.MenuIds), token);
@@ -557,6 +571,7 @@ public static class IdentityModule
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.user.conflict" => StatusCodes.Status409Conflict,
             "identity.role.conflict" or "identity.menu.conflict" or "identity.menu.has_children" or "identity.menu.move_into_own_subtree" or "identity.menu.depth_exceeded" => StatusCodes.Status409Conflict,
+            "identity.role.disabled" or "identity.role.system_disable" => StatusCodes.Status403Forbidden,
             "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,
@@ -584,6 +599,7 @@ internal sealed record CreateUserRequest(string UserName, string Password);
 internal sealed record UserVersionRequest([property: JsonRequired] long ExpectedVersion);
 internal sealed record ReplaceRoleMenusRequest([property: JsonRequired] long ExpectedVersion, [property: JsonRequired] IReadOnlyList<long>? MenuIds);
 internal sealed record RenameRoleRequest([property: JsonRequired] long ExpectedVersion, string Name);
+internal sealed record RoleVersionRequest([property: JsonRequired] long ExpectedVersion);
 internal sealed record OwnPasswordRequest([property: JsonRequired] long ExpectedVersion, string OldPassword, string NewPassword);
 internal sealed record ResetPasswordRequest([property: JsonRequired] long ExpectedVersion, string NewPassword);
 

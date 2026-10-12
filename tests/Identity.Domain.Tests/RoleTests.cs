@@ -143,6 +143,39 @@ public sealed class RoleTests
     }
 
     [Fact]
+    public void SetEnabled_ChangesStateAndVersion_AndSameStateIsANoOp()
+    {
+        var role = NewRole();
+
+        Assert.True(role.SetEnabled(false, Now).IsSuccess);
+        Assert.False(role.IsEnabled);
+        Assert.Equal(2, role.Version);
+        Assert.Single(role.DomainEvents);
+
+        role.ClearDomainEvents();
+        Assert.True(role.SetEnabled(false, Now).IsSuccess);
+        Assert.Equal(2, role.Version);
+        Assert.Empty(role.DomainEvents);
+
+        Assert.True(role.SetEnabled(true, Now).IsSuccess);
+        Assert.True(role.IsEnabled);
+        Assert.Equal(3, role.Version);
+    }
+
+    [Fact]
+    public void SetEnabled_CannotDisableSystemRole()
+    {
+        var role = NewRole(system: true);
+
+        var result = role.SetEnabled(false, Now);
+
+        Assert.False(result.IsSuccess);
+        Assert.True(role.IsEnabled);
+        Assert.Equal(1, role.Version);
+        Assert.Empty(role.DomainEvents);
+    }
+
+    [Fact]
     public void Platform_AllIsNotNone()
     {
         // 参照仓库写的是 All = 0，于是"全部"与"没有"是同一个值，

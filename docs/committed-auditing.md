@@ -195,7 +195,7 @@ query 或敏感请求头。平台模块的执行来源仍为 platform，动作�
 设置事实消费已知契约 `platform.setting-committed.v1`。来源固定为 `platform`，动作由版本契约中的操作映射；客体为设置键和提交版本。Actor 由已认证会话提供，发生时刻由来源服务时钟提供，接收时刻由 Auditing 时钟提供。没有用户身份的受信后台调用 Actor 为空。Trace 来自来源执行，correlation 可以是经过约束的调用关联；两者仅用于调查，不能作为认证凭据。
 
 Identity 新增自己的 `Identity.Contracts` 和 `identity.entity-committed.v1`。当前接入 PostgreSQL 下的 User 账户维护、
-角色分配/撤销、登录与会话状态，Role 名称/平台/授权，MenuTree 节点变化，ApiResource 登记及 RefreshToken 生命周期。
+角色分配/撤销、登录与会话状态，Role 名称/平台/启停/授权，MenuTree 节点变化，ApiResource 登记及 RefreshToken 生命周期。
 中央只接纳明确列出的客体/动作及规范化内部标识；不传用户名、密码、哈希、联系方式或自由文本撤销原因。
 错误密码即使返回 400，只要失败计数提交就产生事实；因已锁定而直接拒绝、没有持久变化时不产生新事实。
 事实由 Identity 保存适配器与业务状态在同一次保存中写入，失败时移除本次暂存事实，允许同一存储作用域安全重试。

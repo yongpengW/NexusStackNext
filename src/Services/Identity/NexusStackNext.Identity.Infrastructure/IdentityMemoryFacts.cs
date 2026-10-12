@@ -61,6 +61,7 @@ internal sealed class IdentityMemoryFacts(IClock clock, IIntegrationEventSeriali
             foreach (var menu in (old?.GrantedMenuIds ?? []).Except(role.GrantedMenuIds)) { RoleFact("menu-revoked", new("menu", menu.Value)); }
             if (old is null) { continue; }
             if (role.Name != old.Name) { RoleFact("renamed"); }
+            if (role.IsEnabled != old.IsEnabled) { RoleFact(role.IsEnabled ? "enabled" : "disabled"); }
             if (role.Platforms != old.Platforms) { RoleFact("platforms-changed"); }
         }
         foreach (var tree in after.Trees.Values)

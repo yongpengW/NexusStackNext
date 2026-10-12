@@ -96,6 +96,10 @@ internal sealed class IdentityCommittedFactInterceptor(IClock clock, IIntegratio
             {
                 changes.Add(new("role", entry.Entity.Id.Value, entry.Entity.Version, "renamed"));
             }
+            if (entry.Property(role => role.IsEnabled).IsModified)
+            {
+                changes.Add(new("role", entry.Entity.Id.Value, entry.Entity.Version, entry.Entity.IsEnabled ? "enabled" : "disabled"));
+            }
             if (entry.Property(role => role.Platforms).IsModified)
             {
                 changes.Add(new("role", entry.Entity.Id.Value, entry.Entity.Version, "platforms-changed"));

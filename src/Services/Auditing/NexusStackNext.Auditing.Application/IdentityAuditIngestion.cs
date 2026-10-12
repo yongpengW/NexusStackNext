@@ -24,7 +24,7 @@ public sealed class IdentityAuditIngestion(AuditIngestion ingestion, IIntegratio
         catch (Exception error) when (error is JsonException or InvalidOperationException or ArgumentException) { return false; }
         var known = (message.SubjectType, message.Operation) is ("user", "created" or "login-failed" or "login-locked" or "role-assigned" or "role-revoked" or "login-succeeded" or "sessions-revoked"
             or "contact-changed" or "password-changed" or "enabled" or "disabled")
-            or ("role", "created" or "menu-granted" or "menu-revoked" or "renamed" or "platforms-changed") or ("refresh-token", "issued" or "consumed" or "revoked")
+            or ("role", "created" or "menu-granted" or "menu-revoked" or "renamed" or "platforms-changed" or "enabled" or "disabled") or ("refresh-token", "issued" or "consumed" or "revoked")
             or ("menu-tree", "created" or "node-added" or "node-removed" or "node-moved" or "node-ancestry-changed" or "node-renamed" or "node-reordered")
             or ("api-resource", "registered");
         if (message.EventId != envelope.MessageId || !known

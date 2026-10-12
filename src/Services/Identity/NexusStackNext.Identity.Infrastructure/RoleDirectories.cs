@@ -14,7 +14,7 @@ internal sealed class MemoryRoleDirectory(IdentityMemoryState state) : IRoleDire
                 .Where(role => role.Id.Value > afterRoleId && (role.Code.Value.Contains(search, StringComparison.OrdinalIgnoreCase)
                     || role.Name.Value.Contains(search, StringComparison.OrdinalIgnoreCase)))
                 .OrderBy(role => role.Id.Value).Take(limit + 1)
-                .Select(role => new RoleDirectoryItem(role.Id.Value, role.Code.Value, role.Name.Value, role.Version)).ToArray();
+                .Select(role => new RoleDirectoryItem(role.Id.Value, role.Code.Value, role.Name.Value, role.Version, role.IsEnabled)).ToArray();
             return Task.FromResult(rows);
         }
     }
@@ -26,7 +26,7 @@ internal sealed class EfRoleDirectory(IdentityDbContext context) : IRoleDirector
     {
         // strpos treats % and _ as literal characters; the provider parameterizes every input.
         return await context.Database.SqlQuery<RoleDirectoryItem>($"""
-            SELECT "Id" AS "RoleId", "Code", "Name", "Version"
+            SELECT "Id" AS "RoleId", "Code", "Name", "Version", "IsEnabled"
             FROM identity.roles
             WHERE "Id" > {afterRoleId}
                 AND (strpos(lower("Code"), lower({search})) > 0 OR strpos(lower("Name"), lower({search})) > 0)

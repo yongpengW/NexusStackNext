@@ -23,6 +23,7 @@ API 资源 method 区分 GET/POST/PUT，path 与端点模板对应，不能用�
 | 读取角色及其版本 | `/api/identity/roles/{roleId}:GET` | GET 角色详情 |
 | 角色目录与选择 | `/api/identity/roles:GET` | `afterRoleId` 默认 0，`limit` 默认 50、1 至 100；可选 `search` 按编码或名称检索 |
 | 修改角色展示名 | `/api/identity/roles/{roleId}:PUT` | `{ expectedVersion, name }`，来自 Role；不改变编码或菜单授权 |
+| 启停角色 | `/api/identity/roles/{roleId}/disable:POST`、`/api/identity/roles/{roleId}/enable:POST` | `{ expectedVersion }`；停用保留归属和菜单授权，不贡献当前权限且不能新分配；系统角色不可停用 |
 | 撤回用户角色 | `/api/identity/users/{userId}/roles/{roleId}/revoke:POST` | `{ expectedVersion }`，来自 User |
 | 整体替换角色菜单 | `/api/identity/roles/{roleId}/menus:PUT` | `{ expectedVersion, menuIds }`，来自 Role；空数组撤回全部 |
 | 删除叶菜单 | `/api/identity/menus/{menuId}/remove:POST` | `{ expectedVersion }`，来自菜单树；有子节点或版本冲突返回 409，提交后历史菜单引用不再产生权限 |

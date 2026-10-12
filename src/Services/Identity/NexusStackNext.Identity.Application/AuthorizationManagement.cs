@@ -13,7 +13,8 @@ namespace NexusStackNext.Identity.Application;
 /// <param name="Name">展示名。</param>
 /// <param name="MenuIds">有序授权菜单。</param>
 /// <param name="Version">角色聚合版本。</param>
-public sealed record RoleView(long RoleId, string Code, string Name, IReadOnlyList<long> MenuIds, long Version);
+/// <param name="IsEnabled">是否参与当前授权。</param>
+public sealed record RoleView(long RoleId, string Code, string Name, IReadOnlyList<long> MenuIds, long Version, bool IsEnabled);
 
 /// <summary>查询一个角色。</summary>
 /// <param name="RoleId">标识。</param>
@@ -33,7 +34,7 @@ public sealed class GetRoleHandler(IRoleRepository roles) : IQueryHandler<GetRol
         ArgumentNullException.ThrowIfNull(query);
         var role = (await roles.FindManyAsync([new RoleId(query.RoleId)], cancellationToken).ConfigureAwait(false)).SingleOrDefault();
         return role is null ? Result.Failure<RoleView>(AuthorizationManagementErrors.RoleNotFound)
-            : Result.Success(new RoleView(role.Id.Value, role.Code.Value, role.Name.Value, role.GrantedMenuIds.Select(id => id.Value).ToArray(), role.Version));
+            : Result.Success(new RoleView(role.Id.Value, role.Code.Value, role.Name.Value, role.GrantedMenuIds.Select(id => id.Value).ToArray(), role.Version, role.IsEnabled));
     }
 }
 

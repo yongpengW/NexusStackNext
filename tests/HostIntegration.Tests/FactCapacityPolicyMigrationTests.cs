@@ -94,6 +94,9 @@ public sealed class FactCapacityPolicyMigrationTests(JourneyDatabaseTemplates da
         Assert.Equal(PostgresErrorCodes.RaiseException, refusal.SqlState);
         Assert.Equal("identity_fact_policy_history_exists", refusal.ConstraintName);
         Assert.Contains("20261004152243_AuditedFactCapacityPolicy", await context.Database.GetAppliedMigrationsAsync(deadline.Token));
+        // The guarded downgrade may have reverted later migrations before its history guard rejects.
+        // Restore the current schema before continuing the HTTP and repository assertions.
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(cancellationToken: deadline.Token), deadline.Token);
         await using var observer = upgraded.Services.CreateAsyncScope();
         var unchanged = Assert.Single(await observer.ServiceProvider.GetRequiredService<IRoleRepository>()
             .FindManyAsync([originalRole.Id], deadline.Token));

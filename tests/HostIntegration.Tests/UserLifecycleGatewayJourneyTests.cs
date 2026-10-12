@@ -45,18 +45,22 @@ public sealed class UserLifecycleGatewayJourneyTests(JourneyDatabaseTemplates da
             Assert.Equal(roleId, Assert.Single(page.GetProperty("items").EnumerateArray()).GetProperty("roleId").ReadHttpInt64());
             Assert.Equal(JsonValueKind.Null, page.GetProperty("nextAfterRoleId").ValueKind);
         }
-        using (var denied = await reader.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = 2, name = "Forbidden" })) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
-        using (var renamed = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "2", name = "Renamed through gateway" })) { Assert.Equal(HttpStatusCode.NoContent, renamed.StatusCode); }
+        using (var disabled = await root.PostAsJsonAsync(Path($"/api/identity/roles/{roleId}/disable"), new { expectedVersion = 2 })) { Assert.Equal(HttpStatusCode.NoContent, disabled.StatusCode); }
+        using (var deniedWhileDisabled = await reader.GetAsync(Path("/api/identity/roles"))) { Assert.Equal(HttpStatusCode.Forbidden, deniedWhileDisabled.StatusCode); }
+        using (var enabled = await root.PostAsJsonAsync(Path($"/api/identity/roles/{roleId}/enable"), new { expectedVersion = 3 })) { Assert.Equal(HttpStatusCode.NoContent, enabled.StatusCode); }
+        using (var allowedAfterEnable = await reader.GetAsync(Path("/api/identity/roles"))) { Assert.Equal(HttpStatusCode.OK, allowedAfterEnable.StatusCode); }
+        using (var denied = await reader.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = 4, name = "Forbidden" })) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        using (var renamed = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "4", name = "Renamed through gateway" })) { Assert.Equal(HttpStatusCode.NoContent, renamed.StatusCode); }
         await platform.CrashAsync();
         await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "lifecycle-root-password", settings: settings, listenAddress: platform.Client.BaseAddress);
         await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
         var persisted = Assert.Single((await ReadAsync(reader, "/api/identity/roles?search=directory")).GetProperty("items").EnumerateArray());
         Assert.Equal("Renamed through gateway", persisted.GetProperty("name").GetString());
-        Assert.Equal(3, persisted.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(5, persisted.GetProperty("version").ReadHttpInt64());
         var detail = await ReadAsync(root, $"/api/identity/roles/{roleId}");
         Assert.Equal("directory-role", detail.GetProperty("code").GetString());
         Assert.Equal(menuId, Assert.Single(detail.GetProperty("menuIds").EnumerateArray()).ReadHttpInt64());
-        using var stale = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "2", name = "Stale after restart" });
+        using var stale = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "4", name = "Stale after restart" });
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
     }
 

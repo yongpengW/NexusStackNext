@@ -208,6 +208,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
 
             builder.Property(role => role.IsSystem).IsRequired();
 
+            builder.Property(role => role.IsEnabled).IsRequired().HasDefaultValue(true);
+
             builder.HasIndex(role => role.Code)
                 .IsUnique()
                 .HasDatabaseName("ux_roles_code");
