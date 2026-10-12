@@ -15,6 +15,30 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class BusinessAuthorizationPersistenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task Concurrent_role_disables_commit_once_and_return_one_conflict()
+    {
+        await using var database = await databases.CreateAsync();
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "access-root-password", schedulingWorkerEnabled: false);
+        using var root = app.CreateClient();
+        await LoginRootAsync(root);
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "race-disable", name = "Race disable" })).GetProperty("roleId").ReadHttpInt64();
+        await using var barrier = new NpgsqlConnection(database.ConnectionString);
+        await barrier.OpenAsync();
+        await using var locked = await barrier.BeginTransactionAsync();
+        await using (var command = new NpgsqlCommand("SELECT \"Id\" FROM identity.roles WHERE \"Id\" = @id FOR UPDATE", barrier, locked))
+        { command.Parameters.AddWithValue("id", role); await command.ExecuteScalarAsync(); }
+        var first = root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/disable"), new { expectedVersion = 1 });
+        var second = root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/disable"), new { expectedVersion = 1 });
+        try { await WaitForBlockedAsync(database.ConnectionString, barrier.ProcessID, 2); }
+        finally { await locked.RollbackAsync(); }
+        using var a = await first;
+        using var b = await second;
+        Assert.Equal([HttpStatusCode.NoContent, HttpStatusCode.Conflict], new[] { a.StatusCode, b.StatusCode }.Order());
+        var current = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.False(current.GetProperty("isEnabled").GetBoolean());
+        Assert.Equal(2, current.GetProperty("version").ReadHttpInt64());
+    }
+    [PostgresFact]
     public async Task Disabled_role_persists_across_a_real_identity_restart_without_removing_user_assignment()
     {
         await using var database = await databases.CreateAsync();
