@@ -20,7 +20,8 @@ internal sealed class NotificationsStartupCheck(IServiceScopeFactory scopes) : I
             { throw new InvalidOperationException("Notifications 数据库需要迁移；先执行 migrate-notifications。"); }
             _ = await database.Emails.AnyAsync(timeout.Token).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is DbException or OperationCanceledException or ArgumentException)
+        catch (Exception error) when (error is DbException or ArgumentException
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { throw new InvalidOperationException("Notifications 数据库不可用；检查连接配置与迁移。"); }
     }
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -37,7 +38,8 @@ internal sealed class NotificationsHealthCheck(NotificationsDbContext database) 
             _ = await database.Emails.AnyAsync(timeout.Token).ConfigureAwait(false);
             return HealthCheckResult.Healthy();
         }
-        catch (Exception error) when (error is DbException or OperationCanceledException or InvalidOperationException)
+        catch (Exception error) when (error is DbException or InvalidOperationException
+            || error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { return HealthCheckResult.Unhealthy("Notifications 数据库不可用。"); }
     }
 }

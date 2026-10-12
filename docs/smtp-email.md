@@ -37,6 +37,8 @@ SMTP 故障记录在邮件状态中，不摘除其他业务仍可用的平台宿
 | GET `/api/notifications/emails/{id}` | 该路由模板的 `GET` |
 | POST `/api/notifications/emails/{id}/resolve` | 该路由模板的 `POST` |
 
+会话与操作权限在 HTTP 入口校验。`ISender` 沿用项目的受信进程内调用约定，不额外验证 HTTP 会话或权限；提交、查询与处置用例仍检查邮件归属。
+
 `SubmitEmail` 包含稳定 `RequestId`、`Recipients`、`Subject`、`TextBody` / `HtmlBody` 和 `Attachments`。
 附件项为 `Name` / `ContentType` / `Content`（JSON Base64字节）。至少一种正文；最多10个收件人、5个附件，附件合计2MiB，正文合计262144字符，主题200字符，HTTP入口4MiB。
 受理返回统一 `ApiResponse<EmailStatus>`、HTTP202。同一身份与完全相同内容返回原状态，内容或发起者不同返回409，不新建邮件。
