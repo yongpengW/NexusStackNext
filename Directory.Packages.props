@@ -18,6 +18,8 @@
   </ItemGroup>
 
   <ItemGroup Label="宿主">
+    <!-- Notifications SMTP/MIME 适配器；MailKit/MimeKit 为 MIT，详见第三方通知。 -->
+    <PackageVersion Include="MailKit" Version="4.17.0" />
     <!-- OpenAPI：.NET 10 内置，不引入第三方（参照仓库用的是 Swashbuckle）。 -->
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.Certificate" Version="10.0.12" />

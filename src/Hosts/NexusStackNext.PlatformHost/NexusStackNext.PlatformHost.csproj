@@ -17,6 +17,7 @@
   -->
 
   <ItemGroup>
+    <ProjectReference Include="../../Services/Notifications/NexusStackNext.Notifications.Endpoints/NexusStackNext.Notifications.Endpoints.csproj" />
     <ProjectReference Include="..\..\Services\Identity\NexusStackNext.Identity.Endpoints\NexusStackNext.Identity.Endpoints.csproj" />
     <ProjectReference Include="..\..\Services\Platform\NexusStackNext.Platform.Endpoints\NexusStackNext.Platform.Endpoints.csproj" />
     <ProjectReference Include="..\..\Services\Scheduling\NexusStackNext.Scheduling.Endpoints\NexusStackNext.Scheduling.Endpoints.csproj" />

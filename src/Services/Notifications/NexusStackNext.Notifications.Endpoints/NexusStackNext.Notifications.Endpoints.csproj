@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Notifications.Endpoints</RootNamespace>
+    <AssemblyName>NexusStackNext.Notifications.Endpoints</AssemblyName>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../../Auditing/NexusStackNext.Auditing.Contracts/NexusStackNext.Auditing.Contracts.csproj" />
+    <ProjectReference Include="../NexusStackNext.Notifications.Infrastructure/NexusStackNext.Notifications.Infrastructure.csproj" />
+    <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Web/BuildingBlocks.Web.csproj" />
+  </ItemGroup>
+</Project>

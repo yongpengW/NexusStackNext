@@ -1,6 +1,6 @@
 # Context Map
 
-五个平台限界上下文 + 两个独立业务参考上下文 + 一个边缘宿主。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
+五个平台限界上下文 + 一个可选邮件上下文 + 两个独立业务参考上下文 + 一个边缘宿主。每个上下文的词表在它自己的 `CONTEXT.md`，术语一经确认即就地写入——
 本文件只定义**边界**与**关系**。
 
 ## Contexts
@@ -13,6 +13,7 @@
 - [Auditing](./src/Services/Auditing/CONTEXT.md) — 已提交事实与操作调查：不可变 `AuditEntry` 保存已提交事实；
   `OperationObservation` 覆盖四个宿主的普通 HTTP 入口、命令、业务任务及调度裁决。令牌流转通过 Identity 的最小提交事实记录。
 - [Files](./src/Services/Files/CONTEXT.md) — 文件与下载中心：文件的存储、归属与分发。
+- [Notifications](./src/Services/Notifications/CONTEXT.md) — 可选持久 SMTP：拥有不可变邮件、尝试及处置，不定义业务报表。见[邮件接入](docs/smtp-email.md)。
 - [Pricing](./src/Services/Pricing/CONTEXT.md) — 独立定价样板：定价输入、派生结果与持久化重算，独立宿主和数据库。
 - [Costing](./src/Services/Costing/CONTEXT.md) — 独立成本核算样板：成本组成、计算结果与成本事件，独立宿主和数据库。
 
@@ -32,6 +33,8 @@
 > 下一个人会照着它去 `grep` 一个不存在的事件，然后怀疑自己的搜索方式。
 
 ### 已经成立的
+
+- **Notifications → Auditing**：邮件登记、尝试、确定结果及人工处置，通过 `EmailDeliveryCommittedV1` 与本地状态同事务保存，再由 Outbox 交付；只含最小身份和安全执行关联。
 
 - **Auditing → Files（可选调查导出）**：Auditing 冻结已收到的事实或操作证据，持有本人委托及原发布意图；
   经 Files.Contracts 的证书 HTTPS 协议交付固定 XLSX。Files 独占字节、当前可用性与下载归属，

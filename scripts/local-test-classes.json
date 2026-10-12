@@ -169,5 +169,8 @@
   "NexusStackNext.HostIntegration.Tests.SchedulingRecoveryMaintenanceTests",
   "NexusStackNext.HostIntegration.Tests.SchedulingStorageStartupTests",
   "NexusStackNext.HostIntegration.Tests.TaskOperationJourneyTests",
-  "NexusStackNext.HostIntegration.Tests.TaskOperationTests"
+  "NexusStackNext.HostIntegration.Tests.TaskOperationTests",
+  "NexusStackNext.HostIntegration.Tests.SmtpEmailJourneyTests",
+  "NexusStackNext.HostIntegration.Tests.SmtpEmailHttpJourneyTests",
+  "NexusStackNext.HostIntegration.Tests.SmtpEmailAuditJourneyTests"
 ]

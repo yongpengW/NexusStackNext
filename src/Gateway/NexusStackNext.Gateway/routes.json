@@ -1,6 +1,15 @@
 {
   "routes": [
     {
+      "routeId": "notifications-api",
+      "clusterId": "platform-host",
+      "path": "/api/notifications/{**catch-all}",
+      "methods": [ "GET", "POST" ],
+      "maxRequestBodySize": 4194304,
+      "rateLimitPolicy": "gateway.default",
+      "requireAuthentication": true
+    },
+    {
       "routeId": "auditing-exports",
       "clusterId": "platform-host",
       "path": "/api/auditing/exports/{**catch-all}",

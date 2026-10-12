@@ -17,11 +17,19 @@ using NexusStackNext.Files.Endpoints;
 using NexusStackNext.Files.Infrastructure;
 using NexusStackNext.Identity.Endpoints;
 using NexusStackNext.Identity.Infrastructure;
+using NexusStackNext.Notifications.Endpoints;
+using NexusStackNext.Notifications.Infrastructure;
 using NexusStackNext.Platform.Endpoints;
 using NexusStackNext.Platform.Infrastructure;
 using NexusStackNext.PlatformHost;
 using NexusStackNext.Scheduling.Endpoints;
 using NexusStackNext.Scheduling.Infrastructure;
+
+if (args is ["migrate-notifications"])
+{
+    Environment.ExitCode = await NotificationsDatabaseCommand.RunAsync();
+    return;
+}
 
 if (args is ["operation-journal", ..])
 {
@@ -111,6 +119,11 @@ if (rabbit is not null && !string.IsNullOrWhiteSpace(rabbit.HostName))
         builder.Configuration.GetSection("Identity:Delivery").Get<OutboxDeliveryOptions>());
     builder.Services.AddNexusStackOutboxDelivery(FilesPersistenceServiceCollectionExtensions.OutboxKey,
         builder.Configuration.GetSection("Files:Delivery").Get<OutboxDeliveryOptions>());
+    if (builder.Configuration.GetValue("Notifications:Enabled", false))
+    {
+        builder.Services.AddNexusStackOutboxDelivery(NotificationsServices.OutboxKey,
+            builder.Configuration.GetSection("Notifications:Delivery").Get<OutboxDeliveryOptions>());
+    }
 }
 
 // 五个平台能力。每一行的顺序就是依赖的顺序，没有隐藏的自动发现。
@@ -125,6 +138,10 @@ if (builder.Configuration.GetValue("Auditing:Exports:Enabled", false))
     builder.Services.AddAuditExportDelivery(builder.Configuration, builder.Environment);
 }
 builder.Services.AddFilesModule(builder.Configuration, builder.Environment);
+if (builder.Configuration.GetValue("Notifications:Enabled", false))
+{
+    builder.Services.AddNotificationsModule(builder.Configuration, builder.Environment);
+}
 builder.AddFilesProducerAccess();
 builder.Services.AddOperationJournalModule(builder.Configuration, builder.Environment, "platform");
 
@@ -230,6 +247,7 @@ app.MapSchedulingEndpoints();
 app.MapAuditingEndpoints();
 if (builder.Configuration.GetValue("Auditing:Exports:Enabled", false)) { app.MapAuditExportEndpoints(); }
 app.MapFilesEndpoints();
+if (builder.Configuration.GetValue("Notifications:Enabled", false)) { app.MapNotificationsEndpoints(); }
 if (builder.Configuration.GetValue<bool>("Files:Producer:Enabled")) { app.MapGeneratedFilesEndpoints(); }
 
 app.Run();

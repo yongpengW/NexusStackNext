@@ -17,13 +17,14 @@ public sealed class InitialMigrationTests
         ["Scheduling"] = ["plans"],
         ["Costing"] = ["sheets"],
         ["Pricing"] = ["quotes"],
+        ["Notifications"] = ["emails"],
     };
 
     [Fact]
     public void DevelopmentContexts_StartWithOneCompleteInitialMigration()
     {
         var migrations = InitialMigrations();
-        Assert.Equal(7, migrations.Count);
+        Assert.Equal(8, migrations.Count);
         foreach (var (context, migration) in migrations)
         {
             var tables = migration.UpOperations.OfType<CreateTableOperation>().ToArray();
@@ -62,7 +63,7 @@ public sealed class InitialMigrationTests
                 checkedTables++;
             }
         }
-        Assert.Equal(9, checkedTables);
+        Assert.Equal(10, checkedTables);
     }
 
     [Fact]
@@ -79,7 +80,7 @@ public sealed class InitialMigrationTests
                 checkedTables++;
             }
         }
-        Assert.True(checkedTables >= 14, "至少应检查七个上下文的 Inbox 与 Outbox。");
+        Assert.True(checkedTables >= 16, "至少应检查八个上下文的 Inbox 与 Outbox。");
     }
 
     [Fact]
@@ -113,7 +114,7 @@ public sealed class InitialMigrationTests
     private static Dictionary<string, Migration> InitialMigrations()
     {
         var projects = SolutionAssemblies.SourceProjectPaths("*.Infrastructure.csproj", "Services");
-        Assert.Equal(7, projects.Count);
+        Assert.Equal(8, projects.Count);
         var migrations = new Dictionary<string, Migration>(StringComparer.Ordinal);
         foreach (var path in projects)
         {
