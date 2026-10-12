@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../Notifications/NexusStackNext.Notifications.Contracts/NexusStackNext.Notifications.Contracts.csproj" />
     <ProjectReference Include="../../Pricing/NexusStackNext.Pricing.Contracts/NexusStackNext.Pricing.Contracts.csproj" />
     <ProjectReference Include="../../Costing/NexusStackNext.Costing.Contracts/NexusStackNext.Costing.Contracts.csproj" />
     <ProjectReference Include="../../Scheduling/NexusStackNext.Scheduling.Contracts/NexusStackNext.Scheduling.Contracts.csproj" />

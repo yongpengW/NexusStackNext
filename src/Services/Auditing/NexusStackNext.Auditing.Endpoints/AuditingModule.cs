@@ -10,6 +10,7 @@ using NexusStackNext.BuildingBlocks.Web;
 using NexusStackNext.Costing.Contracts;
 using NexusStackNext.Files.Contracts;
 using NexusStackNext.Identity.Contracts;
+using NexusStackNext.Notifications.Contracts;
 using NexusStackNext.Platform.Contracts;
 using NexusStackNext.Pricing.Contracts;
 using NexusStackNext.Scheduling.Contracts;
@@ -38,6 +39,7 @@ public static class AuditingModule
         AddPolicyIngestion<PricingFactCapacityPolicyChangedV1>(services, "pricing", PricingFactCapacityPolicyChangedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, IdentityAuditIngestion>(IdentityEntityCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, FilesAuditIngestion>(StoredFileCommittedV1.Name);
+        services.AddKeyedScoped<IIntegrationEventProcessor, NotificationsAuditIngestion>(EmailDeliveryCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, SchedulingAuditIngestion>(PlanCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, CostingAuditIngestion>(CostSheetCommittedV1.Name);
         services.AddKeyedScoped<IIntegrationEventProcessor, PricingAuditIngestion>(PriceQuoteCommittedV1.Name);
@@ -48,6 +50,10 @@ public static class AuditingModule
             broker.Validate();
             var consumer = configuration.GetValue<string>("Auditing:Messaging:ConsumerName") ?? AuditIngestion.ConsumerName;
             ArgumentException.ThrowIfNullOrWhiteSpace(consumer);
+            if (configuration.GetValue("Notifications:Enabled", false))
+            {
+                services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = EmailDeliveryCommittedV1.Name, ConsumerName = consumer + "-notifications" });
+            }
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = SettingFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = IdentityFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });
             services.AddNexusStackRabbitMqConsumer(broker, new EventSubscription { EventName = FilesFactCapacityPolicyChangedV1.Name, ConsumerName = consumer });

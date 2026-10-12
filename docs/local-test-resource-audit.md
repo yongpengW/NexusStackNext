@@ -1,5 +1,13 @@
 # 本机并行类的资源审查
 
+## 票据200：持久 SMTP
+
+`SmtpEmailJourneyTests` / `SmtpEmailHttpJourneyTests` / `SmtpEmailAuditJourneyTests` 可整类并行。
+每例独占临时数据库，迁移与CLI继续走 `JourneyDatabaseOperation` 单许可；故障仅涉及本例邮件。
+SMTP 对端使用回环随机端口，不连接真实收件服务器；取消后等待自身发送任务返回，再关闭持有的对端。
+真实宿主动态绑定端口、持有私有文件根，只终止本例进程树。MQ 使用随机前缀并清理本例完整拓扑。
+不修改服务器参数、终止其他会话或放宽所有权。普通4/2路、重操作单许可及CI隔离保持。
+
 ## 票据64：最终行为验收核对
 
 FileRecoveryOperationTests 新增一例 PostgreSQL 后台取消旅程，继续按已有整类并行声明执行。

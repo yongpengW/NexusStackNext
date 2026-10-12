@@ -16,6 +16,7 @@ using NexusStackNext.Costing.Infrastructure;
 using NexusStackNext.CostingHost;
 using NexusStackNext.Gateway.Routing;
 using NexusStackNext.IntegrationSupport;
+using NexusStackNext.Notifications.Infrastructure;
 using NexusStackNext.Pricing.Application;
 using NexusStackNext.Pricing.Infrastructure;
 using NexusStackNext.PricingHost;
@@ -37,6 +38,8 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
     {
         ["platform"] = new(StringComparer.Ordinal)
         {
+            ["POST /api/notifications/emails/"] = nameof(SmtpEmailAuditJourneyTests) + "；邮件登记与EmailDeliveryCommittedV1同事务。",
+            ["POST /api/notifications/emails/{id:guid}/resolve"] = nameof(SmtpEmailJourneyTests) + "；明确处置随聚合状态与最小事实提交。",
             ["* /health"] = HealthProbe,
             ["* /health/live"] = HealthProbe,
             ["* /health/logging"] = HealthProbe,
@@ -145,6 +148,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
         {
             await CostingDatabase.MigrateAsync(database.ConnectionString);
             await PricingDatabase.MigrateAsync(database.ConnectionString);
+            await NotificationsDatabase.MigrateAsync(database.ConnectionString);
         }
         await using var platform = new ProducerInventoryApp(certificates, database.ConnectionString);
         await InspectAsync(platform, "platform");
@@ -292,6 +296,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
 
     private sealed class ProducerInventoryApp(GeneratedFileCertificates certificates, string connectionString) : PersistentIdentityApp(connectionString, schedulingWorkerEnabled: false)
     {
+        private readonly string notificationsConnection = connectionString;
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             base.ConfigureWebHost(builder);
@@ -303,6 +308,11 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             var files = certificates.PricingClientOptions(new Uri("https://127.0.0.1:1"));
             builder.ConfigureHostConfiguration(configuration => configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {
+                ["Notifications:Enabled"] = "true",
+                ["ConnectionStrings:Notifications"] = notificationsConnection,
+                ["Notifications:Smtp:Host"] = "127.0.0.1",
+                ["Notifications:Smtp:Sender"] = "sender@example.test",
+                ["Notifications:Worker:Enabled"] = "false",
                 ["Auditing:Exports:Enabled"] = "true",
                 ["Auditing:Exports:Worker:Enabled"] = "false",
                 ["Auditing:Exports:Files:BaseAddress"] = files.BaseAddress,

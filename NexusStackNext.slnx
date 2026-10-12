@@ -17,6 +17,13 @@
     <Project Path="src/Services/Identity/NexusStackNext.Identity.Infrastructure/NexusStackNext.Identity.Infrastructure.csproj" />
     <Project Path="src/Services/Identity/NexusStackNext.Identity.Endpoints/NexusStackNext.Identity.Endpoints.csproj" />
   </Folder>
+  <Folder Name="/src/Services/Notifications/">
+    <Project Path="src/Services/Notifications/NexusStackNext.Notifications.Application/NexusStackNext.Notifications.Application.csproj" />
+    <Project Path="src/Services/Notifications/NexusStackNext.Notifications.Contracts/NexusStackNext.Notifications.Contracts.csproj" />
+    <Project Path="src/Services/Notifications/NexusStackNext.Notifications.Domain/NexusStackNext.Notifications.Domain.csproj" />
+    <Project Path="src/Services/Notifications/NexusStackNext.Notifications.Endpoints/NexusStackNext.Notifications.Endpoints.csproj" />
+    <Project Path="src/Services/Notifications/NexusStackNext.Notifications.Infrastructure/NexusStackNext.Notifications.Infrastructure.csproj" />
+  </Folder>
 
   <Folder Name="/src/Services/Platform/">
     <Project Path="src/Services/Platform/NexusStackNext.Platform.Contracts/NexusStackNext.Platform.Contracts.csproj" />

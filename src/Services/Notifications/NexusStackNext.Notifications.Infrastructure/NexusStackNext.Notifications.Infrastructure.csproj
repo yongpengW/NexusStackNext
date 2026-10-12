@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Notifications.Infrastructure</RootNamespace>
+    <AssemblyName>NexusStackNext.Notifications.Infrastructure</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MailKit" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <ProjectReference Include="../NexusStackNext.Notifications.Application/NexusStackNext.Notifications.Application.csproj" />
+    <ProjectReference Include="../NexusStackNext.Notifications.Contracts/NexusStackNext.Notifications.Contracts.csproj" />
+    <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Infrastructure/BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

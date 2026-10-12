@@ -9,6 +9,7 @@ using NexusStackNext.Identity.Domain.Menus;
 using NexusStackNext.Identity.Domain.Roles;
 using NexusStackNext.Identity.Domain.Tokens;
 using NexusStackNext.Identity.Domain.Users;
+using NexusStackNext.Notifications.Domain;
 using NexusStackNext.Platform.Domain.Settings;
 using NexusStackNext.Pricing.Domain;
 using NexusStackNext.Scheduling.Domain.Tasks;
@@ -22,6 +23,8 @@ public sealed class EntityAuditCoverageTests
     // 业务事实行为证据见 docs/committed-audit-coverage.md；登记本身不证明实现正确。
     private static readonly Dictionary<Type, FactObligation> FactDecisions = new()
     {
+        [typeof(EmailDelivery)] = new("EmailDeliveryCommittedV1；邮件登记、尝试、确定结果和明确处置与所属事务提交；结果未知无自动重发。",
+            [nameof(EmailDelivery.Create), nameof(EmailDelivery.TryStart), nameof(EmailDelivery.Complete), nameof(EmailDelivery.Resolve)], []),
         [typeof(GlobalSetting)] = new("SettingCommittedV1；创建及值/说明变化随所属事务提交。Snapshot只读。",
             [nameof(GlobalSetting.Create), nameof(GlobalSetting.ChangeValue), nameof(GlobalSetting.Describe)], [nameof(GlobalSetting.Snapshot)]),
         [typeof(User)] = new("IdentityEntityCommittedV1；包含失败计数与锁定，拒绝登录也可能提交变化。认证判定及Snapshot只读。",
@@ -100,7 +103,7 @@ public sealed class EntityAuditCoverageTests
     public void BusinessAggregates_MustDeclareRowAuditOrAnExplicitLifecycle()
     {
         var projects = SolutionAssemblies.SourceProjectPaths("*.Domain.csproj", "Services");
-        Assert.Equal(7, projects.Count);
+        Assert.Equal(8, projects.Count);
         var aggregates = projects.Select(path => SolutionAssemblies.LoadFromTestOutput(Path.GetFileNameWithoutExtension(path) + ".dll"))
             .SelectMany(assembly => assembly.GetTypes())
             .Where(type => type is { IsClass: true, IsAbstract: false } && typeof(IHasDomainEvents).IsAssignableFrom(type))
@@ -118,7 +121,7 @@ public sealed class EntityAuditCoverageTests
             Assert.Contains(aggregates, type => type.FullName == lifecycle);
         }
         var business = aggregates.Where(type => !lifecycleTypes.Contains(type.FullName, StringComparer.Ordinal)).ToArray();
-        Assert.Equal(11, business.Length);
+        Assert.Equal(12, business.Length);
         Assert.All(business, type => Assert.True(typeof(IAuditedEntity).IsAssignableFrom(type), type.FullName + " 缺少行审计契约。"));
     }
 }

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>NexusStackNext.Notifications.Application</RootNamespace>
+    <AssemblyName>NexusStackNext.Notifications.Application</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../NexusStackNext.Notifications.Domain/NexusStackNext.Notifications.Domain.csproj" />
+    <ProjectReference Include="../../../BuildingBlocks/BuildingBlocks.Application/BuildingBlocks.Application.csproj" />
+  </ItemGroup>
+</Project>

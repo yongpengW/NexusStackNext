@@ -6,6 +6,9 @@
 
 ## 当前保留政策与遗漏检查
 
+Notifications 的 `EmailDelivery` 及启用后的HTTP写入口纳入遗漏检查。邮件状态与最小事实同事务，
+行为证据见 `SmtpEmailJourneyTests` / `SmtpEmailAuditJourneyTests`，接入见[持久 SMTP 邮件](smtp-email.md)。
+
 用户于2026-10-10确认中央事实及其Inbox/指纹长期保留，暂缓归档删除，先完善遗漏检查。
 操作观察继续按最后接收阶段保留30天；普通导出与来源副本清理不授予事实删除资格。
 决定见[Auditing ADR-0009](../src/Services/Auditing/docs/adr/0009-facts-remain-online-with-deduplication.md)。
