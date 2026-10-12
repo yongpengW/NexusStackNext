@@ -177,6 +177,28 @@ public sealed class MemoryIdentityTransactionTests
     }
 
     [Fact]
+    public async Task LogicalDelete_PreservesStableCodeAndCommitsOneDeletionFact()
+    {
+        await using var app = new PlatformApp { SchedulingWorkerEnabled = false };
+        await using var scope = app.Services.CreateAsyncScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+        var created = await sender.SendAsync(new CreateRoleCommand("memory-deletable", "Deletable"));
+        Assert.True(created.IsSuccess);
+
+        var deleted = await sender.SendAsync(new DeleteRoleCommand(created.Value, 1));
+
+        Assert.True(deleted.IsSuccess);
+        Assert.Empty(await scope.ServiceProvider.GetRequiredService<IRoleRepository>().FindManyAsync([new RoleId(created.Value)]));
+        var retained = await scope.ServiceProvider.GetRequiredService<IRoleRepository>()
+            .FindByCodeAsync(RoleCode.Create("memory-deletable").Value);
+        Assert.NotNull(retained);
+        Assert.True(retained.IsDeleted);
+        Assert.Equal(new[] { "created", "deleted" },
+            (await FactsAsync(scope.ServiceProvider.GetRequiredKeyedService<IOutboxStore>(IdentityEntityFrameworkServiceCollectionExtensions.OutboxKey)))
+            .Select(fact => fact.Operation).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
     public async Task TrackedChanges_AfterSaveRemainTracked_AndStaleWritersCannotOverwriteTheWinner()
     {
         await using var app = new PlatformApp { SchedulingWorkerEnabled = false };

@@ -99,7 +99,7 @@ public sealed class RoleName : ValueObject
 /// 空操作触发事件会导致缓存无谓失效，而参照仓库的失效路径本就最长有 10 小时窗口（review/04）。
 /// </para>
 /// </summary>
-public sealed class Role : AuditedAggregateRoot<RoleId>
+public sealed class Role : AuditedAggregateRoot<RoleId>, ISoftDelete
 {
     private readonly HashSet<MenuId> _grantedMenuIds = [];
 
@@ -110,6 +110,7 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
         Platforms = source.Platforms;
         IsSystem = source.IsSystem;
         IsEnabled = source.IsEnabled;
+        IsDeleted = source.IsDeleted;
         _grantedMenuIds.UnionWith(source._grantedMenuIds);
     }
 
@@ -140,6 +141,9 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
 
     /// <summary>是否参与当前授权；停用保留用户归属和菜单授权。</summary>
     public bool IsEnabled { get; private set; } = true;
+
+    /// <summary>是否已逻辑删除；删除保留稳定身份和历史引用。</summary>
+    public bool IsDeleted { get; private set; }
 
     /// <summary>已授权的菜单标识（有序，便于比较与断言）。</summary>
     public IReadOnlyList<MenuId> GrantedMenuIds => [.. _grantedMenuIds.OrderBy(static id => id.Value)];
@@ -174,6 +178,18 @@ public sealed class Role : AuditedAggregateRoot<RoleId>
         {
             throw new DomainException($"系统内置角色不允许删除：{Code.Value}。");
         }
+    }
+
+    /// <summary>逻辑删除普通角色并撤销其当前授权参与。</summary>
+    /// <param name="at">权限变更事实发生时刻。</param>
+    /// <returns>成功或系统角色拒绝。</returns>
+    public Result Delete(DateTimeOffset at)
+    {
+        if (IsSystem) { return Result.Failure(new("identity.role.system_delete", "系统内置角色不允许删除。")); }
+        if (IsDeleted) { return Result.Success(); }
+
+        IsDeleted = true;
+        return RaisePermissionsChanged(at);
     }
 
     /// <summary>改名。传入相同的名字不是改变。</summary>

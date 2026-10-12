@@ -209,6 +209,7 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
             builder.Property(role => role.IsSystem).IsRequired();
 
             builder.Property(role => role.IsEnabled).IsRequired().HasDefaultValue(true);
+            builder.Property(role => role.IsDeleted).IsRequired().HasDefaultValue(false);
 
             builder.HasIndex(role => role.Code)
                 .IsUnique()

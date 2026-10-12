@@ -83,7 +83,9 @@ public sealed class EfRoleRepository(IdentityDbContext context) : IRoleRepositor
     {
         ArgumentNullException.ThrowIfNull(code);
 
+        // 编码是稳定身份：已删除角色仍保留它，禁止新角色复用同一个编码。
         return await context.Roles
+            .IgnoreQueryFilters()
             .FirstOrDefaultAsync(role => role.Code == code, cancellationToken)
             .ConfigureAwait(false);
     }

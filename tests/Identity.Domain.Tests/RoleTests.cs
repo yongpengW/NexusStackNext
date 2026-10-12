@@ -25,6 +25,7 @@ public sealed class RoleTests
     {
         Assert.True(NewRole(system: true).IsSystem);
         Assert.False(NewRole().IsSystem);
+        Assert.False(NewRole().IsDeleted);
     }
 
     [Fact]
@@ -42,6 +43,48 @@ public sealed class RoleTests
     public void EnsureDeletable_OnRegularRole_DoesNotThrow()
     {
         NewRole().EnsureDeletable();
+    }
+
+    [Fact]
+    public void Delete_RegularRole_RemovesCurrentAuthorityAndRaisesOneChange()
+    {
+        var role = NewRole();
+        role.Grant(Menu(10), Now);
+        role.ClearDomainEvents();
+
+        Assert.True(role.Delete(Now).IsSuccess);
+        Assert.True(role.IsDeleted);
+        Assert.True(role.IsEnabled);
+        Assert.Equal(3, role.Version);
+        Assert.IsType<RolePermissionsChanged>(Assert.Single(role.DomainEvents));
+        Assert.Equal([10L], role.GrantedMenuIds.Select(static id => id.Value));
+    }
+
+    [Fact]
+    public void Delete_SystemRole_IsRejectedWithoutChangingState()
+    {
+        var role = NewRole(system: true);
+
+        var result = role.Delete(Now);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("identity.role.system_delete", result.Error.Code);
+        Assert.False(role.IsDeleted);
+        Assert.True(role.IsEnabled);
+        Assert.Equal(1, role.Version);
+        Assert.Empty(role.DomainEvents);
+    }
+
+    [Fact]
+    public void Delete_AlreadyDeletedRole_IsANoOp()
+    {
+        var role = NewRole();
+        Assert.True(role.Delete(Now).IsSuccess);
+        role.ClearDomainEvents();
+
+        Assert.True(role.Delete(Now).IsSuccess);
+        Assert.Equal(2, role.Version);
+        Assert.Empty(role.DomainEvents);
     }
 
     [Fact]

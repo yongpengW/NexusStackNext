@@ -35,7 +35,7 @@ internal sealed class MemorySessionStateReader(IdentityMemoryState state, Identi
                     var allowed = user.IsBuiltIn;
                     if (!allowed && required is { } operation)
                     {
-                        var menus = user.RoleIds.Where(id => state.Data.Roles.TryGetValue(id, out var role) && role.IsEnabled)
+                        var menus = user.RoleIds.Where(id => state.Data.Roles.TryGetValue(id, out var role) && role.IsEnabled && !role.IsDeleted)
                             .SelectMany(id => state.Data.Roles[id].GrantedMenuIds).ToHashSet();
                         var existingMenus = state.Data.Trees.Values.SelectMany(tree => tree.Nodes).Select(node => node.Id).ToHashSet();
                         allowed = state.Data.Resources.Values.Any(resource => resource.MenuId is { } menu

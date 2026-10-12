@@ -62,6 +62,7 @@ internal sealed class IdentityMemoryFacts(IClock clock, IIntegrationEventSeriali
             if (old is null) { continue; }
             if (role.Name != old.Name) { RoleFact("renamed"); }
             if (role.IsEnabled != old.IsEnabled) { RoleFact(role.IsEnabled ? "enabled" : "disabled"); }
+            if (role.IsDeleted != old.IsDeleted) { RoleFact("deleted"); }
             if (role.Platforms != old.Platforms) { RoleFact("platforms-changed"); }
         }
         foreach (var tree in after.Trees.Values)

@@ -420,6 +420,13 @@ public static class IdentityModule
         }).RequirePermission("/api/identity/roles/{roleId}/enable", "POST").Produces(204).ProducesApiErrors(404, 409, 415)
             .WithMetadata(new OperationDescription("identity.role.enable", "启用角色"));
 
+        identity.MapDelete("/roles/{roleId:long}", async (long roleId, [FromBody] RoleVersionRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new DeleteRoleCommand(roleId, request.ExpectedVersion), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}", "DELETE").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.role.delete", "逻辑删除角色"));
+
         identity.MapPut("/roles/{roleId:long}/menus", async (long roleId, ReplaceRoleMenusRequest request, ISender sender, CancellationToken token) =>
         {
             var result = await sender.SendAsync(new ReplaceRoleMenusCommand(roleId, request.ExpectedVersion, request.MenuIds), token);
@@ -571,7 +578,7 @@ public static class IdentityModule
             "identity.audit_policy.conflict" => StatusCodes.Status409Conflict,
             "identity.user.conflict" => StatusCodes.Status409Conflict,
             "identity.role.conflict" or "identity.menu.conflict" or "identity.menu.has_children" or "identity.menu.move_into_own_subtree" or "identity.menu.depth_exceeded" => StatusCodes.Status409Conflict,
-            "identity.role.disabled" or "identity.role.system_disable" => StatusCodes.Status403Forbidden,
+            "identity.role.disabled" or "identity.role.system_disable" or "identity.role.system_delete" => StatusCodes.Status403Forbidden,
             "identity.session.invalid" => StatusCodes.Status401Unauthorized,
             "identity.audit_policy.control_exhausted" => StatusCodes.Status503ServiceUnavailable,
             "identity.audit_capacity.exhausted" => StatusCodes.Status503ServiceUnavailable,

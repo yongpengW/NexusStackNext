@@ -67,7 +67,9 @@ public sealed class InMemoryRoleRepository : IRoleRepository
 
         var wanted = ids.Select(static id => id.Value).ToHashSet();
 
-        IReadOnlyList<Role> found = [.. _session.Data(cancellationToken).Roles.Values.Where(role => wanted.Contains(role.Id.Value)).OrderBy(role => role.Id.Value)];
+        IReadOnlyList<Role> found = [.. _session.Data(cancellationToken).Roles.Values
+            .Where(role => !role.IsDeleted && wanted.Contains(role.Id.Value))
+            .OrderBy(role => role.Id.Value)];
         return Task.FromResult(found);
     }
 
@@ -76,6 +78,7 @@ public sealed class InMemoryRoleRepository : IRoleRepository
     {
         ArgumentNullException.ThrowIfNull(code);
 
+        // 编码是稳定身份：已删除角色仍保留它，禁止新角色复用同一个编码。
         return Task.FromResult(_session.Data(cancellationToken).Roles.Values.FirstOrDefault(role => role.Code.Equals(code)));
     }
 

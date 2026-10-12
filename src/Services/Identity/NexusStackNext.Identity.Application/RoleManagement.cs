@@ -87,3 +87,44 @@ public sealed class SetRoleEnabledHandler(IRoleRepository roles, IClock clock, I
         return result;
     }
 }
+
+/// <summary>按已观察版本逻辑删除一个普通角色。</summary>
+/// <param name="RoleId">角色标识。</param>
+/// <param name="ExpectedVersion">条件写入版本。</param>
+public sealed record DeleteRoleCommand(long RoleId, long ExpectedVersion) : ICommand, IIdentifiedRequest
+{
+    /// <inheritdoc />
+    public IReadOnlyList<long> Identifiers => [RoleId];
+}
+
+/// <summary>事务开始前拒绝无效角色版本。</summary>
+public sealed class DeleteRoleValidator : IRequestValidator<DeleteRoleCommand>
+{
+    /// <inheritdoc />
+    public Result Validate(DeleteRoleCommand request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return request.ExpectedVersion > 0 ? Result.Success()
+            : Result.Failure(new("identity.role.version_invalid", "必须提供正数的角色版本。"));
+    }
+}
+
+/// <summary>只删除 Role 聚合，提交后失效权限缓存并保留用户历史引用。</summary>
+/// <param name="roles">所属角色仓储。</param>
+/// <param name="clock">删除事实时钟。</param>
+/// <param name="transaction">提交边界。</param>
+public sealed class DeleteRoleHandler(IRoleRepository roles, IClock clock, IdentityCommandTransaction transaction)
+    : ICommandHandler<DeleteRoleCommand>
+{
+    /// <inheritdoc />
+    public async Task<Result> HandleAsync(DeleteRoleCommand command, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        var role = (await roles.FindManyAsync([new RoleId(command.RoleId)], cancellationToken).ConfigureAwait(false)).SingleOrDefault();
+        if (role is null) { return Result.Failure(AuthorizationManagementErrors.RoleNotFound); }
+        if (role.Version != command.ExpectedVersion) { return Result.Failure(AuthorizationManagementErrors.RoleConflict); }
+        var result = role.Delete(clock.UtcNow);
+        if (result.IsSuccess && role.Version != command.ExpectedVersion) { transaction.InvalidatePermissionsAfterCommit(); }
+        return result;
+    }
+}
