@@ -156,6 +156,9 @@ public sealed class FactDeliveryRecoveryEvidenceTests(JourneyDatabaseTemplates d
         var rollback = await Assert.ThrowsAsync<PostgresException>(() => JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync(previous)));
         Assert.Equal("P0001", rollback.SqlState);
         Assert.Equal(source + "_fact_recovery_history_exists", rollback.ConstraintName);
+        // A later migration can already have been reverted before the historical guard rejects its own downgrade.
+        // Restore the current host's schema before observing the preserved recovery through HTTP.
+        await JourneyDatabaseOperation.RunAsync(() => migrator.MigrateAsync());
         Assert.True(JsonElement.DeepEquals(receipt, (await client.GetFromJsonAsync<JsonElement>(receiptPath)).GetProperty("data")));
         IFactDeliveryRecoveryCleanup cleanup = source switch
         {
