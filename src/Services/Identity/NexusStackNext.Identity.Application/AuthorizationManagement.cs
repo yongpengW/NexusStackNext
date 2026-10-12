@@ -97,7 +97,7 @@ public static class AuthorizationManagementErrors
     /// <summary>菜单不存在，不能产生悬空授权。</summary>
     public static Error MenuNotFound { get; } = new("identity.menu.not_found", "菜单不存在。");
     /// <summary>角色已经改变。</summary>
-    public static Error RoleConflict { get; } = new("identity.role.conflict", "角色授权已变化，请重新读取后再提交。");
+    public static Error RoleConflict { get; } = new("identity.role.conflict", "角色已变化，请重新读取后再提交。");
 }
 
 /// <summary>校验引用后只改变角色聚合；空操作不生成新版本或失效。</summary>

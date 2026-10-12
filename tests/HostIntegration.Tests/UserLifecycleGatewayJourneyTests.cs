@@ -11,6 +11,56 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class UserLifecycleGatewayJourneyTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task Role_directory_and_rename_keep_separate_permissions_and_survive_a_real_process_restart()
+    {
+        await using var database = await databases.CreateAsync();
+        var settings = new Dictionary<string, string> { ["Jwt__SigningKey"] = BusinessProcess.SigningKey };
+        await using var platform = await PlatformHostProcess.StartAsync(database.ConnectionString, "lifecycle-root-password", settings: settings);
+        settings["IdentitySession__BaseAddress"] = platform.Client.BaseAddress!.AbsoluteUri;
+        using var files = new JourneyFileStorage();
+        Directory.CreateDirectory(files.Root);
+        var routes = System.IO.Path.Combine(files.Root, "role-routes.json");
+        var table = JsonNode.Parse(await File.ReadAllTextAsync(System.IO.Path.Combine(AppContext.BaseDirectory, "routes.business.json")))!;
+        foreach (var cluster in table["clusters"]!.AsArray())
+        {
+            foreach (var destination in cluster!["destinations"]!.AsArray()) { destination!["address"] = platform.Client.BaseAddress.AbsoluteUri; }
+        }
+        await File.WriteAllTextAsync(routes, table.ToJsonString());
+        await using var gateway = await BusinessProcess.StartGatewayAsync(typeof(GatewayHostMarker).Assembly.Location, routes, settings);
+        var root = gateway.Client;
+        using var reader = new HttpClient { BaseAddress = root.BaseAddress };
+        using (var anonymous = await reader.GetAsync(Path("/api/identity/roles"))) { Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode); }
+        await UserLifecycleHttpTests.LoginAsync(root, "journey-root", "lifecycle-root-password");
+        var user = await CreateAsync(root, "/api/identity/users", new { userName = "role-directory-reader", password = "role-directory-password" });
+        await UserLifecycleHttpTests.LoginAsync(reader, "role-directory-reader", "role-directory-password");
+        using (var denied = await reader.GetAsync(Path("/api/identity/roles"))) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        var roleId = (await CreateAsync(root, "/api/identity/roles", new { code = "directory-role", name = "Directory %_" })).GetProperty("roleId").ReadHttpInt64();
+        var menuId = (await CreateAsync(root, "/api/identity/menus", new { title = "Role directory read", sortOrder = 1 })).GetProperty("menuId").ReadHttpInt64();
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/roles", method = "GET", menuId });
+        using (var grant = await root.PostAsync(Path($"/api/identity/roles/{roleId}/menus/{menuId}"), null)) { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+        using (var assign = await root.PostAsync(Path($"/api/identity/users/{user.GetProperty("userId").GetString()}/roles/{roleId}"), null)) { Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode); }
+        foreach (var search in new[] { "DIRECTORY", "%25_" })
+        {
+            var page = await ReadAsync(reader, "/api/identity/roles?limit=1&search=" + search);
+            Assert.Equal(roleId, Assert.Single(page.GetProperty("items").EnumerateArray()).GetProperty("roleId").ReadHttpInt64());
+            Assert.Equal(JsonValueKind.Null, page.GetProperty("nextAfterRoleId").ValueKind);
+        }
+        using (var denied = await reader.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = 2, name = "Forbidden" })) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        using (var renamed = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "2", name = "Renamed through gateway" })) { Assert.Equal(HttpStatusCode.NoContent, renamed.StatusCode); }
+        await platform.CrashAsync();
+        await using var restarted = await PlatformHostProcess.StartAsync(database.ConnectionString, "lifecycle-root-password", settings: settings, listenAddress: platform.Client.BaseAddress);
+        await BusinessProcess.WaitForIdentityForwardingAsync(root, HttpStatusCode.OK);
+        var persisted = Assert.Single((await ReadAsync(reader, "/api/identity/roles?search=directory")).GetProperty("items").EnumerateArray());
+        Assert.Equal("Renamed through gateway", persisted.GetProperty("name").GetString());
+        Assert.Equal(3, persisted.GetProperty("version").ReadHttpInt64());
+        var detail = await ReadAsync(root, $"/api/identity/roles/{roleId}");
+        Assert.Equal("directory-role", detail.GetProperty("code").GetString());
+        Assert.Equal(menuId, Assert.Single(detail.GetProperty("menuIds").EnumerateArray()).ReadHttpInt64());
+        using var stale = await root.PutAsJsonAsync(Path($"/api/identity/roles/{roleId}"), new { expectedVersion = "2", name = "Stale after restart" });
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+    }
+
+    [PostgresFact]
     public async Task Through_the_real_gateway_disable_restart_enable_and_both_password_rotations_keep_old_sessions_revoked()
     {
         await using var database = await databases.CreateAsync();
@@ -103,4 +153,18 @@ public sealed class UserLifecycleGatewayJourneyTests(JourneyDatabaseTemplates da
     }
 
     private static Uri Path(string value) => new(value, UriKind.Relative);
+
+    private static async Task<JsonElement> CreateAsync<T>(HttpClient client, string path, T payload)
+    {
+        using var response = await client.PostAsJsonAsync(Path(path), payload);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return await response.Content.ReadApiDataAsync();
+    }
+
+    private static async Task<JsonElement> ReadAsync(HttpClient client, string path)
+    {
+        using var response = await client.GetAsync(Path(path));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return await response.Content.ReadApiDataAsync();
+    }
 }

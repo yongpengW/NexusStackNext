@@ -387,11 +387,24 @@ public static class IdentityModule
 
         // ---------- 角色 ----------
 
+        identity.MapGet("/roles", async (long? afterRoleId, int? limit, string? search, ISender sender, ApiResponses responses, CancellationToken token) =>
+        {
+            var result = await sender.QueryAsync(new GetRolesQuery(afterRoleId ?? 0, limit ?? 50, search), token);
+            return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles", "GET").Produces<ApiResponse<RolePage>>();
+
         identity.MapGet("/roles/{roleId:long}", async (long roleId, ISender sender, ApiResponses responses, CancellationToken token) =>
         {
             var result = await sender.QueryAsync(new GetRoleQuery(roleId), token);
             return result.IsSuccess ? (IResult)responses.Ok(result.Value) : Failure(result.Error);
         }).RequirePermission("/api/identity/roles/{roleId}", "GET").Produces<ApiResponse<RoleView>>().ProducesApiErrors(404);
+
+        identity.MapPut("/roles/{roleId:long}", async (long roleId, RenameRoleRequest request, ISender sender, CancellationToken token) =>
+        {
+            var result = await sender.SendAsync(new RenameRoleCommand(roleId, request.ExpectedVersion, request.Name), token);
+            return result.IsSuccess ? Results.NoContent() : Failure(result.Error);
+        }).RequirePermission("/api/identity/roles/{roleId}", "PUT").Produces(204).ProducesApiErrors(404, 409, 415)
+            .WithMetadata(new OperationDescription("identity.role.rename", "修改角色展示名"));
 
         identity.MapPut("/roles/{roleId:long}/menus", async (long roleId, ReplaceRoleMenusRequest request, ISender sender, CancellationToken token) =>
         {
@@ -570,6 +583,7 @@ internal sealed record CreateUserRequest(string UserName, string Password);
 
 internal sealed record UserVersionRequest([property: JsonRequired] long ExpectedVersion);
 internal sealed record ReplaceRoleMenusRequest([property: JsonRequired] long ExpectedVersion, [property: JsonRequired] IReadOnlyList<long>? MenuIds);
+internal sealed record RenameRoleRequest([property: JsonRequired] long ExpectedVersion, string Name);
 internal sealed record OwnPasswordRequest([property: JsonRequired] long ExpectedVersion, string OldPassword, string NewPassword);
 internal sealed record ResetPasswordRequest([property: JsonRequired] long ExpectedVersion, string NewPassword);
 

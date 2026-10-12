@@ -21,6 +21,8 @@ API 资源 method 区分 GET/POST/PUT，path 与端点模板对应，不能用�
 | --- | --- | --- |
 | 读取用户及其版本 | `/api/identity/users/{userId}:GET` | GET 用户详情 |
 | 读取角色及其版本 | `/api/identity/roles/{roleId}:GET` | GET 角色详情 |
+| 角色目录与选择 | `/api/identity/roles:GET` | `afterRoleId` 默认 0，`limit` 默认 50、1 至 100；可选 `search` 按编码或名称检索 |
+| 修改角色展示名 | `/api/identity/roles/{roleId}:PUT` | `{ expectedVersion, name }`，来自 Role；不改变编码或菜单授权 |
 | 撤回用户角色 | `/api/identity/users/{userId}/roles/{roleId}/revoke:POST` | `{ expectedVersion }`，来自 User |
 | 整体替换角色菜单 | `/api/identity/roles/{roleId}/menus:PUT` | `{ expectedVersion, menuIds }`，来自 Role；空数组撤回全部 |
 | 删除叶菜单 | `/api/identity/menus/{menuId}/remove:POST` | `{ expectedVersion }`，来自菜单树；有子节点或版本冲突返回 409，提交后历史菜单引用不再产生权限 |
@@ -31,6 +33,13 @@ API 资源 method 区分 GET/POST/PUT，path 与端点模板对应，不能用�
 Int64 输出为字符串；输入接受数字及数字字符串。相同集合或已不存在的角色归属是空操作，版本不变。
 角色整体替换不更改 User 版本；用户角色撤回不更改 Session version。重新增量授予后原有效 JWT 可继续使用。
 权限管理员须分别授予所需管理操作，不会因为被授某项业务操作就获得管理权。
+
+角色目录按稳定标识递增分页，`nextAfterRoleId` 为空表示没有下一页；每页只返回标识、编码、名称及版本，
+不加载用户归属或全部菜单授权。搜索词去除首尾空白，最多 64 字符，按不区分大小写的字面子串匹配编码或名称，
+`%`、`_` 不作为通配符。翻页时沿用搜索词；目录不是冻结快照，并发改名可以改变后续页的搜索匹配结果。
+目录查询、详情和改名各自需要独立许可；拥有查询权不会自动取得改名权。
+改名使用现有角色聚合事务和最小 `identity.role.renamed` 事实；同名空操作不推进版本、审计修改时间或产生新事实。
+改名不改变权限键，不触发诊断权限缓存失效。角色启停及条件删除仍由后续独立票据交付。
 
 授权每次从 Identity 主库读取，不依靠诊断权限缓存失效，因此跨实例和热缓存均不能延续已撤回的操作许可。
 承诺撤回成功后新开始权威读取的请求拒绝；已通过授权的在途请求可能完成。已受理任务及其历史仍保留，

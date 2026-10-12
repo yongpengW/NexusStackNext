@@ -186,6 +186,7 @@ public static class IdentityInfrastructureServiceCollectionExtensions
             (provider, _) => new IdentityMemoryOutbox(provider.GetRequiredService<IdentityMemoryState>()));
         services.AddScoped<IUserRepository>(provider => new InMemoryUserRepository(provider.GetRequiredService<IdentityMemorySession>()));
         services.AddScoped<IUserDirectory, MemoryUserDirectory>();
+        services.AddScoped<IRoleDirectory, MemoryRoleDirectory>();
         services.AddScoped<IRoleRepository>(provider => new InMemoryRoleRepository(provider.GetRequiredService<IdentityMemorySession>()));
         services.AddScoped<IApiResourceRepository>(provider => new InMemoryApiResourceRepository(provider.GetRequiredService<IdentityMemorySession>()));
         services.AddScoped<IRefreshTokenRepository>(provider => new InMemoryRefreshTokenRepository(provider.GetRequiredService<IdentityMemorySession>()));

@@ -15,6 +15,62 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class BusinessAuthorizationPersistenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task Rejected_role_rename_fact_rolls_back_the_name_and_version_and_retry_commits_one_fact()
+    {
+        await using var database = await databases.CreateAsync();
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "access-root-password", schedulingWorkerEnabled: false);
+        using var root = app.CreateClient();
+        await LoginRootAsync(root);
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "atomic-rename", name = "Original" })).GetProperty("roleId").ReadHttpInt64();
+        var before = (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64();
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync();
+        await using (var inject = new NpgsqlCommand("""
+            CREATE FUNCTION identity.reject_rename_fact() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'injected rename fact failure'; END; $$;
+            CREATE TRIGGER reject_rename_fact BEFORE INSERT ON identity.outbox FOR EACH ROW EXECUTE FUNCTION identity.reject_rename_fact();
+            """, connection)) { await inject.ExecuteNonQueryAsync(); }
+        var request = new { expectedVersion = 1, name = "Renamed" };
+        using (var failed = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), request)) { Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode); }
+        var rejected = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.Equal("Original", rejected.GetProperty("name").GetString());
+        Assert.Equal(1, rejected.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(before, (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64());
+        await using (var recover = new NpgsqlCommand("DROP TRIGGER reject_rename_fact ON identity.outbox", connection)) { await recover.ExecuteNonQueryAsync(); }
+        using (var retry = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), request)) { Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode); }
+        using (var noOp = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 2, name = "Renamed" })) { Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode); }
+        var current = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.Equal("Renamed", current.GetProperty("name").GetString());
+        Assert.Equal(2, current.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(before + 1, (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64());
+    }
+
+    [PostgresFact]
+    public async Task Concurrent_role_renames_commit_one_name_and_return_one_conflict()
+    {
+        await using var database = await databases.CreateAsync();
+        await using var app = new PersistentIdentityApp(database.ConnectionString, "access-root-password", schedulingWorkerEnabled: false);
+        using var root = app.CreateClient();
+        await LoginRootAsync(root);
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "race-rename", name = "Original" })).GetProperty("roleId").ReadHttpInt64();
+        await using var barrier = new NpgsqlConnection(database.ConnectionString);
+        await barrier.OpenAsync();
+        await using var locked = await barrier.BeginTransactionAsync();
+        await using (var command = new NpgsqlCommand("SELECT \"Id\" FROM identity.roles WHERE \"Id\" = @id FOR UPDATE", barrier, locked))
+        { command.Parameters.AddWithValue("id", role); await command.ExecuteScalarAsync(); }
+        var first = root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 1, name = "First" });
+        var second = root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 1, name = "Second" });
+        try { await WaitForBlockedAsync(database.ConnectionString, barrier.ProcessID, 2); }
+        finally { await locked.RollbackAsync(); }
+        using var a = await first;
+        using var b = await second;
+        Assert.Equal([HttpStatusCode.NoContent, HttpStatusCode.Conflict], new[] { a.StatusCode, b.StatusCode }.Order());
+        var current = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.Equal(2, current.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(a.StatusCode == HttpStatusCode.NoContent ? "First" : "Second", current.GetProperty("name").GetString());
+    }
+
+    [PostgresFact]
     public async Task Dangling_menu_and_role_references_cannot_authorize_even_when_the_diagnostic_cache_is_hot()
     {
         await using var database = await databases.CreateAsync();

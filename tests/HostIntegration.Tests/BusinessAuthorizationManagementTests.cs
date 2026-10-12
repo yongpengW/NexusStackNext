@@ -8,6 +8,65 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class BusinessAuthorizationManagementTests
 {
     [Fact]
+    public async Task Role_directory_pages_and_searches_without_exposing_management_to_an_ordinary_user()
+    {
+        await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
+        using var root = app.CreateClient();
+        using var user = app.CreateClient();
+        await UserLifecycleHttpTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        var first = (await CreateAsync(root, "/api/identity/roles", new { code = "directory-first", name = "Directory one" })).GetProperty("roleId").GetString();
+        var second = (await CreateAsync(root, "/api/identity/roles", new { code = "directory-second", name = "Directory two %_" })).GetProperty("roleId").GetString();
+        _ = await CreateAsync(root, "/api/identity/roles", new { code = "unrelated", name = "Other" });
+        var page = await ReadAsync(root, "/api/identity/roles?search=DIRECTORY&limit=1");
+        var row = Assert.Single(page.GetProperty("items").EnumerateArray());
+        Assert.Equal(first, row.GetProperty("roleId").GetString());
+        Assert.Equal("directory-first", row.GetProperty("code").GetString());
+        Assert.Equal("Directory one", row.GetProperty("name").GetString());
+        Assert.Equal(1, row.GetProperty("version").ReadHttpInt64());
+        Assert.Equal(first, page.GetProperty("nextAfterRoleId").GetString());
+        var last = await ReadAsync(root, $"/api/identity/roles?search=directory&limit=1&afterRoleId={first}");
+        Assert.Equal(second, Assert.Single(last.GetProperty("items").EnumerateArray()).GetProperty("roleId").GetString());
+        Assert.Equal(JsonValueKind.Null, last.GetProperty("nextAfterRoleId").ValueKind);
+        var literal = await ReadAsync(root, "/api/identity/roles?search=%25_");
+        Assert.Equal(second, Assert.Single(literal.GetProperty("items").EnumerateArray()).GetProperty("roleId").GetString());
+        foreach (var invalid in new[] { "limit=0", "limit=101", "afterRoleId=-1", "search=" + new string('a', 65) })
+        {
+            using var rejected = await root.GetAsync(Path("/api/identity/roles?" + invalid));
+            Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        }
+        _ = await CreateAsync(user, "/api/identity/users", new { userName = "directory-user", password = "directory-user-password" });
+        await UserLifecycleHttpTests.LoginAsync(user, "directory-user", "directory-user-password");
+        using var denied = await user.GetAsync(Path("/api/identity/roles"));
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+    }
+
+    [Fact]
+    public async Task Conditional_role_rename_preserves_code_grants_and_version_on_no_op_or_rejection()
+    {
+        await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
+        using var root = app.CreateClient();
+        await UserLifecycleHttpTests.LoginAsync(root, PlatformAppWithRootAccount.RootUserName, PlatformAppWithRootAccount.RootPassword);
+        var menu = (await CreateAsync(root, "/api/identity/menus", new { title = "Role menu", sortOrder = 1 })).GetProperty("menuId").GetString();
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "rename-role", name = "Original" })).GetProperty("roleId").GetString();
+        using (var grant = await root.PostAsync(Path($"/api/identity/roles/{role}/menus/{menu}"), null)) { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+        using (var rename = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = "2", name = " Renamed " })) { Assert.Equal(HttpStatusCode.NoContent, rename.StatusCode); }
+        var current = await ReadAsync(root, $"/api/identity/roles/{role}");
+        Assert.Equal("Renamed", current.GetProperty("name").GetString());
+        Assert.Equal("rename-role", current.GetProperty("code").GetString());
+        Assert.Equal(menu, Assert.Single(current.GetProperty("menuIds").EnumerateArray()).GetString());
+        Assert.Equal(3, current.GetProperty("version").ReadHttpInt64());
+        var facts = (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64();
+        using (var noOp = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 3, name = "Renamed" })) { Assert.Equal(HttpStatusCode.NoContent, noOp.StatusCode); }
+        using (var stale = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 2, name = "Stale" })) { Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode); }
+        using (var missing = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { name = "Missing version" })) { Assert.Equal(HttpStatusCode.BadRequest, missing.StatusCode); }
+        using (var invalid = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 0, name = "Invalid version" })) { Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode); }
+        using (var invalid = await root.PutAsJsonAsync(Path($"/api/identity/roles/{role}"), new { expectedVersion = 3, name = " " })) { Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode); }
+        using (var absent = await root.PutAsJsonAsync(Path("/api/identity/roles/999999"), new { expectedVersion = 1, name = "Absent" })) { Assert.Equal(HttpStatusCode.NotFound, absent.StatusCode); }
+        Assert.Equal(3, (await ReadAsync(root, $"/api/identity/roles/{role}")).GetProperty("version").ReadHttpInt64());
+        Assert.Equal(facts, (await ReadAsync(root, "/api/identity/audit-capacity")).GetProperty("retainedRecords").ReadHttpInt64());
+    }
+
+    [Fact]
     public async Task Current_access_rejects_malformed_keys_and_ignores_client_selected_subject_or_allow()
     {
         await using var app = new PlatformAppWithRootAccount { SchedulingWorkerEnabled = false };
