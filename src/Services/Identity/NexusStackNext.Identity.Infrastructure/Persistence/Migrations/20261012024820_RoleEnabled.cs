@@ -18,6 +18,15 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM identity.roles WHERE "IsEnabled" = FALSE) THEN
+                        RAISE EXCEPTION USING ERRCODE = 'P0001', CONSTRAINT = 'identity_role_enabled_history_exists',
+                            MESSAGE = 'Disabled role state prevents destructive rollback.';
+                    END IF;
+                END $$;
+                """);
             migrationBuilder.DropColumn(name: "IsEnabled", schema: "identity", table: "roles");
         }
     }
