@@ -611,6 +611,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         AddQuery<GetRolesQuery, RolePage, GetRolesHandler>(services);
         AddCommand<RenameRoleCommand, RenameRoleHandler>(services);
         AddCommand<SetRoleEnabledCommand, SetRoleEnabledHandler>(services);
+        AddCommand<DeleteRoleCommand, DeleteRoleHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
         AddCommand<CreateApiResourceCommand, ApiResourceCreated, CreateApiResourceHandler>(services);
@@ -645,6 +646,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddSingleton<IRequestValidator<ReplaceRoleMenusCommand>, ReplaceRoleMenusValidator>();
         services.AddSingleton<IRequestValidator<RenameRoleCommand>, RenameRoleValidator>();
         services.AddSingleton<IRequestValidator<SetRoleEnabledCommand>, SetRoleEnabledValidator>();
+        services.AddSingleton<IRequestValidator<DeleteRoleCommand>, DeleteRoleValidator>();
         services.AddSingleton<IRequestValidator<IExpectedMenuTreeVersion>, ExpectedMenuTreeVersionValidator>();
         services.AddSingleton<IRequestValidator<INewUserPassword>, NewUserPasswordValidator>();
 
