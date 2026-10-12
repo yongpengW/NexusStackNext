@@ -108,16 +108,28 @@ if ($issues.Count -eq 0) {
         $tasks = @($issues | Where-Object { @($_.labels | ForEach-Object { $_.name }) -contains 'wayfinder:task' })
         # **按编号比，不按内部 id**；查不到子票据时**明确失败**（#11）。
         # 这条检查第一次写出来时"永远通过"：故意造一张不挂到地图下的票，它照样报干净。
-        $childNumbers = @()
+        $childNumbers = [Collections.Generic.HashSet[int]]::new()
+        $parents = [Collections.Generic.Queue[int]]::new()
+        $parents.Enqueue([int]$map.number)
         try {
-            $subJson = Invoke-GitHubRead $ghPath "repos/$Repository/issues/$($map.number)/sub_issues?per_page=100" $deadline $RequestTimeoutSeconds
-            $childNumbers = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [int]$_.number })
+            # GitHub 每个父票最多 100 个子票；总规格可以在地图下承载下一层任务。
+            # 只读取有子票的节点，沿用整次检查的截止时间，不为每层重置预算。
+            while ($parents.Count -gt 0) {
+                $parent = $parents.Dequeue()
+                $subJson = Invoke-GitHubRead $ghPath "repos/$Repository/issues/$parent/sub_issues?per_page=100" $deadline $RequestTimeoutSeconds
+                $children = @(($subJson -join "`n") | ConvertFrom-Json | ForEach-Object { $_ })
+                foreach ($child in $children) {
+                    if ($childNumbers.Add([int]$child.number) -and $child.sub_issues_summary.total -gt 0) {
+                        $parents.Enqueue([int]$child.number)
+                    }
+                }
+            }
         } catch {
-            Add-Problem '检查自身' '查地图的子票据失败——父子关系这一组没有对象可查，不能当作通过'
+            Add-Problem '检查自身' '查地图的子票据层级失败——父子关系这一组不完整，不能当作通过'
         }
 
         foreach ($t in $tasks) {
-            if ($childNumbers -notcontains [int]$t.number) {
+            if (-not $childNumbers.Contains([int]$t.number)) {
                 Add-Problem '父子关系' "#$($t.number) $($t.title) 带 wayfinder:task，却没挂在地图 #$($map.number) 下面"
             }
         }

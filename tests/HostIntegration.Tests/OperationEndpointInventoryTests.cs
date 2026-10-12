@@ -51,6 +51,7 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["DELETE /api/platform/settings/{key}"] = nameof(AuditBusinessJourneyTests) + "；清空值是设置变化，未变值无新事实。",
             ["POST /api/identity/users"] = IdentityChanges,
             ["POST /api/identity/roles"] = IdentityChanges,
+            ["PUT /api/identity/roles/{roleId:long}"] = IdentityChanges,
             ["POST /api/identity/roles/{roleId:long}/menus/{menuId:long}"] = IdentityChanges,
             ["PUT /api/identity/roles/{roleId:long}/menus"] = IdentityChanges,
             ["POST /api/identity/users/{userId:long}/roles/{roleId:long}"] = IdentityChanges,

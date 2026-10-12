@@ -91,8 +91,20 @@ if ($transientRoute -and $route -match $transientRoute) {
     }
 }
 switch -Regex ($route) {
-    '/issues\?' { $items = '[{"number":1,"title":"Map","labels":[{"name":"wayfinder:map"}]},{"number":2,"title":"Task","labels":[{"name":"wayfinder:task"}]}]' }
-    '/sub_issues\?' { $items = '[{"number":2}]' }
+    '/issues\?' {
+        $items = '[{"number":1,"title":"Map","labels":[{"name":"wayfinder:map"}]},{"number":2,"title":"Task","labels":[{"name":"wayfinder:task"}]}]'
+        if ($env:NSN_ISSUE_PROBE_MODE -like 'nested-*') {
+            $items = '[{"number":1,"title":"Map","labels":[{"name":"wayfinder:map"}]},{"number":2,"title":"Spec","labels":[]},{"number":3,"title":"Nested task","labels":[{"name":"wayfinder:task"}]}]'
+        }
+    }
+    '/sub_issues\?' {
+        $items = '[{"number":2}]'
+        if ($env:NSN_ISSUE_PROBE_MODE -like 'nested-*') {
+            $items = if ($route -like '*/1/*') { '[{"number":2,"sub_issues_summary":{"total":1}}]' }
+                elseif ($env:NSN_ISSUE_PROBE_MODE -eq 'nested-success') { '[{"number":3,"sub_issues_summary":{"total":0}}]' }
+                else { '[]' }
+        }
+    }
     '/dependencies/blocked_by' {
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'failure' -and $route -like '*/2/*') { exit 1 }
         if ($env:NSN_ISSUE_PROBE_MODE -eq 'invalid' -and $route -like '*/2/*') { 'not-json'; exit 0 }
@@ -146,6 +158,7 @@ exec pwsh -NoProfile -File "$0.ps1" "$@"
     $env:PATH = $scratch + [IO.Path]::PathSeparator + $oldPath
     if ((Get-Command gh).Source -cne $adapterPath) { throw 'Fixture gh was not selected; refusing network access.' }
     $knownModes = @('success', 'failure', 'invalid', 'empty', 'null', 'zero-pages', 'missing', 'pagination', 'transient-list', 'transient-parent', 'transient-dependency', 'transient-labels', 'transient-502', 'transient-504', 'invalid-list', 'malformed-slurp', 'persistent-service', 'permanent-service', 'stdout-service', 'request-timeout', 'request-timeout-parent', 'request-timeout-dependency', 'request-timeout-labels', 'total-timeout', 'accumulated-budget', 'held-pipes-labels')
+    $knownModes += @('nested-success', 'nested-missing')
     if ($Modes.Count -eq 0) { $Modes = $knownModes }
     foreach ($mode in $Modes) {
         if ($mode -notin $knownModes) { throw 'Unknown tracker probe; refusing an empty or misleading check.' }
@@ -181,7 +194,7 @@ exec pwsh -NoProfile -File "$0.ps1" "$@"
             $exitCode = $cli.ExitCode
         }
         finally { $cli.Dispose() }
-        $expected = $mode -in @('success', 'pagination', 'transient-list', 'transient-parent', 'transient-dependency', 'transient-labels', 'transient-502', 'transient-504')
+        $expected = $mode -in @('success', 'nested-success', 'pagination', 'transient-list', 'transient-parent', 'transient-dependency', 'transient-labels', 'transient-502', 'transient-504')
         if (($exitCode -eq 0) -ne $expected) { throw "Tracker CLI unexpected exit for $mode; expected success=$expected" }
         if (($output -join "`n") -match 'NSN_SYNTHETIC_SECRET') { throw "Tracker CLI exposed raw adapter output for $mode" }
         if ($mode -eq 'persistent-service' -and [int](Get-Content -LiteralPath (Join-Path $scratch 'service-attempts')) -ne 3) { throw 'Tracker CLI exceeded its bounded service recovery attempts.' }

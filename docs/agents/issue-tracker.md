@@ -11,7 +11,10 @@ into the repo.
 - **Triage state is a label** (`docs/agents/triage-labels.md` has the five role strings; the colours come
   from `label-colors.json` and are applied to the real GitHub labels).
 - **History and conclusions are native comments.** One comment per round, with the round's own heading inside.
-- **The map is a single issue** labelled `wayfinder:map`; tickets are its **child issues** (native sub-issues).
+- **The map is a single issue** labelled `wayfinder:map`; tickets are attached through **native sub-issues**,
+  directly or under a total specification that is itself attached to the map. GitHub limits each parent to
+  100 direct sub-issues; new capability tickets under the NS / PoS total specification use this second level.
+  The tracker check follows the hierarchy, including closed tickets.
 - **Blocking is a native dependency** (`blocked_by`) — a ticket is unblocked when every blocker is closed.
 
 ## When a skill says "publish to the issue tracker"
@@ -38,9 +41,9 @@ Used by `/wayfinder`.
 
 - **Map**: the issue labelled `wayfinder:map` — its body is the destination / notes / decisions-so-far / fog.
 - **Child ticket**: an issue labelled `wayfinder:task` (or `research` / `prototype` / `grilling`), attached as a
-  sub-issue of the map. Open/closed is the ticket's state.
+  direct or indirect sub-issue of the map. Open/closed is the ticket's state.
 - **Blocking**: native dependencies. A ticket is unblocked when every blocker is closed.
-- **Frontier**: open, unblocked child issues of the map — lowest number first.
+- **Frontier**: open, unblocked direct or indirect child issues of the map — lowest number first.
 - **Claim**: assign yourself (or comment) before any work starts.
 - **Resolve**: comment the answer, close the issue, then add a context pointer (gist + link) to the map's
   Decisions-so-far body.
