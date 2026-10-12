@@ -15,6 +15,37 @@ namespace NexusStackNext.HostIntegration.Tests;
 public sealed class BusinessAuthorizationPersistenceTests(JourneyDatabaseTemplates databases)
 {
     [PostgresFact]
+    public async Task Disabled_role_persists_across_a_real_identity_restart_without_removing_user_assignment()
+    {
+        await using var database = await databases.CreateAsync();
+        await using var first = new PersistentIdentityApp(database.ConnectionString, "access-root-password", schedulingWorkerEnabled: false);
+        using var root = first.CreateClient();
+        using var user = first.CreateClient();
+        await LoginRootAsync(root);
+        var menu = (await CreateAsync(root, "/api/identity/menus", new { title = "Persistent role", sortOrder = 1 })).GetProperty("menuId").ReadHttpInt64();
+        _ = await CreateAsync(root, "/api/identity/api-resources", new { path = "/api/identity/menus", method = "GET", menuId = menu });
+        var role = (await CreateAsync(root, "/api/identity/roles", new { code = "persistent-enabled", name = "Persistent enabled" })).GetProperty("roleId").ReadHttpInt64();
+        var userId = (await CreateAsync(root, "/api/identity/users", new { userName = "persistent-enabled-user", password = "persistent-enabled-password" })).GetProperty("userId").ReadHttpInt64();
+        await UserLifecycleHttpTests.LoginAsync(user, "persistent-enabled-user", "persistent-enabled-password");
+        using (var grant = await root.PostAsync(Path($"/api/identity/roles/{role}/menus/{menu}"), null)) { Assert.Equal(HttpStatusCode.NoContent, grant.StatusCode); }
+        using (var assign = await root.PostAsync(Path($"/api/identity/users/{userId}/roles/{role}"), null)) { Assert.Equal(HttpStatusCode.NoContent, assign.StatusCode); }
+        using (var disable = await root.PostAsJsonAsync(Path($"/api/identity/roles/{role}/disable"), new { expectedVersion = 2 })) { Assert.Equal(HttpStatusCode.NoContent, disable.StatusCode); }
+        using (var denied = await user.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        await first.DisposeAsync();
+        await using var second = new PersistentIdentityApp(database.ConnectionString, "access-root-password", schedulingWorkerEnabled: false);
+        using var restartedRoot = second.CreateClient();
+        using var restartedUser = second.CreateClient();
+        await LoginRootAsync(restartedRoot);
+        await UserLifecycleHttpTests.LoginAsync(restartedUser, "persistent-enabled-user", "persistent-enabled-password");
+        var persisted = await ReadAsync(restartedRoot, $"/api/identity/roles/{role}");
+        Assert.False(persisted.GetProperty("isEnabled").GetBoolean());
+        Assert.Equal(menu, Assert.Single(persisted.GetProperty("menuIds").EnumerateArray()).ReadHttpInt64());
+        Assert.Equal(role, Assert.Single((await ReadAsync(restartedRoot, $"/api/identity/users/{userId}")).GetProperty("roleIds").EnumerateArray()).ReadHttpInt64());
+        using (var denied = await restartedUser.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode); }
+        using (var enable = await restartedRoot.PostAsJsonAsync(Path($"/api/identity/roles/{role}/enable"), new { expectedVersion = 3 })) { Assert.Equal(HttpStatusCode.NoContent, enable.StatusCode); }
+        using (var restored = await restartedUser.GetAsync(Path("/api/identity/menus"))) { Assert.Equal(HttpStatusCode.OK, restored.StatusCode); }
+    }
+    [PostgresFact]
     public async Task Rejected_role_rename_fact_rolls_back_the_name_and_version_and_retry_commits_one_fact()
     {
         await using var database = await databases.CreateAsync();

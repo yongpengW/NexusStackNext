@@ -52,6 +52,8 @@ public sealed class OperationEndpointInventoryTests(ITestOutputHelper output)
             ["POST /api/identity/users"] = IdentityChanges,
             ["POST /api/identity/roles"] = IdentityChanges,
             ["PUT /api/identity/roles/{roleId:long}"] = IdentityChanges,
+            ["POST /api/identity/roles/{roleId:long}/disable"] = IdentityChanges,
+            ["POST /api/identity/roles/{roleId:long}/enable"] = IdentityChanges,
             ["POST /api/identity/roles/{roleId:long}/menus/{menuId:long}"] = IdentityChanges,
             ["PUT /api/identity/roles/{roleId:long}/menus"] = IdentityChanges,
             ["POST /api/identity/users/{userId:long}/roles/{roleId:long}"] = IdentityChanges,

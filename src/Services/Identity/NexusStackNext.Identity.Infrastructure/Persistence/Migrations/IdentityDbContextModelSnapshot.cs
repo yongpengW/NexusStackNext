@@ -295,6 +295,11 @@ namespace NexusStackNext.Identity.Infrastructure.Persistence.Migrations
 
                     b.Property<bool>("IsSystem")
                         .HasColumnType("boolean");
+                    b.Property<bool>("IsEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasDefaultValue(true)
+                        .HasColumnType("boolean");
+
 
                     b.Property<string>("Name")
                         .IsRequired()

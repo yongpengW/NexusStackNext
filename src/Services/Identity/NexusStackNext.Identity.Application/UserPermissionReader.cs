@@ -66,6 +66,7 @@ public sealed class UserPermissionReader(
         var grantedRoles = await roles.FindManyAsync(user.RoleIds, cancellationToken).ConfigureAwait(false);
 
         var menuIds = grantedRoles
+            .Where(static role => role.IsEnabled)
             .SelectMany(static role => role.GrantedMenuIds)
             .ToHashSet();
 

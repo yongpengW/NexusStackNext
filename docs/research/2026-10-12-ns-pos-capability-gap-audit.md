@@ -6,7 +6,7 @@
 
 ## 建议顺序
 
-优先补 **Identity 管理闭环**，随后补 **邮件业务使用闭环**，再确认 **登录验证码的产品策略**。这些有旧项目实际入口或调用者支撑，无需为了“能力齐全”增加万能任务、报表或外部集成框架。
+优先补 **Identity 管理闭环**，随后补 **邮件业务使用闭环**；登录验证码由用户于 2026-10-12 明确暂缓，保留现有失败锁定与限流。无需为了“能力齐全”增加万能任务、报表或外部集成框架。
 
 | 优先级 | 待补切片 | 已有基础 | 尚缺公开使用过程 |
 |---|---|---|---|
@@ -26,7 +26,7 @@
 5. [当前用户授权菜单导航 #206](https://github.com/yongpengW/NexusStackNext/issues/206)，依赖角色启停。
 6. [本人邮件发送记录列表 #207](https://github.com/yongpengW/NexusStackNext/issues/207)。
 7. [定价完成到持久邮件的业务链路 #208](https://github.com/yongpengW/NexusStackNext/issues/208)，首轮正文通知，不扩展公司报表规则。
-8. [登录验证码策略与可选实现 #209](https://github.com/yongpengW/NexusStackNext/issues/209)，策略待定，不阻塞其他能力。
+8. [登录验证码策略与可选实现 #209](https://github.com/yongpengW/NexusStackNext/issues/209)，用户明确暂缓，不阻塞其他能力。
 
 任务挂在总规格 #34 下，总规格仍属于唯一地图 #4。优先级不产生额外阻塞边，后端仍为 GitHub Issues，此处不维护第二份状态表。
 

@@ -208,8 +208,9 @@ public sealed class AssignRoleHandler(
             return Result.Failure(new Error("identity.user.not_found", $"用户不存在：{command.UserId}。"));
         }
 
-        if ((await roles.FindManyAsync([new RoleId(command.RoleId)], cancellationToken).ConfigureAwait(false)).Count == 0)
-        { return Result.Failure(AuthorizationManagementErrors.RoleNotFound); }
+        var assignedRole = (await roles.FindManyAsync([new RoleId(command.RoleId)], cancellationToken).ConfigureAwait(false)).SingleOrDefault();
+        if (assignedRole is null) { return Result.Failure(AuthorizationManagementErrors.RoleNotFound); }
+        if (!assignedRole.IsEnabled) { return Result.Failure(new Error("identity.role.disabled", "停用角色不能分配给新用户。")); }
         var originalVersion = user.Version;
         var result = user.AssignRole(new RoleId(command.RoleId), clock.UtcNow);
 
@@ -609,6 +610,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         AddQuery<GetRoleQuery, RoleView, GetRoleHandler>(services);
         AddQuery<GetRolesQuery, RolePage, GetRolesHandler>(services);
         AddCommand<RenameRoleCommand, RenameRoleHandler>(services);
+        AddCommand<SetRoleEnabledCommand, SetRoleEnabledHandler>(services);
         AddCommand<CreateRoleCommand, long, CreateRoleHandler>(services);
         AddCommand<GrantMenuToRoleCommand, GrantMenuToRoleHandler>(services);
         AddCommand<CreateApiResourceCommand, ApiResourceCreated, CreateApiResourceHandler>(services);
@@ -642,6 +644,7 @@ public static class IdentityUseCaseServiceCollectionExtensions
         services.AddSingleton<IRequestValidator<IExpectedUserVersion>, ExpectedUserVersionValidator>();
         services.AddSingleton<IRequestValidator<ReplaceRoleMenusCommand>, ReplaceRoleMenusValidator>();
         services.AddSingleton<IRequestValidator<RenameRoleCommand>, RenameRoleValidator>();
+        services.AddSingleton<IRequestValidator<SetRoleEnabledCommand>, SetRoleEnabledValidator>();
         services.AddSingleton<IRequestValidator<IExpectedMenuTreeVersion>, ExpectedMenuTreeVersionValidator>();
         services.AddSingleton<IRequestValidator<INewUserPassword>, NewUserPasswordValidator>();
 

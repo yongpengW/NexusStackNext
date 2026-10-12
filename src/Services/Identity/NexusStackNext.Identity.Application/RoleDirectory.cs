@@ -9,7 +9,8 @@ namespace NexusStackNext.Identity.Application;
 /// <param name="Code">稳定编码。</param>
 /// <param name="Name">展示名。</param>
 /// <param name="Version">条件写入版本。</param>
-public sealed record RoleDirectoryItem(long RoleId, string Code, string Name, long Version);
+/// <param name="IsEnabled">是否参与当前授权。</param>
+public sealed record RoleDirectoryItem(long RoleId, string Code, string Name, long Version, bool IsEnabled);
 
 /// <summary>按稳定标识递增的角色页。</summary>
 /// <param name="Items">目录项。</param>
